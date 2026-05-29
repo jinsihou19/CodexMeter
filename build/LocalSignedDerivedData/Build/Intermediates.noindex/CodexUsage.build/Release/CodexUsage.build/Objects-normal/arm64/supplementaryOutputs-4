@@ -1,0 +1,12 @@
+{
+  "/Users/jinsihou/Projects/tools/codex用量组件/CodexUsage/CodexUsageApp.swift" : {
+    "abi-baseline-json" : "/Users/jinsihou/Projects/tools/codex用量组件/build/LocalSignedDerivedData/Build/Intermediates.noindex/CodexUsage.build/Release/CodexUsage.build/Objects-normal/arm64/CodexUsage.abi.json",
+    "const-values" : "/Users/jinsihou/Projects/tools/codex用量组件/build/LocalSignedDerivedData/Build/Intermediates.noindex/CodexUsage.build/Release/CodexUsage.build/Objects-normal/arm64/CodexUsage-primary.swiftconstvalues",
+    "dependencies" : "/Users/jinsihou/Projects/tools/codex用量组件/build/LocalSignedDerivedData/Build/Intermediates.noindex/CodexUsage.build/Release/CodexUsage.build/Objects-normal/arm64/CodexUsage-primary.d",
+    "diagnostics" : "/Users/jinsihou/Projects/tools/codex用量组件/build/LocalSignedDerivedData/Build/Intermediates.noindex/CodexUsage.build/Release/CodexUsage.build/Objects-normal/arm64/CodexUsage-primary.dia",
+    "objc-header" : "/Users/jinsihou/Projects/tools/codex用量组件/build/LocalSignedDerivedData/Build/Intermediates.noindex/CodexUsage.build/Release/CodexUsage.build/Objects-normal/arm64/CodexUsage-Swift.h",
+    "swiftdoc" : "/Users/jinsihou/Projects/tools/codex用量组件/build/LocalSignedDerivedData/Build/Intermediates.noindex/CodexUsage.build/Release/CodexUsage.build/Objects-normal/arm64/CodexUsage.swiftdoc",
+    "swiftmodule" : "/Users/jinsihou/Projects/tools/codex用量组件/build/LocalSignedDerivedData/Build/Intermediates.noindex/CodexUsage.build/Release/CodexUsage.build/Objects-normal/arm64/CodexUsage.swiftmodule",
+    "swiftsourceinfo" : "/Users/jinsihou/Projects/tools/codex用量组件/build/LocalSignedDerivedData/Build/Intermediates.noindex/CodexUsage.build/Release/CodexUsage.build/Objects-normal/arm64/CodexUsage.swiftsourceinfo"
+  }
+}

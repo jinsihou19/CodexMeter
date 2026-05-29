@@ -1,0 +1,74 @@
+{
+  "buildCommand" : {
+    "command" : "build",
+    "skipDependencies" : false,
+    "style" : "buildOnly"
+  },
+  "configuredTargets" : [
+    {
+      "guid" : "193e3d26b82cab7cb0394bf1233b73f5a2d2595770a4d4983ee20e2939a5fe85"
+    },
+    {
+      "guid" : "193e3d26b82cab7cb0394bf1233b73f5d46c7823d576f2a4df819b7db2310020"
+    },
+    {
+      "guid" : "193e3d26b82cab7cb0394bf1233b73f5983bc6cf64c98bfa94d66e91835a205f"
+    }
+  ],
+  "containerPath" : "/Users/jinsihou/Projects/tools/codex用量组件/CodexUsage.xcodeproj",
+  "continueBuildingAfterErrors" : false,
+  "dependencyScope" : "workspace",
+  "enableIndexBuildArena" : false,
+  "hideShellScriptEnvironment" : false,
+  "parameters" : {
+    "action" : "build",
+    "activeArchitecture" : "undefined_arch",
+    "activeRunDestination" : {
+      "disableOnlyActiveArch" : true,
+      "hostTargetedPlatform" : null,
+      "platform" : "macosx",
+      "sdk" : "macosx26.5",
+      "sdkVariant" : "macos",
+      "supportedArchitectures" : [
+        "arm64",
+        "arm64e",
+        "x86_64",
+        "x86_64h"
+      ],
+      "targetArchitecture" : "undefined_arch"
+    },
+    "arenaInfo" : {
+      "buildIntermediatesPath" : "/Users/jinsihou/Projects/tools/codex用量组件/build/DMGDerivedData/Build/Intermediates.noindex",
+      "buildProductsPath" : "/Users/jinsihou/Projects/tools/codex用量组件/build/DMGDerivedData/Build/Products",
+      "derivedDataPath" : "/Users/jinsihou/Projects/tools/codex用量组件/build/DMGDerivedData",
+      "indexDataStoreFolderPath" : "/Users/jinsihou/Projects/tools/codex用量组件/build/DMGDerivedData/Index.noindex/DataStore",
+      "indexEnableDataStore" : true,
+      "indexPCHPath" : "/Users/jinsihou/Projects/tools/codex用量组件/build/DMGDerivedData/Index.noindex/PrecompiledHeaders",
+      "pchPath" : "/Users/jinsihou/Projects/tools/codex用量组件/build/DMGDerivedData/Build/Intermediates.noindex/PrecompiledHeaders"
+    },
+    "configurationName" : "Release",
+    "overrides" : {
+      "commandLine" : {
+        "table" : {
+
+        }
+      },
+      "synthesized" : {
+        "table" : {
+          "ACTION" : "build",
+          "CLANG_COVERAGE_MAPPING" : "YES",
+          "CLANG_PROFILE_DATA_DIRECTORY" : "/Users/jinsihou/Projects/tools/codex用量组件/build/DMGDerivedData/Build/ProfileData",
+          "ENABLE_PREVIEWS" : "NO",
+          "ENABLE_XOJIT_PREVIEWS" : "YES",
+          "ONLY_ACTIVE_ARCH" : "YES"
+        }
+      }
+    }
+  },
+  "schemeCommand" : "launch",
+  "showNonLoggedProgress" : true,
+  "useDryRun" : false,
+  "useImplicitDependencies" : true,
+  "useLegacyBuildLocations" : false,
+  "useParallelTargets" : true
+}

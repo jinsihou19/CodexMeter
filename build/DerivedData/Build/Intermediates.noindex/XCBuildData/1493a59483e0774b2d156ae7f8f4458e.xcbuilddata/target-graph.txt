@@ -1,0 +1,7 @@
+Target dependency graph (3 targets)
+Target 'CodexUsage' in project 'CodexUsage'
+➜ Explicit dependency on target 'CodexUsageShared' in project 'CodexUsage'
+➜ Explicit dependency on target 'CodexUsageWidgetExtension' in project 'CodexUsage'
+Target 'CodexUsageWidgetExtension' in project 'CodexUsage'
+➜ Explicit dependency on target 'CodexUsageShared' in project 'CodexUsage'
+Target 'CodexUsageShared' in project 'CodexUsage' (no dependencies)

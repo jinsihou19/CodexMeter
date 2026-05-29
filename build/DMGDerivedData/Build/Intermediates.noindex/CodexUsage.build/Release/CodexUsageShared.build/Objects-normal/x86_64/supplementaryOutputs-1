@@ -1,0 +1,12 @@
+{
+  "/Users/jinsihou/Projects/tools/codex用量组件/CodexUsageShared/Empty.swift" : {
+    "abi-baseline-json" : "/Users/jinsihou/Projects/tools/codex用量组件/build/DMGDerivedData/Build/Intermediates.noindex/CodexUsage.build/Release/CodexUsageShared.build/Objects-normal/x86_64/CodexUsageShared.abi.json",
+    "const-values" : "/Users/jinsihou/Projects/tools/codex用量组件/build/DMGDerivedData/Build/Intermediates.noindex/CodexUsage.build/Release/CodexUsageShared.build/Objects-normal/x86_64/CodexUsageShared-primary.swiftconstvalues",
+    "dependencies" : "/Users/jinsihou/Projects/tools/codex用量组件/build/DMGDerivedData/Build/Intermediates.noindex/CodexUsage.build/Release/CodexUsageShared.build/Objects-normal/x86_64/CodexUsageShared-primary.d",
+    "diagnostics" : "/Users/jinsihou/Projects/tools/codex用量组件/build/DMGDerivedData/Build/Intermediates.noindex/CodexUsage.build/Release/CodexUsageShared.build/Objects-normal/x86_64/CodexUsageShared-primary.dia",
+    "objc-header" : "/Users/jinsihou/Projects/tools/codex用量组件/build/DMGDerivedData/Build/Intermediates.noindex/CodexUsage.build/Release/CodexUsageShared.build/Objects-normal/x86_64/CodexUsageShared-Swift.h",
+    "swiftdoc" : "/Users/jinsihou/Projects/tools/codex用量组件/build/DMGDerivedData/Build/Intermediates.noindex/CodexUsage.build/Release/CodexUsageShared.build/Objects-normal/x86_64/CodexUsageShared.swiftdoc",
+    "swiftmodule" : "/Users/jinsihou/Projects/tools/codex用量组件/build/DMGDerivedData/Build/Intermediates.noindex/CodexUsage.build/Release/CodexUsageShared.build/Objects-normal/x86_64/CodexUsageShared.swiftmodule",
+    "swiftsourceinfo" : "/Users/jinsihou/Projects/tools/codex用量组件/build/DMGDerivedData/Build/Intermediates.noindex/CodexUsage.build/Release/CodexUsageShared.build/Objects-normal/x86_64/CodexUsageShared.swiftsourceinfo"
+  }
+}
