@@ -31,4 +31,6 @@ rtk xcodebuild -project CodexUsage.xcodeproj -scheme CodexUsage -destination 'pl
 
 ## Signing
 
-This workspace currently has no valid macOS code signing identity. The project uses automatic signing and App Group `group.com.jinsihou.CodexUsage`; open the project in Xcode and select a development team for both app targets to install the WidgetKit widget normally.
+Debug uses automatic Apple Development signing with App Group `group.com.jinsihou.CodexUsage`.
+
+Release is configured for ad-hoc signing (`CODE_SIGN_IDENTITY = -`). Release also disables Hardened Runtime and clears the app and widget entitlement files because App Group entitlements require a provisioning profile, and Hardened Runtime library validation can reject embedded ad-hoc frameworks at launch. This is useful for local or small-scope testing, but it is not a notarized Developer ID distribution build and may still be blocked by Gatekeeper after internet download.
