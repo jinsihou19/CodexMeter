@@ -96,6 +96,21 @@ final class UsageViewModelTests: XCTestCase {
         XCTAssertEqual(settings.statusItemWidth, 38)
     }
 
+    func testPopoverFrameAlignsJustBelowStatusItemAnchor() {
+        let popoverFrame = NSRect(x: 860, y: 410, width: 346, height: 479)
+        let statusItemFrame = NSRect(x: 915, y: 952, width: 38, height: 22)
+
+        let alignedFrame = MenuBarPopoverPositioning.alignedFrame(
+            popoverFrame: popoverFrame,
+            anchorScreenRect: statusItemFrame,
+            verticalGap: 4
+        )
+
+        XCTAssertEqual(alignedFrame.maxY, statusItemFrame.minY - 4, accuracy: 0.001)
+        XCTAssertEqual(alignedFrame.origin.x, popoverFrame.origin.x)
+        XCTAssertEqual(alignedFrame.size, popoverFrame.size)
+    }
+
     func testDefaultCompactWidthFitsHundredPercentMenuBarLine() {
         let settings = MenuBarDisplaySettings()
         let font = NSFont.systemFont(ofSize: settings.numberFontSize, weight: .medium)

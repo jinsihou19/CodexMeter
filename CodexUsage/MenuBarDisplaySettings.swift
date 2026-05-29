@@ -171,6 +171,20 @@ struct MenuBarDisplaySettings: Equatable {
     }
 }
 
+enum MenuBarPopoverPositioning {
+    static let defaultVerticalGap: CGFloat = 4
+
+    static func alignedFrame(
+        popoverFrame: NSRect,
+        anchorScreenRect: NSRect,
+        verticalGap: CGFloat = defaultVerticalGap
+    ) -> NSRect {
+        var alignedFrame = popoverFrame
+        alignedFrame.origin.y += anchorScreenRect.minY - verticalGap - popoverFrame.maxY
+        return alignedFrame
+    }
+}
+
 extension UsageRemainingTone {
     func statusBarColor(settings: MenuBarDisplaySettings) -> Color {
         settings.color(for: self)

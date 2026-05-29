@@ -103,8 +103,25 @@ final class StatusBarController: NSObject {
         } else {
             NSApp.activate(ignoringOtherApps: true)
             popover.show(relativeTo: sender.bounds, of: sender, preferredEdge: .minY)
+            alignPopoverWindow(to: sender)
             activatePopoverWindow()
         }
+    }
+
+    private func alignPopoverWindow(to sender: NSStatusBarButton) {
+        guard
+            let popoverWindow = popover.contentViewController?.view.window,
+            let senderWindow = sender.window
+        else {
+            return
+        }
+
+        let anchorRect = senderWindow.convertToScreen(sender.convert(sender.bounds, to: nil))
+        let alignedFrame = MenuBarPopoverPositioning.alignedFrame(
+            popoverFrame: popoverWindow.frame,
+            anchorScreenRect: anchorRect
+        )
+        popoverWindow.setFrame(alignedFrame, display: true)
     }
 
     private func activatePopoverWindow() {
