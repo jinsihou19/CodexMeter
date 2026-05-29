@@ -35,7 +35,9 @@ struct MenuBarView: View {
                 }
                 .disabled(viewModel.isRefreshing)
 
-                SettingsLink {
+                Button {
+                    SettingsWindowPresenter.shared.show()
+                } label: {
                     Label("设置", systemImage: "gearshape")
                 }
 

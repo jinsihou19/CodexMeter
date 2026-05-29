@@ -4,6 +4,84 @@ import XCTest
 
 @MainActor
 final class UsageViewModelTests: XCTestCase {
+    func testSettingsWindowPresenterCreatesAndReusesSettingsWindow() {
+        var createdWindowCount = 0
+        let presenter = SettingsWindowPresenter(
+            makeContentViewController: {
+                createdWindowCount += 1
+                return NSViewController()
+            },
+            prepareApplicationForWindow: {},
+            activateApplication: {}
+        )
+
+        let firstWindow = presenter.show()
+        let secondWindow = presenter.show()
+        defer {
+            firstWindow.close()
+        }
+
+        XCTAssertIdentical(firstWindow, secondWindow)
+        XCTAssertEqual(createdWindowCount, 1)
+        XCTAssertTrue(firstWindow.isVisible)
+        XCTAssertFalse(firstWindow.isReleasedWhenClosed)
+    }
+
+    func testSettingsWindowPresenterUnhidesBeforeActivatingApplication() {
+        var events: [String] = []
+        let presenter = SettingsWindowPresenter(
+            makeContentViewController: {
+                NSViewController()
+            },
+            prepareApplicationForWindow: {
+                events.append("unhide")
+            },
+            activateApplication: {
+                events.append("activate")
+            }
+        )
+
+        let window = presenter.show()
+        defer {
+            window.close()
+        }
+
+        XCTAssertEqual(events, ["unhide", "activate"])
+    }
+
+    func testSettingsWindowOpenerActivatesApplicationBeforeShowingSettings() async {
+        var events: [String] = []
+        let opener = SettingsWindowOpener(
+            delayNanoseconds: 0,
+            activateApplication: {
+                events.append("activate")
+            },
+            showSettingsWindow: {
+                events.append("showSettings")
+            }
+        )
+
+        await opener.openAfterDelay()
+
+        XCTAssertEqual(events, ["activate", "showSettings"])
+    }
+
+    func testSettingsWindowOpenerHandlesApplicationReopen() async {
+        var showCount = 0
+        let opener = SettingsWindowOpener(
+            delayNanoseconds: 0,
+            activateApplication: {},
+            showSettingsWindow: {
+                showCount += 1
+            }
+        )
+
+        let shouldHandle = await opener.handleApplicationReopen()
+
+        XCTAssertTrue(shouldHandle)
+        XCTAssertEqual(showCount, 1)
+    }
+
     func testMenuBarDisplaySettingsDefaultToCompactReadableValues() {
         let settings = MenuBarDisplaySettings()
 

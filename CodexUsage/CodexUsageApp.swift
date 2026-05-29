@@ -2,13 +2,16 @@ import AppKit
 import SwiftUI
 
 @main
-struct CodexUsageApp: App {
-    @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
+enum CodexUsageMain {
+    @MainActor private static var appDelegate: AppDelegate?
 
-    var body: some Scene {
-        Settings {
-            SettingsView()
-        }
+    @MainActor
+    static func main() {
+        let application = NSApplication.shared
+        let delegate = AppDelegate()
+        appDelegate = delegate
+        application.delegate = delegate
+        application.run()
     }
 }
 
@@ -16,21 +19,19 @@ struct CodexUsageApp: App {
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private var viewModel: UsageViewModel?
     private var statusBarController: StatusBarController?
+    private let settingsWindowOpener = SettingsWindowOpener()
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         let viewModel = UsageViewModel()
         self.viewModel = viewModel
         statusBarController = StatusBarController(viewModel: viewModel)
         viewModel.start()
-        openSettingsWindow()
+        settingsWindowOpener.open()
     }
 
-    private func openSettingsWindow() {
-        Task { @MainActor in
-            try? await Task.sleep(nanoseconds: 250_000_000)
-            NSApp.activate(ignoringOtherApps: true)
-            NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil)
-        }
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        settingsWindowOpener.openForApplicationReopen()
+        return true
     }
 }
 

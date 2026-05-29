@@ -34,6 +34,11 @@
 		100000000000000000000B02 /* MenuBarDisplaySettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = 100000000000000000000B04 /* MenuBarDisplaySettings.swift */; };
 		100000000000000000000B03 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 100000000000000000000B05 /* SettingsView.swift */; };
 		100000000000000000000B06 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 100000000000000000000B07 /* Assets.xcassets */; };
+		100000000000000000000C01 /* SettingsWindowOpener.swift in Sources */ = {isa = PBXBuildFile; fileRef = 100000000000000000000C03 /* SettingsWindowOpener.swift */; };
+		100000000000000000000C02 /* SettingsWindowOpener.swift in Sources */ = {isa = PBXBuildFile; fileRef = 100000000000000000000C03 /* SettingsWindowOpener.swift */; };
+		100000000000000000000C04 /* SettingsWindowPresenter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 100000000000000000000C06 /* SettingsWindowPresenter.swift */; };
+		100000000000000000000C05 /* SettingsWindowPresenter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 100000000000000000000C06 /* SettingsWindowPresenter.swift */; };
+		100000000000000000000C07 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 100000000000000000000B05 /* SettingsView.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -131,6 +136,8 @@
 		100000000000000000000B04 /* MenuBarDisplaySettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MenuBarDisplaySettings.swift; sourceTree = "<group>"; };
 		100000000000000000000B05 /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
 		100000000000000000000B07 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		100000000000000000000C03 /* SettingsWindowOpener.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsWindowOpener.swift; sourceTree = "<group>"; };
+		100000000000000000000C06 /* SettingsWindowPresenter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsWindowPresenter.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -218,6 +225,8 @@
 			isa = PBXGroup;
 			children = (
 				10000000000000000000001A /* CodexUsageApp.swift */,
+				100000000000000000000C03 /* SettingsWindowOpener.swift */,
+				100000000000000000000C06 /* SettingsWindowPresenter.swift */,
 				10000000000000000000001B /* UsageViewModel.swift */,
 				10000000000000000000001C /* MenuBarView.swift */,
 				100000000000000000000B04 /* MenuBarDisplaySettings.swift */,
@@ -406,6 +415,9 @@
 				100000000000000000000A01 /* UsageViewModelTests.swift in Sources */,
 				100000000000000000000A02 /* UsageViewModel.swift in Sources */,
 				100000000000000000000B02 /* MenuBarDisplaySettings.swift in Sources */,
+				100000000000000000000C02 /* SettingsWindowOpener.swift in Sources */,
+				100000000000000000000C05 /* SettingsWindowPresenter.swift in Sources */,
+				100000000000000000000C07 /* SettingsView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -419,6 +431,8 @@
 				10000000000000000000000E /* DirectCodexUsageClient.swift in Sources */,
 				100000000000000000000B01 /* MenuBarDisplaySettings.swift in Sources */,
 				100000000000000000000B03 /* SettingsView.swift in Sources */,
+				100000000000000000000C01 /* SettingsWindowOpener.swift in Sources */,
+				100000000000000000000C04 /* SettingsWindowPresenter.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
