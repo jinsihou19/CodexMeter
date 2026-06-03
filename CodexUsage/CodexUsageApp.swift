@@ -142,25 +142,25 @@ private struct StatusBarLabel: View {
     @AppStorage(MenuBarPreferenceKeys.goodColorHex) private var goodColorHex = MenuBarDisplaySettings.defaultGoodColorHex
     @AppStorage(MenuBarPreferenceKeys.warningColorHex) private var warningColorHex = MenuBarDisplaySettings.defaultWarningColorHex
     @AppStorage(MenuBarPreferenceKeys.dangerColorHex) private var dangerColorHex = MenuBarDisplaySettings.defaultDangerColorHex
+    @AppStorage(MenuBarPreferenceKeys.showsPrimaryWindow) private var showsPrimaryWindow = MenuBarDisplaySettings.defaultShowsPrimaryWindow
+    @AppStorage(MenuBarPreferenceKeys.showsSecondaryWindow) private var showsSecondaryWindow = MenuBarDisplaySettings.defaultShowsSecondaryWindow
+    @AppStorage(MenuBarPreferenceKeys.showsPercentSymbol) private var showsPercentSymbol = MenuBarDisplaySettings.defaultShowsPercentSymbol
 
     var body: some View {
         let settings = currentSettings
+        let lines = statusLines(settings: settings)
         VStack(spacing: settings.rowSpacing) {
-            statusLine(
-                label: viewModel.menuBarPrimaryLabel,
-                value: viewModel.menuBarPrimaryValue,
-                tone: viewModel.menuBarPrimaryTone,
-                settings: settings
-            )
-            statusLine(
-                label: viewModel.menuBarSecondaryLabel,
-                value: viewModel.menuBarSecondaryValue,
-                tone: viewModel.menuBarSecondaryTone,
-                settings: settings
-            )
+            ForEach(lines) { line in
+                statusLine(
+                    label: line.label,
+                    value: line.value,
+                    tone: line.tone,
+                    settings: settings
+                )
+            }
         }
         .frame(width: settings.statusItemWidth, height: settings.statusLabelHeight, alignment: .center)
-        .accessibilityLabel(Text("\(viewModel.menuBarPrimaryTitle), \(viewModel.menuBarSecondaryTitle)"))
+        .accessibilityLabel(Text(lines.map { "\($0.label) \($0.value)" }.joined(separator: ", ")))
     }
 
     private var currentSettings: MenuBarDisplaySettings {
@@ -172,8 +172,44 @@ private struct StatusBarLabel: View {
             numberFontWeight: MenuBarNumberFontWeight(rawValue: numberFontWeight) ?? .medium,
             goodColorHex: goodColorHex,
             warningColorHex: warningColorHex,
-            dangerColorHex: dangerColorHex
+            dangerColorHex: dangerColorHex,
+            showsPrimaryWindow: showsPrimaryWindow,
+            showsSecondaryWindow: showsSecondaryWindow,
+            showsPercentSymbol: showsPercentSymbol
         )
+    }
+
+    private func statusLines(settings: MenuBarDisplaySettings) -> [StatusLineDisplay] {
+        var lines: [StatusLineDisplay] = []
+        if settings.showsPrimaryWindow {
+            lines.append(StatusLineDisplay(
+                label: viewModel.menuBarPrimaryLabel,
+                value: formattedValue(viewModel.menuBarPrimaryValue, settings: settings),
+                tone: viewModel.menuBarPrimaryTone
+            ))
+        }
+        if settings.showsSecondaryWindow {
+            lines.append(StatusLineDisplay(
+                label: viewModel.menuBarSecondaryLabel,
+                value: formattedValue(viewModel.menuBarSecondaryValue, settings: settings),
+                tone: viewModel.menuBarSecondaryTone
+            ))
+        }
+        if lines.isEmpty {
+            lines.append(StatusLineDisplay(
+                label: viewModel.menuBarPrimaryLabel,
+                value: formattedValue(viewModel.menuBarPrimaryValue, settings: settings),
+                tone: viewModel.menuBarPrimaryTone
+            ))
+        }
+        return lines
+    }
+
+    private func formattedValue(_ value: String, settings: MenuBarDisplaySettings) -> String {
+        guard !settings.showsPercentSymbol, value.hasSuffix("%") else {
+            return value
+        }
+        return String(value.dropLast())
     }
 
     private func statusLine(
@@ -184,7 +220,7 @@ private struct StatusBarLabel: View {
     ) -> some View {
         HStack(alignment: .firstTextBaseline, spacing: settings.itemSpacing) {
             Text(label)
-                .foregroundStyle(.white)
+                .foregroundStyle(.primary)
             Text(value)
                 .foregroundStyle(tone.statusBarColor(settings: settings))
         }
@@ -196,7 +232,21 @@ private struct StatusBarLabel: View {
     }
 }
 
+private struct StatusLineDisplay: Identifiable {
+    let label: String
+    let value: String
+    let tone: UsageRemainingTone
+
+    var id: String {
+        label
+    }
+}
+
 private final class PassthroughHostingView<Content: View>: NSHostingView<Content> {
+    override var allowsVibrancy: Bool {
+        true
+    }
+
     override func hitTest(_ point: NSPoint) -> NSView? {
         nil
     }

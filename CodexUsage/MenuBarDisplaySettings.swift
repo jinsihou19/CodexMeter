@@ -12,6 +12,9 @@ enum MenuBarPreferenceKeys {
     static let goodColorHex = "menuBar.goodColorHex"
     static let warningColorHex = "menuBar.warningColorHex"
     static let dangerColorHex = "menuBar.dangerColorHex"
+    static let showsPrimaryWindow = "menuBar.showsPrimaryWindow"
+    static let showsSecondaryWindow = "menuBar.showsSecondaryWindow"
+    static let showsPercentSymbol = "menuBar.showsPercentSymbol"
 }
 
 enum MenuBarNumberFontWeight: String, CaseIterable, Identifiable {
@@ -82,6 +85,9 @@ struct MenuBarDisplaySettings: Equatable {
     static let defaultGoodColorHex = "#1AB85C"
     static let defaultWarningColorHex = "#F5931A"
     static let defaultDangerColorHex = "#F23838"
+    static let defaultShowsPrimaryWindow = true
+    static let defaultShowsSecondaryWindow = true
+    static let defaultShowsPercentSymbol = true
 
     let layoutDensity: MenuBarLayoutDensity
     let itemSpacing: Double
@@ -91,6 +97,9 @@ struct MenuBarDisplaySettings: Equatable {
     let goodColorHex: String
     let warningColorHex: String
     let dangerColorHex: String
+    let showsPrimaryWindow: Bool
+    let showsSecondaryWindow: Bool
+    let showsPercentSymbol: Bool
 
     init(
         layoutDensity: MenuBarLayoutDensity = Self.defaultLayoutDensity,
@@ -100,7 +109,10 @@ struct MenuBarDisplaySettings: Equatable {
         numberFontWeight: MenuBarNumberFontWeight = Self.defaultNumberFontWeight,
         goodColorHex: String = Self.defaultGoodColorHex,
         warningColorHex: String = Self.defaultWarningColorHex,
-        dangerColorHex: String = Self.defaultDangerColorHex
+        dangerColorHex: String = Self.defaultDangerColorHex,
+        showsPrimaryWindow: Bool = Self.defaultShowsPrimaryWindow,
+        showsSecondaryWindow: Bool = Self.defaultShowsSecondaryWindow,
+        showsPercentSymbol: Bool = Self.defaultShowsPercentSymbol
     ) {
         self.layoutDensity = layoutDensity
         self.itemSpacing = Self.clamp(itemSpacing, min: 0, max: 8)
@@ -110,6 +122,9 @@ struct MenuBarDisplaySettings: Equatable {
         self.goodColorHex = Self.normalizedColorHex(goodColorHex, fallback: Self.defaultGoodColorHex)
         self.warningColorHex = Self.normalizedColorHex(warningColorHex, fallback: Self.defaultWarningColorHex)
         self.dangerColorHex = Self.normalizedColorHex(dangerColorHex, fallback: Self.defaultDangerColorHex)
+        self.showsPrimaryWindow = showsPrimaryWindow || !showsSecondaryWindow
+        self.showsSecondaryWindow = showsSecondaryWindow || !showsPrimaryWindow
+        self.showsPercentSymbol = showsPercentSymbol
     }
 
     init(defaults: UserDefaults = .standard) {
@@ -131,7 +146,13 @@ struct MenuBarDisplaySettings: Equatable {
             warningColorHex: defaults.string(forKey: MenuBarPreferenceKeys.warningColorHex)
                 ?? Self.defaultWarningColorHex,
             dangerColorHex: defaults.string(forKey: MenuBarPreferenceKeys.dangerColorHex)
-                ?? Self.defaultDangerColorHex
+                ?? Self.defaultDangerColorHex,
+            showsPrimaryWindow: defaults.object(forKey: MenuBarPreferenceKeys.showsPrimaryWindow) as? Bool
+                ?? Self.defaultShowsPrimaryWindow,
+            showsSecondaryWindow: defaults.object(forKey: MenuBarPreferenceKeys.showsSecondaryWindow) as? Bool
+                ?? Self.defaultShowsSecondaryWindow,
+            showsPercentSymbol: defaults.object(forKey: MenuBarPreferenceKeys.showsPercentSymbol) as? Bool
+                ?? Self.defaultShowsPercentSymbol
         )
     }
 
@@ -171,6 +192,136 @@ struct MenuBarDisplaySettings: Equatable {
     }
 }
 
+enum MenuBarDisplayPreset: String, CaseIterable, Identifiable {
+    case compact
+    case balanced
+    case relaxed
+
+    var id: String {
+        rawValue
+    }
+
+    var title: String {
+        switch self {
+        case .compact:
+            return "紧凑"
+        case .balanced:
+            return "平衡"
+        case .relaxed:
+            return "宽松"
+        }
+    }
+
+    var summary: String {
+        switch self {
+        case .compact:
+            return "最小占位，适合菜单栏空间紧张"
+        case .balanced:
+            return "稍微放松间距，兼顾占位和可读性"
+        case .relaxed:
+            return "更大字号和行距，优先保证可读"
+        }
+    }
+
+    var symbolName: String {
+        switch self {
+        case .compact:
+            return "rectangle.compress.vertical"
+        case .balanced:
+            return "rectangle.split.2x1"
+        case .relaxed:
+            return "rectangle.expand.vertical"
+        }
+    }
+
+    var settings: MenuBarDisplaySettings {
+        switch self {
+        case .compact:
+            return MenuBarDisplaySettings(
+                layoutDensity: .compact,
+                itemSpacing: 1,
+                rowSpacing: -2,
+                numberFontSize: 9,
+                numberFontWeight: .medium
+            )
+        case .balanced:
+            return MenuBarDisplaySettings(
+                layoutDensity: .normal,
+                itemSpacing: 2,
+                rowSpacing: -1,
+                numberFontSize: 9.5,
+                numberFontWeight: .medium
+            )
+        case .relaxed:
+            return MenuBarDisplaySettings(
+                layoutDensity: .normal,
+                itemSpacing: 3,
+                rowSpacing: 0,
+                numberFontSize: 10.5,
+                numberFontWeight: .semibold
+            )
+        }
+    }
+}
+
+enum MenuBarColorPreset: String, CaseIterable, Identifiable {
+    case standard
+    case soft
+    case highContrast
+
+    var id: String {
+        rawValue
+    }
+
+    var title: String {
+        switch self {
+        case .standard:
+            return "默认"
+        case .soft:
+            return "柔和"
+        case .highContrast:
+            return "高对比"
+        }
+    }
+
+    var summary: String {
+        switch self {
+        case .standard:
+            return "沿用当前绿色、橙色和红色"
+        case .soft:
+            return "降低饱和度，更适合浅色窗口"
+        case .highContrast:
+            return "提升区分度，适合远距离扫读"
+        }
+    }
+
+    var symbolName: String {
+        switch self {
+        case .standard:
+            return "circle.grid.3x3"
+        case .soft:
+            return "paintpalette"
+        case .highContrast:
+            return "circle.lefthalf.filled"
+        }
+    }
+
+    var colors: (goodColorHex: String, warningColorHex: String, dangerColorHex: String) {
+        switch self {
+        case .standard:
+            return (
+                MenuBarDisplaySettings.defaultGoodColorHex,
+                MenuBarDisplaySettings.defaultWarningColorHex,
+                MenuBarDisplaySettings.defaultDangerColorHex
+            )
+        case .soft:
+            return ("#32D583", "#FDB022", "#F97066")
+        case .highContrast:
+            return ("#00C853", "#FFB000", "#FF3B30")
+        }
+    }
+}
+
 enum MenuBarPopoverPositioning {
     static let defaultVerticalGap: CGFloat = 4
 
@@ -182,6 +333,57 @@ enum MenuBarPopoverPositioning {
         var alignedFrame = popoverFrame
         alignedFrame.origin.y += anchorScreenRect.minY - verticalGap - popoverFrame.maxY
         return alignedFrame
+    }
+}
+
+enum MenuBarPreviewAppearance: CaseIterable, Identifiable {
+    case light
+    case dark
+    case translucent
+
+    var id: Self {
+        self
+    }
+
+    var title: String {
+        switch self {
+        case .light:
+            return "浅色"
+        case .dark:
+            return "深色"
+        case .translucent:
+            return "半透明"
+        }
+    }
+}
+
+struct UsageMetricDisplay: Equatable {
+    let title: String
+    let window: RateLimitWindow?
+
+    var remainingText: String {
+        window.map { "\($0.remainingPercent)%" } ?? "--"
+    }
+
+    var usedText: String {
+        window.map { "已用 \(Int($0.usedPercent.rounded()))%" } ?? "已用 --"
+    }
+
+    var windowDurationText: String {
+        guard let minutes = window?.windowDurationMins else {
+            return "窗口 --"
+        }
+        if minutes % 1_440 == 0 {
+            return "窗口 \(minutes / 1_440) 天"
+        }
+        if minutes % 60 == 0 {
+            return "窗口 \(minutes / 60) 小时"
+        }
+        return "窗口 \(minutes) 分钟"
+    }
+
+    var progressValue: Double {
+        Double(window?.remainingPercent ?? 0)
     }
 }
 

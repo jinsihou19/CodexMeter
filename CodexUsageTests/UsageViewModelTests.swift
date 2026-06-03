@@ -27,6 +27,25 @@ final class UsageViewModelTests: XCTestCase {
         XCTAssertFalse(firstWindow.isReleasedWhenClosed)
     }
 
+    func testSettingsWindowUsesExpandedResizableContentSize() {
+        let presenter = SettingsWindowPresenter(
+            makeContentViewController: {
+                NSViewController()
+            },
+            prepareApplicationForWindow: {},
+            activateApplication: {}
+        )
+
+        let window = presenter.show()
+        defer {
+            window.close()
+        }
+
+        XCTAssertGreaterThanOrEqual(window.frame.width, 760)
+        XCTAssertGreaterThanOrEqual(window.frame.height, 540)
+        XCTAssertTrue(window.styleMask.contains(.resizable))
+    }
+
     func testSettingsWindowPresenterUnhidesBeforeActivatingApplication() {
         var events: [String] = []
         let presenter = SettingsWindowPresenter(
@@ -135,6 +154,8 @@ final class UsageViewModelTests: XCTestCase {
         defaults.set("#33aa77", forKey: MenuBarPreferenceKeys.goodColorHex)
         defaults.set("bad-value", forKey: MenuBarPreferenceKeys.warningColorHex)
         defaults.set("#CC2222", forKey: MenuBarPreferenceKeys.dangerColorHex)
+        defaults.set(false, forKey: MenuBarPreferenceKeys.showsSecondaryWindow)
+        defaults.set(false, forKey: MenuBarPreferenceKeys.showsPercentSymbol)
 
         let settings = MenuBarDisplaySettings(defaults: defaults)
 
@@ -147,6 +168,41 @@ final class UsageViewModelTests: XCTestCase {
         XCTAssertEqual(settings.warningColorHex, "#F5931A")
         XCTAssertEqual(settings.dangerColorHex, "#CC2222")
         XCTAssertEqual(settings.statusItemWidth, 40)
+        XCTAssertTrue(settings.showsPrimaryWindow)
+        XCTAssertFalse(settings.showsSecondaryWindow)
+        XCTAssertFalse(settings.showsPercentSymbol)
+    }
+
+    func testMenuBarDisplayPresetAppliesReadableDefaults() {
+        let relaxed = MenuBarDisplayPreset.relaxed.settings
+
+        XCTAssertEqual(relaxed.layoutDensity, .normal)
+        XCTAssertGreaterThan(relaxed.statusItemWidth, MenuBarDisplaySettings().statusItemWidth)
+        XCTAssertGreaterThan(relaxed.rowSpacing, MenuBarDisplaySettings().rowSpacing)
+    }
+
+    func testMenuBarColorPresetAppliesHighContrastColors() {
+        let highContrast = MenuBarColorPreset.highContrast.colors
+
+        XCTAssertEqual(highContrast.goodColorHex, "#00C853")
+        XCTAssertEqual(highContrast.warningColorHex, "#FFB000")
+        XCTAssertEqual(highContrast.dangerColorHex, "#FF3B30")
+    }
+
+    func testSettingsPanelLayoutUsesSingleAlignedColumn() {
+        XCTAssertTrue(SettingsPanelLayout.usesSingleContentColumn)
+        XCTAssertFalse(SettingsPanelLayout.usesTrailingFooterAction)
+        XCTAssertEqual(SettingsPanelLayout.previewAppearanceColumns, 3)
+        XCTAssertEqual(SettingsPanelLayout.displayPresetColumns, 3)
+        XCTAssertEqual(SettingsPanelLayout.colorPresetColumns, 3)
+        XCTAssertEqual(SettingsPanelLayout.sectionSpacing, 12)
+        XCTAssertEqual(SettingsPanelLayout.sectionContentPadding, 12)
+        XCTAssertEqual(SettingsPanelLayout.cardSpacing, 8)
+        XCTAssertFalse(SettingsPanelLayout.previewUsesContentFrame)
+        XCTAssertEqual(SettingsPanelLayout.previewChipVerticalPadding, 9)
+        XCTAssertEqual(SettingsPanelLayout.presetCardMinimumHeight, 74)
+        XCTAssertEqual(SettingsPanelLayout.contentMaxWidth, 720)
+        XCTAssertEqual(SettingsPanelLayout.sidebarWidth, 148)
     }
 
     func testCodexConfigurationInfoHidesAuthSnapshotAndRecentDetails() throws {
@@ -250,6 +306,29 @@ final class UsageViewModelTests: XCTestCase {
 
         XCTAssertEqual(viewModel.menuBarPrimaryTone, .danger)
         XCTAssertEqual(viewModel.menuBarSecondaryTone, .warning)
+    }
+
+    func testMetricDisplayFormatsRemainingUsedAndDuration() {
+        let display = UsageMetricDisplay(
+            title: "5 小时",
+            window: RateLimitWindow(usedPercent: 17.4, windowDurationMins: 300, resetsAt: nil)
+        )
+
+        XCTAssertEqual(display.remainingText, "83%")
+        XCTAssertEqual(display.usedText, "已用 17%")
+        XCTAssertEqual(display.windowDurationText, "窗口 5 小时")
+    }
+
+    func testMetricDisplayUsesPlaceholdersWithoutWindow() {
+        let display = UsageMetricDisplay(title: "7 天", window: nil)
+
+        XCTAssertEqual(display.remainingText, "--")
+        XCTAssertEqual(display.usedText, "已用 --")
+        XCTAssertEqual(display.windowDurationText, "窗口 --")
+    }
+
+    func testSettingsPreviewShowsRealMenuBarBackdrops() {
+        XCTAssertEqual(MenuBarPreviewAppearance.allCases.map(\.title), ["浅色", "深色", "半透明"])
     }
 }
 

@@ -43,9 +43,10 @@ final class SettingsWindowPresenter {
     private func makeWindow() -> NSWindow {
         let settingsWindow = NSWindow(contentViewController: makeContentViewController())
         settingsWindow.title = "Codex 用量设置"
-        settingsWindow.styleMask = [.titled, .closable, .miniaturizable]
+        settingsWindow.styleMask = [.titled, .closable, .miniaturizable, .resizable]
         settingsWindow.isReleasedWhenClosed = false
-        settingsWindow.setContentSize(NSSize(width: 680, height: 430))
+        settingsWindow.setContentSize(NSSize(width: 780, height: 560))
+        settingsWindow.minSize = NSSize(width: 740, height: 520)
         settingsWindow.center()
         return settingsWindow
     }

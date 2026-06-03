@@ -81,18 +81,21 @@ struct MenuBarView: View {
 
     private func usageContent(_ snapshot: UsageSnapshot) -> some View {
         VStack(alignment: .leading, spacing: 12) {
+            VStack(spacing: 10) {
+                UsageMetricCard(
+                    display: UsageMetricDisplay(title: "5 小时窗口", window: snapshot.rateLimits.primary),
+                    resetText: formatter.resetTime(epochSeconds: snapshot.rateLimits.primary?.resetsAt),
+                    tone: tone(for: snapshot.rateLimits.primary)
+                )
+                UsageMetricCard(
+                    display: UsageMetricDisplay(title: "7 天窗口", window: snapshot.rateLimits.secondary),
+                    resetText: formatter.resetTime(epochSeconds: snapshot.rateLimits.secondary?.resetsAt),
+                    tone: tone(for: snapshot.rateLimits.secondary)
+                )
+            }
+
             InfoRow(title: "套餐", value: snapshot.rateLimits.planType ?? "--")
             InfoRow(title: "用量桶", value: snapshot.rateLimits.displayName)
-            MetricRow(
-                title: "5 小时窗口",
-                window: snapshot.rateLimits.primary,
-                resetText: formatter.resetTime(epochSeconds: snapshot.rateLimits.primary?.resetsAt)
-            )
-            MetricRow(
-                title: "7 天窗口",
-                window: snapshot.rateLimits.secondary,
-                resetText: formatter.resetTime(epochSeconds: snapshot.rateLimits.secondary?.resetsAt)
-            )
             InfoRow(title: "credits", value: formatter.creditsStatus(snapshot.rateLimits.credits))
             InfoRow(title: "限制状态", value: snapshot.rateLimits.rateLimitReachedType ?? "未触发")
             InfoRow(title: "最近同步", value: formatter.fetchedAt(snapshot.fetchedAt))
@@ -103,47 +106,65 @@ struct MenuBarView: View {
             }
         }
     }
+
+    private func tone(for window: RateLimitWindow?) -> UsageRemainingTone {
+        guard let remainingPercent = window?.remainingPercent else {
+            return .unavailable
+        }
+        if remainingPercent < 40 {
+            return .danger
+        }
+        if remainingPercent < 70 {
+            return .warning
+        }
+        return .good
+    }
 }
 
-private struct MetricRow: View {
-    let title: String
-    let window: RateLimitWindow?
+private struct UsageMetricCard: View {
+    let display: UsageMetricDisplay
     let resetText: String
+    let tone: UsageRemainingTone
+
+    private let settings = MenuBarDisplaySettings()
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack {
-                Text(title)
-                    .font(.subheadline.weight(.semibold))
+        VStack(alignment: .leading, spacing: 9) {
+            HStack(alignment: .firstTextBaseline) {
+                Text(display.title)
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
                 Spacer()
-                Text(window.map { "剩余 \($0.remainingPercent)%" } ?? "剩余 --")
-                    .font(.subheadline.monospacedDigit().weight(.semibold))
+                Text("重置 \(resetText)")
+                    .font(.caption.monospacedDigit())
+                    .foregroundStyle(.secondary)
             }
-            ProgressView(value: Double(window?.remainingPercent ?? 0), total: 100)
-            HStack {
-                Text(window.map { "已用 \(Int($0.usedPercent.rounded()))%" } ?? "已用 --")
+
+            HStack(alignment: .lastTextBaseline, spacing: 6) {
+                Text(display.remainingText)
+                    .font(.system(size: 30, weight: .semibold, design: .rounded))
+                    .monospacedDigit()
+                    .foregroundStyle(tone.statusBarColor(settings: settings))
+                Text("剩余")
+                    .font(.caption.weight(.medium))
+                    .foregroundStyle(.secondary)
                 Spacer()
-                Text(windowDurationText)
             }
-            .font(.caption)
-            .foregroundStyle(.secondary)
-            Text("重置 \(resetText)")
+
+            ProgressView(value: display.progressValue, total: 100)
+                .tint(tone.statusBarColor(settings: settings))
+
+            HStack {
+                Text(display.usedText)
+                Spacer()
+                Text(display.windowDurationText)
+            }
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }
-    }
-
-    private var windowDurationText: String {
-        guard let minutes = window?.windowDurationMins else {
-            return "窗口 --"
-        }
-        if minutes % 1_440 == 0 {
-            return "窗口 \(minutes / 1_440) 天"
-        }
-        if minutes % 60 == 0 {
-            return "窗口 \(minutes / 60) 小时"
-        }
-        return "窗口 \(minutes) 分钟"
+        .padding(12)
+        .background(Color(nsColor: .controlBackgroundColor).opacity(0.62))
+        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
     }
 }
 
