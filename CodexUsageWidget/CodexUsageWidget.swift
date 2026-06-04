@@ -53,6 +53,9 @@ struct CodexUsageWidgetView: View {
     let entry: CodexUsageEntry
     @Environment(\.widgetFamily) private var family
     private let formatter = UsageFormatter()
+    private var settings: MenuBarDisplaySettings {
+        MenuBarDisplaySettings(defaults: MenuBarDisplaySettings.sharedDefaults)
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: contentSpacing) {
@@ -88,17 +91,15 @@ struct CodexUsageWidgetView: View {
     }
 
     private func usageRows(_ snapshot: UsageSnapshot) -> some View {
-        VStack(alignment: .leading, spacing: family == .systemSmall ? 6 : 8) {
-            WidgetMetric(
-                title: "5 小时",
-                window: snapshot.rateLimits.primary,
-                resetText: formatter.widgetResetClock(epochSeconds: snapshot.rateLimits.primary?.resetsAt)
-            )
-            WidgetMetric(
-                title: "7 天",
-                window: snapshot.rateLimits.secondary,
-                resetText: formatter.widgetResetDate(epochSeconds: snapshot.rateLimits.secondary?.resetsAt)
-            )
+        let display = CodexUsageWidgetDisplay(
+            snapshot: snapshot,
+            settings: settings,
+            formatter: formatter
+        )
+        return VStack(alignment: .leading, spacing: family == .systemSmall ? 6 : 8) {
+            ForEach(display.lines) { line in
+                WidgetMetric(display: line, settings: settings)
+            }
         }
     }
 
@@ -120,26 +121,27 @@ struct CodexUsageWidgetView: View {
 }
 
 private struct WidgetMetric: View {
-    let title: String
-    let window: RateLimitWindow?
-    let resetText: String
+    let display: CodexUsageWidgetDisplay.Line
+    let settings: MenuBarDisplaySettings
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             HStack(alignment: .firstTextBaseline, spacing: 8) {
-                Text(title)
+                Text(display.title)
                     .font(.callout)
                     .foregroundStyle(.secondary)
                 Spacer()
-                Text(window.map { "\($0.remainingPercent)%" } ?? "--")
-                    .font(.callout.monospacedDigit().weight(.semibold))
-                Text(resetText)
+                Text(display.value)
+                    .font(.system(size: 13, weight: settings.numberFontWeight.fontWeight).monospacedDigit())
+                    .foregroundStyle(display.tone.statusBarColor(settings: settings))
+                Text(display.resetText)
                     .font(.callout.monospacedDigit())
                     .foregroundStyle(.secondary)
             }
             .lineLimit(1)
             .minimumScaleFactor(0.75)
-            ProgressView(value: Double(window?.remainingPercent ?? 0), total: 100)
+            ProgressView(value: display.progressValue, total: 100)
+                .tint(display.tone.statusBarColor(settings: settings))
         }
     }
 }

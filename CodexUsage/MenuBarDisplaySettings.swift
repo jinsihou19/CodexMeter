@@ -3,195 +3,6 @@ import CodexUsageShared
 import Foundation
 import SwiftUI
 
-enum MenuBarPreferenceKeys {
-    static let layoutDensity = "menuBar.layoutDensity"
-    static let itemSpacing = "menuBar.itemSpacing"
-    static let rowSpacing = "menuBar.rowSpacing"
-    static let numberFontSize = "menuBar.numberFontSize"
-    static let numberFontWeight = "menuBar.numberFontWeight"
-    static let goodColorHex = "menuBar.goodColorHex"
-    static let warningColorHex = "menuBar.warningColorHex"
-    static let dangerColorHex = "menuBar.dangerColorHex"
-    static let showsPrimaryWindow = "menuBar.showsPrimaryWindow"
-    static let showsSecondaryWindow = "menuBar.showsSecondaryWindow"
-    static let showsPercentSymbol = "menuBar.showsPercentSymbol"
-}
-
-enum MenuBarNumberFontWeight: String, CaseIterable, Identifiable {
-    case regular
-    case medium
-    case semibold
-
-    var id: String {
-        rawValue
-    }
-
-    var title: String {
-        switch self {
-        case .regular:
-            return "偏细"
-        case .medium:
-            return "适中"
-        case .semibold:
-            return "偏粗"
-        }
-    }
-
-    var fontWeight: Font.Weight {
-        switch self {
-        case .regular:
-            return .regular
-        case .medium:
-            return .medium
-        case .semibold:
-            return .semibold
-        }
-    }
-}
-
-enum MenuBarLayoutDensity: String, CaseIterable, Identifiable {
-    case compact
-    case normal
-
-    var id: String {
-        rawValue
-    }
-
-    var title: String {
-        switch self {
-        case .compact:
-            return "紧凑"
-        case .normal:
-            return "正常"
-        }
-    }
-
-    var statusItemWidth: CGFloat {
-        switch self {
-        case .compact:
-            return 38
-        case .normal:
-            return 40
-        }
-    }
-}
-
-struct MenuBarDisplaySettings: Equatable {
-    static let defaultLayoutDensity = MenuBarLayoutDensity.compact
-    static let defaultItemSpacing = 1.0
-    static let defaultRowSpacing = -2.0
-    static let defaultNumberFontSize = 9.0
-    static let defaultNumberFontWeight = MenuBarNumberFontWeight.medium
-    static let defaultGoodColorHex = "#1AB85C"
-    static let defaultWarningColorHex = "#F5931A"
-    static let defaultDangerColorHex = "#F23838"
-    static let defaultShowsPrimaryWindow = true
-    static let defaultShowsSecondaryWindow = true
-    static let defaultShowsPercentSymbol = true
-
-    let layoutDensity: MenuBarLayoutDensity
-    let itemSpacing: Double
-    let rowSpacing: Double
-    let numberFontSize: Double
-    let numberFontWeight: MenuBarNumberFontWeight
-    let goodColorHex: String
-    let warningColorHex: String
-    let dangerColorHex: String
-    let showsPrimaryWindow: Bool
-    let showsSecondaryWindow: Bool
-    let showsPercentSymbol: Bool
-
-    init(
-        layoutDensity: MenuBarLayoutDensity = Self.defaultLayoutDensity,
-        itemSpacing: Double = Self.defaultItemSpacing,
-        rowSpacing: Double = Self.defaultRowSpacing,
-        numberFontSize: Double = Self.defaultNumberFontSize,
-        numberFontWeight: MenuBarNumberFontWeight = Self.defaultNumberFontWeight,
-        goodColorHex: String = Self.defaultGoodColorHex,
-        warningColorHex: String = Self.defaultWarningColorHex,
-        dangerColorHex: String = Self.defaultDangerColorHex,
-        showsPrimaryWindow: Bool = Self.defaultShowsPrimaryWindow,
-        showsSecondaryWindow: Bool = Self.defaultShowsSecondaryWindow,
-        showsPercentSymbol: Bool = Self.defaultShowsPercentSymbol
-    ) {
-        self.layoutDensity = layoutDensity
-        self.itemSpacing = Self.clamp(itemSpacing, min: 0, max: 8)
-        self.rowSpacing = Self.clamp(rowSpacing, min: -5, max: 6)
-        self.numberFontSize = Self.clamp(numberFontSize, min: 7, max: 13)
-        self.numberFontWeight = numberFontWeight
-        self.goodColorHex = Self.normalizedColorHex(goodColorHex, fallback: Self.defaultGoodColorHex)
-        self.warningColorHex = Self.normalizedColorHex(warningColorHex, fallback: Self.defaultWarningColorHex)
-        self.dangerColorHex = Self.normalizedColorHex(dangerColorHex, fallback: Self.defaultDangerColorHex)
-        self.showsPrimaryWindow = showsPrimaryWindow || !showsSecondaryWindow
-        self.showsSecondaryWindow = showsSecondaryWindow || !showsPrimaryWindow
-        self.showsPercentSymbol = showsPercentSymbol
-    }
-
-    init(defaults: UserDefaults = .standard) {
-        self.init(
-            layoutDensity: MenuBarLayoutDensity(
-                rawValue: defaults.string(forKey: MenuBarPreferenceKeys.layoutDensity) ?? ""
-            ) ?? Self.defaultLayoutDensity,
-            itemSpacing: defaults.object(forKey: MenuBarPreferenceKeys.itemSpacing) as? Double
-                ?? Self.defaultItemSpacing,
-            rowSpacing: defaults.object(forKey: MenuBarPreferenceKeys.rowSpacing) as? Double
-                ?? Self.defaultRowSpacing,
-            numberFontSize: defaults.object(forKey: MenuBarPreferenceKeys.numberFontSize) as? Double
-                ?? Self.defaultNumberFontSize,
-            numberFontWeight: MenuBarNumberFontWeight(
-                rawValue: defaults.string(forKey: MenuBarPreferenceKeys.numberFontWeight) ?? ""
-            ) ?? Self.defaultNumberFontWeight,
-            goodColorHex: defaults.string(forKey: MenuBarPreferenceKeys.goodColorHex)
-                ?? Self.defaultGoodColorHex,
-            warningColorHex: defaults.string(forKey: MenuBarPreferenceKeys.warningColorHex)
-                ?? Self.defaultWarningColorHex,
-            dangerColorHex: defaults.string(forKey: MenuBarPreferenceKeys.dangerColorHex)
-                ?? Self.defaultDangerColorHex,
-            showsPrimaryWindow: defaults.object(forKey: MenuBarPreferenceKeys.showsPrimaryWindow) as? Bool
-                ?? Self.defaultShowsPrimaryWindow,
-            showsSecondaryWindow: defaults.object(forKey: MenuBarPreferenceKeys.showsSecondaryWindow) as? Bool
-                ?? Self.defaultShowsSecondaryWindow,
-            showsPercentSymbol: defaults.object(forKey: MenuBarPreferenceKeys.showsPercentSymbol) as? Bool
-                ?? Self.defaultShowsPercentSymbol
-        )
-    }
-
-    var statusItemWidth: CGFloat {
-        layoutDensity.statusItemWidth
-    }
-
-    var statusLabelHeight: CGFloat {
-        22
-    }
-
-    func color(for tone: UsageRemainingTone) -> Color {
-        switch tone {
-        case .unavailable:
-            return Color(nsColor: .secondaryLabelColor)
-        case .good:
-            return Color(hexRGB: goodColorHex)
-        case .warning:
-            return Color(hexRGB: warningColorHex)
-        case .danger:
-            return Color(hexRGB: dangerColorHex)
-        }
-    }
-
-    static func normalizedColorHex(_ value: String, fallback: String) -> String {
-        let candidate = value.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
-        let prefixed = candidate.hasPrefix("#") ? candidate : "#\(candidate)"
-        let pattern = /^#[0-9A-F]{6}$/
-        if prefixed.wholeMatch(of: pattern) != nil {
-            return prefixed
-        }
-        return fallback
-    }
-
-    private static func clamp(_ value: Double, min: Double, max: Double) -> Double {
-        Swift.max(min, Swift.min(max, value))
-    }
-}
-
 enum MenuBarDisplayPreset: String, CaseIterable, Identifiable {
     case compact
     case balanced
@@ -262,6 +73,17 @@ enum MenuBarDisplayPreset: String, CaseIterable, Identifiable {
             )
         }
     }
+
+    static func matchingPreset(for settings: MenuBarDisplaySettings) -> MenuBarDisplayPreset? {
+        allCases.first { preset in
+            let presetSettings = preset.settings
+            return settings.layoutDensity == presetSettings.layoutDensity
+                && settings.itemSpacing == presetSettings.itemSpacing
+                && settings.rowSpacing == presetSettings.rowSpacing
+                && settings.numberFontSize == presetSettings.numberFontSize
+                && settings.numberFontWeight == presetSettings.numberFontWeight
+        }
+    }
 }
 
 enum MenuBarColorPreset: String, CaseIterable, Identifiable {
@@ -318,6 +140,32 @@ enum MenuBarColorPreset: String, CaseIterable, Identifiable {
             return ("#32D583", "#FDB022", "#F97066")
         case .highContrast:
             return ("#00C853", "#FFB000", "#FF3B30")
+        }
+    }
+
+    static func matchingPreset(
+        for colors: (goodColorHex: String, warningColorHex: String, dangerColorHex: String)
+    ) -> MenuBarColorPreset? {
+        let normalizedColors = (
+            goodColorHex: MenuBarDisplaySettings.normalizedColorHex(
+                colors.goodColorHex,
+                fallback: MenuBarDisplaySettings.defaultGoodColorHex
+            ),
+            warningColorHex: MenuBarDisplaySettings.normalizedColorHex(
+                colors.warningColorHex,
+                fallback: MenuBarDisplaySettings.defaultWarningColorHex
+            ),
+            dangerColorHex: MenuBarDisplaySettings.normalizedColorHex(
+                colors.dangerColorHex,
+                fallback: MenuBarDisplaySettings.defaultDangerColorHex
+            )
+        )
+
+        return allCases.first { preset in
+            let presetColors = preset.colors
+            return normalizedColors.goodColorHex == presetColors.goodColorHex
+                && normalizedColors.warningColorHex == presetColors.warningColorHex
+                && normalizedColors.dangerColorHex == presetColors.dangerColorHex
         }
     }
 }
@@ -387,9 +235,34 @@ struct UsageMetricDisplay: Equatable {
     }
 }
 
-extension UsageRemainingTone {
-    func statusBarColor(settings: MenuBarDisplaySettings) -> Color {
-        settings.color(for: self)
+struct SettingsPreviewData: Equatable {
+    let primaryValue: String
+    let secondaryValue: String
+    let primaryTone: UsageRemainingTone
+    let secondaryTone: UsageRemainingTone
+
+    init(snapshot: UsageSnapshot?) {
+        self.primaryValue = Self.value(for: snapshot?.rateLimits.primary)
+        self.secondaryValue = Self.value(for: snapshot?.rateLimits.secondary)
+        self.primaryTone = Self.tone(for: snapshot?.rateLimits.primary?.remainingPercent)
+        self.secondaryTone = Self.tone(for: snapshot?.rateLimits.secondary?.remainingPercent)
+    }
+
+    private static func value(for window: RateLimitWindow?) -> String {
+        window.map { "\($0.remainingPercent)%" } ?? "--"
+    }
+
+    private static func tone(for remainingPercent: Int?) -> UsageRemainingTone {
+        guard let remainingPercent else {
+            return .unavailable
+        }
+        if remainingPercent < 40 {
+            return .danger
+        }
+        if remainingPercent < 70 {
+            return .warning
+        }
+        return .good
     }
 }
 
@@ -433,22 +306,6 @@ struct CodexConfigurationInfo: Equatable {
 }
 
 extension Color {
-    init(hexRGB: String) {
-        let normalized = MenuBarDisplaySettings.normalizedColorHex(
-            hexRGB,
-            fallback: MenuBarDisplaySettings.defaultGoodColorHex
-        )
-        let value = String(normalized.dropFirst())
-        let scanner = Scanner(string: value)
-        var hexNumber: UInt64 = 0
-        scanner.scanHexInt64(&hexNumber)
-        self.init(
-            red: Double((hexNumber & 0xFF0000) >> 16) / 255,
-            green: Double((hexNumber & 0x00FF00) >> 8) / 255,
-            blue: Double(hexNumber & 0x0000FF) / 255
-        )
-    }
-
     var hexRGB: String? {
         guard let color = NSColor(self).usingColorSpace(.deviceRGB) else {
             return nil

@@ -1,28 +1,7 @@
 import CodexUsageShared
 import Foundation
 import OSLog
-import SwiftUI
 import WidgetKit
-
-enum UsageRemainingTone: Equatable {
-    case unavailable
-    case good
-    case warning
-    case danger
-
-    var statusBarColor: Color {
-        switch self {
-        case .unavailable:
-            return Color(nsColor: .secondaryLabelColor)
-        case .good:
-            return Color(red: 0.10, green: 0.70, blue: 0.36)
-        case .warning:
-            return Color(red: 0.96, green: 0.58, blue: 0.10)
-        case .danger:
-            return Color(red: 0.95, green: 0.22, blue: 0.22)
-        }
-    }
-}
 
 @MainActor
 final class UsageViewModel: ObservableObject {
@@ -167,16 +146,7 @@ final class UsageViewModel: ObservableObject {
     }
 
     private static func tone(for remainingPercent: Int?) -> UsageRemainingTone {
-        guard let remainingPercent else {
-            return .unavailable
-        }
-        if remainingPercent < 40 {
-            return .danger
-        }
-        if remainingPercent < 70 {
-            return .warning
-        }
-        return .good
+        UsageRemainingTone(remainingPercent: remainingPercent)
     }
 }
 

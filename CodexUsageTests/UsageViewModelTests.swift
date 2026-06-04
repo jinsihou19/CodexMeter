@@ -173,6 +173,110 @@ final class UsageViewModelTests: XCTestCase {
         XCTAssertFalse(settings.showsPercentSymbol)
     }
 
+    func testMenuBarDisplaySettingsDefaultInitializerIgnoresSharedDefaults() {
+        let suiteName = "CodexUsageTests.shared.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defer {
+            defaults.removePersistentDomain(forName: suiteName)
+        }
+        defaults.set(MenuBarLayoutDensity.normal.rawValue, forKey: MenuBarPreferenceKeys.layoutDensity)
+
+        let defaultSettings = MenuBarDisplaySettings()
+        let storedSettings = MenuBarDisplaySettings(defaults: defaults)
+
+        XCTAssertEqual(defaultSettings.layoutDensity, .compact)
+        XCTAssertEqual(storedSettings.layoutDensity, .normal)
+    }
+
+    func testMenuBarDisplaySettingsMigratesStandardDefaultsToSharedDefaults() {
+        let standardSuiteName = "CodexUsageTests.standard.\(UUID().uuidString)"
+        let sharedSuiteName = "CodexUsageTests.shared.\(UUID().uuidString)"
+        let standardDefaults = UserDefaults(suiteName: standardSuiteName)!
+        let sharedDefaults = UserDefaults(suiteName: sharedSuiteName)!
+        defer {
+            standardDefaults.removePersistentDomain(forName: standardSuiteName)
+            sharedDefaults.removePersistentDomain(forName: sharedSuiteName)
+        }
+
+        standardDefaults.set(MenuBarLayoutDensity.normal.rawValue, forKey: MenuBarPreferenceKeys.layoutDensity)
+        standardDefaults.set("#00C853", forKey: MenuBarPreferenceKeys.goodColorHex)
+        standardDefaults.set(false, forKey: MenuBarPreferenceKeys.showsSecondaryWindow)
+
+        MenuBarDisplaySettings.migrateStandardDefaultsToSharedDefaults(
+            standardDefaults: standardDefaults,
+            sharedDefaults: sharedDefaults
+        )
+
+        XCTAssertEqual(sharedDefaults.string(forKey: MenuBarPreferenceKeys.layoutDensity), MenuBarLayoutDensity.normal.rawValue)
+        XCTAssertEqual(sharedDefaults.string(forKey: MenuBarPreferenceKeys.goodColorHex), "#00C853")
+        XCTAssertFalse(sharedDefaults.bool(forKey: MenuBarPreferenceKeys.showsSecondaryWindow))
+    }
+
+    func testMenuBarDisplaySettingsPostsImmediateChangeNotification() {
+        let suiteName = "CodexUsageTests.shared.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defer {
+            defaults.removePersistentDomain(forName: suiteName)
+        }
+        let expectation = expectation(description: "menu bar display settings changed")
+        let observer = NotificationCenter.default.addObserver(
+            forName: .menuBarDisplaySettingsDidChange,
+            object: defaults,
+            queue: nil
+        ) { _ in
+            expectation.fulfill()
+        }
+        defer {
+            NotificationCenter.default.removeObserver(observer)
+        }
+
+        MenuBarDisplaySettings.notifyDidChange(defaults: defaults)
+
+        wait(for: [expectation], timeout: 1)
+    }
+
+    func testSettingsResetActionRemainsVisibleAtDefaults() {
+        let defaultState = SettingsResetActionState(settings: MenuBarDisplaySettings())
+        let customState = SettingsResetActionState(settings: MenuBarDisplaySettings(numberFontSize: 11))
+
+        XCTAssertTrue(defaultState.isVisible)
+        XCTAssertFalse(defaultState.isEnabled)
+        XCTAssertTrue(customState.isVisible)
+        XCTAssertTrue(customState.isEnabled)
+    }
+
+    func testWidgetDisplayUsesMenuBarDisplaySettings() {
+        let snapshot = UsageSnapshot(
+            fetchedAt: Date(timeIntervalSince1970: 1_779_940_000),
+            rateLimits: RateLimitSnapshot(
+                limitId: "codex",
+                limitName: nil,
+                primary: RateLimitWindow(usedPercent: 45, windowDurationMins: 300, resetsAt: 1_779_949_290),
+                secondary: RateLimitWindow(usedPercent: 45, windowDurationMins: 10_080, resetsAt: 1_780_392_047),
+                credits: nil,
+                planType: nil,
+                rateLimitReachedType: nil
+            )
+        )
+        let settings = MenuBarDisplaySettings(
+            warningColorHex: "#FFB000",
+            showsSecondaryWindow: false,
+            showsPercentSymbol: false
+        )
+
+        let display = CodexUsageWidgetDisplay(
+            snapshot: snapshot,
+            settings: settings,
+            formatter: UsageFormatter(locale: Locale(identifier: "en_US_POSIX"), timeZone: .gmt)
+        )
+
+        XCTAssertEqual(display.lines.map(\.title), ["5 小时"])
+        XCTAssertEqual(display.lines.map(\.value), ["55"])
+        XCTAssertEqual(display.lines.first?.resetText, "06:21")
+        XCTAssertEqual(display.lines.first?.tone, .warning)
+        XCTAssertEqual(settings.colorHex(for: display.lines.first?.tone ?? .unavailable), "#FFB000")
+    }
+
     func testMenuBarDisplayPresetAppliesReadableDefaults() {
         let relaxed = MenuBarDisplayPreset.relaxed.settings
 
@@ -181,12 +285,49 @@ final class UsageViewModelTests: XCTestCase {
         XCTAssertGreaterThan(relaxed.rowSpacing, MenuBarDisplaySettings().rowSpacing)
     }
 
+    func testMenuBarDisplayPresetMatchesCurrentSettings() {
+        XCTAssertEqual(MenuBarDisplayPreset.matchingPreset(for: MenuBarDisplayPreset.compact.settings), .compact)
+        XCTAssertEqual(MenuBarDisplayPreset.matchingPreset(for: MenuBarDisplayPreset.balanced.settings), .balanced)
+        XCTAssertEqual(MenuBarDisplayPreset.matchingPreset(for: MenuBarDisplayPreset.relaxed.settings), .relaxed)
+
+        let custom = MenuBarDisplaySettings(
+            layoutDensity: .normal,
+            itemSpacing: 4,
+            rowSpacing: 1,
+            numberFontSize: 11,
+            numberFontWeight: .regular
+        )
+
+        XCTAssertNil(MenuBarDisplayPreset.matchingPreset(for: custom))
+    }
+
     func testMenuBarColorPresetAppliesHighContrastColors() {
         let highContrast = MenuBarColorPreset.highContrast.colors
 
         XCTAssertEqual(highContrast.goodColorHex, "#00C853")
         XCTAssertEqual(highContrast.warningColorHex, "#FFB000")
         XCTAssertEqual(highContrast.dangerColorHex, "#FF3B30")
+    }
+
+    func testMenuBarColorPresetMatchesCurrentColors() {
+        XCTAssertEqual(MenuBarColorPreset.matchingPreset(for: MenuBarColorPreset.standard.colors), .standard)
+        XCTAssertEqual(MenuBarColorPreset.matchingPreset(for: MenuBarColorPreset.soft.colors), .soft)
+        XCTAssertEqual(MenuBarColorPreset.matchingPreset(for: MenuBarColorPreset.highContrast.colors), .highContrast)
+        XCTAssertNil(MenuBarColorPreset.matchingPreset(for: ("#111111", "#222222", "#333333")))
+    }
+
+    func testMenuBarDisplaySettingsDetectsDefaultValues() {
+        XCTAssertTrue(MenuBarDisplaySettings().usesDefaultValues)
+
+        XCTAssertFalse(
+            MenuBarDisplaySettings(
+                layoutDensity: .normal,
+                itemSpacing: MenuBarDisplaySettings.defaultItemSpacing,
+                rowSpacing: MenuBarDisplaySettings.defaultRowSpacing,
+                numberFontSize: MenuBarDisplaySettings.defaultNumberFontSize,
+                numberFontWeight: MenuBarDisplaySettings.defaultNumberFontWeight
+            ).usesDefaultValues
+        )
     }
 
     func testSettingsPanelLayoutUsesSingleAlignedColumn() {
@@ -329,6 +470,37 @@ final class UsageViewModelTests: XCTestCase {
 
     func testSettingsPreviewShowsRealMenuBarBackdrops() {
         XCTAssertEqual(MenuBarPreviewAppearance.allCases.map(\.title), ["浅色", "深色", "半透明"])
+    }
+
+    func testSettingsPreviewDataUsesSnapshotValuesAndTones() {
+        let snapshot = UsageSnapshot(
+            fetchedAt: Date(timeIntervalSince1970: 1_779_940_000),
+            rateLimits: RateLimitSnapshot(
+                limitId: "codex",
+                limitName: nil,
+                primary: RateLimitWindow(usedPercent: 15, windowDurationMins: 300, resetsAt: nil),
+                secondary: RateLimitWindow(usedPercent: 63, windowDurationMins: 10_080, resetsAt: nil),
+                credits: nil,
+                planType: nil,
+                rateLimitReachedType: nil
+            )
+        )
+
+        let previewData = SettingsPreviewData(snapshot: snapshot)
+
+        XCTAssertEqual(previewData.primaryValue, "85%")
+        XCTAssertEqual(previewData.secondaryValue, "37%")
+        XCTAssertEqual(previewData.primaryTone, .good)
+        XCTAssertEqual(previewData.secondaryTone, .danger)
+    }
+
+    func testSettingsPreviewDataFallsBackToReadablePlaceholders() {
+        let previewData = SettingsPreviewData(snapshot: nil)
+
+        XCTAssertEqual(previewData.primaryValue, "--")
+        XCTAssertEqual(previewData.secondaryValue, "--")
+        XCTAssertEqual(previewData.primaryTone, .unavailable)
+        XCTAssertEqual(previewData.secondaryTone, .unavailable)
     }
 }
 

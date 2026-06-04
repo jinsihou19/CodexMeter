@@ -4,6 +4,9 @@ import SwiftUI
 struct MenuBarView: View {
     @ObservedObject var viewModel: UsageViewModel
     private let formatter = UsageFormatter()
+    private var settings: MenuBarDisplaySettings {
+        MenuBarDisplaySettings(defaults: MenuBarDisplaySettings.sharedDefaults)
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -85,12 +88,14 @@ struct MenuBarView: View {
                 UsageMetricCard(
                     display: UsageMetricDisplay(title: "5 小时窗口", window: snapshot.rateLimits.primary),
                     resetText: formatter.resetTime(epochSeconds: snapshot.rateLimits.primary?.resetsAt),
-                    tone: tone(for: snapshot.rateLimits.primary)
+                    tone: tone(for: snapshot.rateLimits.primary),
+                    settings: settings
                 )
                 UsageMetricCard(
                     display: UsageMetricDisplay(title: "7 天窗口", window: snapshot.rateLimits.secondary),
                     resetText: formatter.resetTime(epochSeconds: snapshot.rateLimits.secondary?.resetsAt),
-                    tone: tone(for: snapshot.rateLimits.secondary)
+                    tone: tone(for: snapshot.rateLimits.secondary),
+                    settings: settings
                 )
             }
 
@@ -99,25 +104,11 @@ struct MenuBarView: View {
             InfoRow(title: "credits", value: formatter.creditsStatus(snapshot.rateLimits.credits))
             InfoRow(title: "限制状态", value: snapshot.rateLimits.rateLimitReachedType ?? "未触发")
             InfoRow(title: "最近同步", value: formatter.fetchedAt(snapshot.fetchedAt))
-            if viewModel.isStale {
-                Label("数据可能已过期", systemImage: "clock.badge.exclamationmark")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
         }
     }
 
     private func tone(for window: RateLimitWindow?) -> UsageRemainingTone {
-        guard let remainingPercent = window?.remainingPercent else {
-            return .unavailable
-        }
-        if remainingPercent < 40 {
-            return .danger
-        }
-        if remainingPercent < 70 {
-            return .warning
-        }
-        return .good
+        UsageRemainingTone(remainingPercent: window?.remainingPercent)
     }
 }
 
@@ -125,8 +116,7 @@ private struct UsageMetricCard: View {
     let display: UsageMetricDisplay
     let resetText: String
     let tone: UsageRemainingTone
-
-    private let settings = MenuBarDisplaySettings()
+    let settings: MenuBarDisplaySettings
 
     var body: some View {
         VStack(alignment: .leading, spacing: 9) {

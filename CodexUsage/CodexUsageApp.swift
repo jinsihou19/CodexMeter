@@ -1,4 +1,5 @@
 import AppKit
+import CodexUsageShared
 import SwiftUI
 
 @main
@@ -22,6 +23,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let settingsWindowOpener = SettingsWindowOpener()
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        MenuBarDisplaySettings.migrateStandardDefaultsToSharedDefaults()
         let viewModel = UsageViewModel()
         self.viewModel = viewModel
         statusBarController = StatusBarController(viewModel: viewModel)
@@ -40,11 +42,14 @@ final class StatusBarController: NSObject {
     private let viewModel: UsageViewModel
     private let statusItem: NSStatusItem
     private let popover = NSPopover()
-    private var defaultsObserver: NSObjectProtocol?
+    private var statusLabel: PassthroughHostingView<StatusBarLabel>?
+    private var defaultsObservers: [NSObjectProtocol] = []
 
     init(viewModel: UsageViewModel) {
         self.viewModel = viewModel
-        self.statusItem = NSStatusBar.system.statusItem(withLength: MenuBarDisplaySettings().statusItemWidth)
+        self.statusItem = NSStatusBar.system.statusItem(
+            withLength: MenuBarDisplaySettings(defaults: MenuBarDisplaySettings.sharedDefaults).statusItemWidth
+        )
         super.init()
         configureStatusItem()
         configurePopover()
@@ -62,7 +67,11 @@ final class StatusBarController: NSObject {
         button.target = self
         button.action = #selector(togglePopover(_:))
 
-        let label = PassthroughHostingView(rootView: StatusBarLabel(viewModel: viewModel))
+        let label = PassthroughHostingView(rootView: StatusBarLabel(
+            viewModel: viewModel,
+            settings: MenuBarDisplaySettings(defaults: MenuBarDisplaySettings.sharedDefaults)
+        ))
+        statusLabel = label
         label.translatesAutoresizingMaskIntoConstraints = false
         button.addSubview(label)
 
@@ -76,25 +85,29 @@ final class StatusBarController: NSObject {
 
     private func configurePopover() {
         popover.behavior = .transient
-        popover.contentSize = NSSize(width: 320, height: 520)
+        popover.contentSize = NSSize(width: 320, height: 455)
         popover.contentViewController = NSHostingController(rootView: MenuBarView(viewModel: viewModel))
     }
 
     private func observeSettings() {
-        defaultsObserver = NotificationCenter.default.addObserver(
-            forName: UserDefaults.didChangeNotification,
-            object: nil,
+        let observer = NotificationCenter.default.addObserver(
+            forName: .menuBarDisplaySettingsDidChange,
+            object: MenuBarDisplaySettings.sharedDefaults,
             queue: .main
         ) { [weak self] _ in
             Task { @MainActor in
                 self?.applySettings()
             }
         }
+        defaultsObservers.append(observer)
         applySettings()
     }
 
     private func applySettings() {
-        statusItem.length = MenuBarDisplaySettings(defaults: .standard).statusItemWidth
+        let settings = MenuBarDisplaySettings(defaults: MenuBarDisplaySettings.sharedDefaults)
+        statusItem.length = settings.statusItemWidth
+        statusLabel?.rootView = StatusBarLabel(viewModel: viewModel, settings: settings)
+        popover.contentViewController = NSHostingController(rootView: MenuBarView(viewModel: viewModel))
     }
 
     @objc private func togglePopover(_ sender: NSStatusBarButton) {
@@ -134,20 +147,9 @@ final class StatusBarController: NSObject {
 
 private struct StatusBarLabel: View {
     @ObservedObject var viewModel: UsageViewModel
-    @AppStorage(MenuBarPreferenceKeys.layoutDensity) private var layoutDensity = MenuBarDisplaySettings.defaultLayoutDensity.rawValue
-    @AppStorage(MenuBarPreferenceKeys.itemSpacing) private var itemSpacing = MenuBarDisplaySettings.defaultItemSpacing
-    @AppStorage(MenuBarPreferenceKeys.rowSpacing) private var rowSpacing = MenuBarDisplaySettings.defaultRowSpacing
-    @AppStorage(MenuBarPreferenceKeys.numberFontSize) private var numberFontSize = MenuBarDisplaySettings.defaultNumberFontSize
-    @AppStorage(MenuBarPreferenceKeys.numberFontWeight) private var numberFontWeight = MenuBarDisplaySettings.defaultNumberFontWeight.rawValue
-    @AppStorage(MenuBarPreferenceKeys.goodColorHex) private var goodColorHex = MenuBarDisplaySettings.defaultGoodColorHex
-    @AppStorage(MenuBarPreferenceKeys.warningColorHex) private var warningColorHex = MenuBarDisplaySettings.defaultWarningColorHex
-    @AppStorage(MenuBarPreferenceKeys.dangerColorHex) private var dangerColorHex = MenuBarDisplaySettings.defaultDangerColorHex
-    @AppStorage(MenuBarPreferenceKeys.showsPrimaryWindow) private var showsPrimaryWindow = MenuBarDisplaySettings.defaultShowsPrimaryWindow
-    @AppStorage(MenuBarPreferenceKeys.showsSecondaryWindow) private var showsSecondaryWindow = MenuBarDisplaySettings.defaultShowsSecondaryWindow
-    @AppStorage(MenuBarPreferenceKeys.showsPercentSymbol) private var showsPercentSymbol = MenuBarDisplaySettings.defaultShowsPercentSymbol
+    let settings: MenuBarDisplaySettings
 
     var body: some View {
-        let settings = currentSettings
         let lines = statusLines(settings: settings)
         VStack(spacing: settings.rowSpacing) {
             ForEach(lines) { line in
@@ -161,22 +163,6 @@ private struct StatusBarLabel: View {
         }
         .frame(width: settings.statusItemWidth, height: settings.statusLabelHeight, alignment: .center)
         .accessibilityLabel(Text(lines.map { "\($0.label) \($0.value)" }.joined(separator: ", ")))
-    }
-
-    private var currentSettings: MenuBarDisplaySettings {
-        MenuBarDisplaySettings(
-            layoutDensity: MenuBarLayoutDensity(rawValue: layoutDensity) ?? .compact,
-            itemSpacing: itemSpacing,
-            rowSpacing: rowSpacing,
-            numberFontSize: numberFontSize,
-            numberFontWeight: MenuBarNumberFontWeight(rawValue: numberFontWeight) ?? .medium,
-            goodColorHex: goodColorHex,
-            warningColorHex: warningColorHex,
-            dangerColorHex: dangerColorHex,
-            showsPrimaryWindow: showsPrimaryWindow,
-            showsSecondaryWindow: showsSecondaryWindow,
-            showsPercentSymbol: showsPercentSymbol
-        )
     }
 
     private func statusLines(settings: MenuBarDisplaySettings) -> [StatusLineDisplay] {

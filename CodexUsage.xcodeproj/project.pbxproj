@@ -21,6 +21,7 @@
 		10000000000000000000000C /* UsageViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 10000000000000000000001B /* UsageViewModel.swift */; };
 		10000000000000000000000D /* MenuBarView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 10000000000000000000001C /* MenuBarView.swift */; };
 		10000000000000000000000E /* DirectCodexUsageClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 100000000000000000000019 /* DirectCodexUsageClient.swift */; };
+		100000000000000000000E01 /* MenuBarDisplaySettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = 100000000000000000000E02 /* MenuBarDisplaySettings.swift */; };
 		10000000000000000000000F /* CodexUsageShared.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 100000000000000000000021 /* CodexUsageShared.framework */; };
 		100000000000000000000010 /* CodexUsageShared.framework in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = 100000000000000000000021 /* CodexUsageShared.framework */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
 		100000000000000000000020 /* CodexUsageWidgetExtension.appex in Embed App Extensions */ = {isa = PBXBuildFile; fileRef = 100000000000000000000024 /* CodexUsageWidgetExtension.appex */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
@@ -39,6 +40,14 @@
 		100000000000000000000C04 /* SettingsWindowPresenter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 100000000000000000000C06 /* SettingsWindowPresenter.swift */; };
 		100000000000000000000C05 /* SettingsWindowPresenter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 100000000000000000000C06 /* SettingsWindowPresenter.swift */; };
 		100000000000000000000C07 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 100000000000000000000B05 /* SettingsView.swift */; };
+		100000000000000000000D05 /* SettingsPanelLayout.swift in Sources */ = {isa = PBXBuildFile; fileRef = 100000000000000000000D01 /* SettingsPanelLayout.swift */; };
+		100000000000000000000D06 /* SettingsPanelLayout.swift in Sources */ = {isa = PBXBuildFile; fileRef = 100000000000000000000D01 /* SettingsPanelLayout.swift */; };
+		100000000000000000000D07 /* SettingsSections.swift in Sources */ = {isa = PBXBuildFile; fileRef = 100000000000000000000D02 /* SettingsSections.swift */; };
+		100000000000000000000D08 /* SettingsSections.swift in Sources */ = {isa = PBXBuildFile; fileRef = 100000000000000000000D02 /* SettingsSections.swift */; };
+		100000000000000000000D09 /* SettingsControls.swift in Sources */ = {isa = PBXBuildFile; fileRef = 100000000000000000000D03 /* SettingsControls.swift */; };
+		100000000000000000000D0A /* SettingsControls.swift in Sources */ = {isa = PBXBuildFile; fileRef = 100000000000000000000D03 /* SettingsControls.swift */; };
+		100000000000000000000D0B /* SettingsPreview.swift in Sources */ = {isa = PBXBuildFile; fileRef = 100000000000000000000D04 /* SettingsPreview.swift */; };
+		100000000000000000000D0C /* SettingsPreview.swift in Sources */ = {isa = PBXBuildFile; fileRef = 100000000000000000000D04 /* SettingsPreview.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -134,10 +143,15 @@
 		10000000000000000000002E /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		100000000000000000000A03 /* UsageViewModelTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UsageViewModelTests.swift; sourceTree = "<group>"; };
 		100000000000000000000B04 /* MenuBarDisplaySettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MenuBarDisplaySettings.swift; sourceTree = "<group>"; };
+		100000000000000000000E02 /* MenuBarDisplaySettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MenuBarDisplaySettings.swift; sourceTree = "<group>"; };
 		100000000000000000000B05 /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
 		100000000000000000000B07 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		100000000000000000000C03 /* SettingsWindowOpener.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsWindowOpener.swift; sourceTree = "<group>"; };
 		100000000000000000000C06 /* SettingsWindowPresenter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsWindowPresenter.swift; sourceTree = "<group>"; };
+		100000000000000000000D01 /* SettingsPanelLayout.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsPanelLayout.swift; sourceTree = "<group>"; };
+		100000000000000000000D02 /* SettingsSections.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsSections.swift; sourceTree = "<group>"; };
+		100000000000000000000D03 /* SettingsControls.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsControls.swift; sourceTree = "<group>"; };
+		100000000000000000000D04 /* SettingsPreview.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsPreview.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -193,6 +207,7 @@
 				100000000000000000000016 /* UsageModels.swift */,
 				100000000000000000000017 /* UsageFormatter.swift */,
 				100000000000000000000018 /* UsageSnapshotStore.swift */,
+				100000000000000000000E02 /* MenuBarDisplaySettings.swift */,
 			);
 			path = CodexUsageShared;
 			sourceTree = "<group>";
@@ -231,6 +246,10 @@
 				10000000000000000000001C /* MenuBarView.swift */,
 				100000000000000000000B04 /* MenuBarDisplaySettings.swift */,
 				100000000000000000000B05 /* SettingsView.swift */,
+				100000000000000000000D01 /* SettingsPanelLayout.swift */,
+				100000000000000000000D02 /* SettingsSections.swift */,
+				100000000000000000000D03 /* SettingsControls.swift */,
+				100000000000000000000D04 /* SettingsPreview.swift */,
 				100000000000000000000019 /* DirectCodexUsageClient.swift */,
 				100000000000000000000B07 /* Assets.xcassets */,
 				10000000000000000000001D /* Info.plist */,
@@ -400,6 +419,7 @@
 				100000000000000000000007 /* UsageModels.swift in Sources */,
 				100000000000000000000008 /* UsageFormatter.swift in Sources */,
 				100000000000000000000009 /* UsageSnapshotStore.swift in Sources */,
+				100000000000000000000E01 /* MenuBarDisplaySettings.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -418,6 +438,10 @@
 				100000000000000000000C02 /* SettingsWindowOpener.swift in Sources */,
 				100000000000000000000C05 /* SettingsWindowPresenter.swift in Sources */,
 				100000000000000000000C07 /* SettingsView.swift in Sources */,
+				100000000000000000000D06 /* SettingsPanelLayout.swift in Sources */,
+				100000000000000000000D08 /* SettingsSections.swift in Sources */,
+				100000000000000000000D0A /* SettingsControls.swift in Sources */,
+				100000000000000000000D0C /* SettingsPreview.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -431,6 +455,10 @@
 				10000000000000000000000E /* DirectCodexUsageClient.swift in Sources */,
 				100000000000000000000B01 /* MenuBarDisplaySettings.swift in Sources */,
 				100000000000000000000B03 /* SettingsView.swift in Sources */,
+				100000000000000000000D05 /* SettingsPanelLayout.swift in Sources */,
+				100000000000000000000D07 /* SettingsSections.swift in Sources */,
+				100000000000000000000D09 /* SettingsControls.swift in Sources */,
+				100000000000000000000D0B /* SettingsPreview.swift in Sources */,
 				100000000000000000000C01 /* SettingsWindowOpener.swift in Sources */,
 				100000000000000000000C04 /* SettingsWindowPresenter.swift in Sources */,
 			);
