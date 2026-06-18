@@ -94,7 +94,8 @@ struct CodexUsageWidgetView: View {
         let display = CodexUsageWidgetDisplay(
             snapshot: snapshot,
             settings: settings,
-            formatter: formatter
+            formatter: formatter,
+            now: entry.date
         )
         return VStack(alignment: .leading, spacing: family == .systemSmall ? 6 : 8) {
             ForEach(display.lines) { line in

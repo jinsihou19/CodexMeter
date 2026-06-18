@@ -48,12 +48,27 @@ private struct MenuBarPreviewSample: View {
     let data: SettingsPreviewData
 
     var body: some View {
-        VStack(spacing: settings.rowSpacing) {
-            ForEach(previewLines) { line in
-                previewLine(label: line.label, value: line.value, tone: line.tone)
+        HStack(spacing: settings.showsMenuBarIcon ? MenuBarDisplaySettings.menuBarIconTextSpacing : 0) {
+            if settings.showsMenuBarIcon {
+                Image("OpenAIStatusIcon")
+                    .resizable()
+                    .renderingMode(.template)
+                    .scaledToFit()
+                    .frame(
+                        width: MenuBarDisplaySettings.menuBarIconWidth,
+                        height: MenuBarDisplaySettings.menuBarIconWidth
+                    )
+                    .foregroundStyle(labelColor)
+                    .accessibilityHidden(true)
+            }
+
+            VStack(alignment: textColumnAlignment, spacing: lineSpacing) {
+                ForEach(previewLines) { line in
+                    previewLine(label: line.label, value: line.value, tone: line.tone)
+                }
             }
         }
-        .frame(width: settings.statusItemWidth, height: settings.statusLabelHeight)
+        .frame(width: sampleWidth, height: settings.statusLabelHeight)
         .padding(.horizontal, 8)
         .padding(.vertical, SettingsPanelLayout.previewSampleVerticalPadding)
         .background(sampleBackground)
@@ -64,18 +79,54 @@ private struct MenuBarPreviewSample: View {
         )
     }
 
-    private var previewLines: [SettingsPreviewLine] {
-        var lines: [SettingsPreviewLine] = []
+    private var previewLines: [StatusLineDisplay] {
+        if settings.contentMode == .paceComparison {
+            return [
+                StatusLineDisplay(
+                    id: "pace-remaining",
+                    label: "",
+                    value: formattedValue(data.paceRemainingValue),
+                    tone: data.paceRemainingTone
+                ),
+                StatusLineDisplay(
+                    id: "pace-delta",
+                    label: "",
+                    value: data.paceDeltaValue,
+                    tone: data.paceTone
+                )
+            ]
+        }
+
+        var lines: [StatusLineDisplay] = []
         if settings.showsPrimaryWindow {
-            lines.append(SettingsPreviewLine(label: "5h", value: formattedValue(data.primaryValue), tone: data.primaryTone))
+            lines.append(StatusLineDisplay(
+                id: "primary",
+                label: "5h",
+                value: formattedValue(data.primaryValue),
+                tone: data.primaryTone
+            ))
         }
         if settings.showsSecondaryWindow {
-            lines.append(SettingsPreviewLine(label: "7d", value: formattedValue(data.secondaryValue), tone: data.secondaryTone))
+            lines.append(StatusLineDisplay(
+                id: "secondary",
+                label: "7d",
+                value: formattedValue(data.secondaryValue),
+                tone: data.secondaryTone
+            ))
         }
         if lines.isEmpty {
-            lines.append(SettingsPreviewLine(label: "5h", value: formattedValue(data.primaryValue), tone: data.primaryTone))
+            lines.append(StatusLineDisplay(
+                id: "fallback-primary",
+                label: "5h",
+                value: formattedValue(data.primaryValue),
+                tone: data.primaryTone
+            ))
         }
         return lines
+    }
+
+    private var sampleWidth: CGFloat {
+        StatusBarDisplayMetrics.statusItemWidth(for: previewLines, settings: settings)
     }
 
     private func formattedValue(_ value: String) -> String {
@@ -119,27 +170,37 @@ private struct MenuBarPreviewSample: View {
         }
     }
 
+    /// 设置页预览使用同一行距设置，确保 Pace 和剩余额度的预览都响应“两行行距”。
+    private var lineSpacing: Double {
+        settings.rowSpacing
+    }
+
+    /// 预览字号完全跟随设置页，确保预览和菜单栏真实显示一致。
+    private var previewFontSize: Double {
+        settings.numberFontSize
+    }
+
+    private var previewFontWeight: Font.Weight {
+        settings.numberFontWeight.fontWeight
+    }
+
+    private var textColumnAlignment: HorizontalAlignment {
+        settings.showsMenuBarIcon ? .trailing : .center
+    }
+
     private func previewLine(label: String, value: String, tone: UsageRemainingTone) -> some View {
         HStack(alignment: .firstTextBaseline, spacing: settings.itemSpacing) {
-            Text(label)
-                .foregroundStyle(labelColor)
+            if !label.isEmpty {
+                Text(label)
+                    .foregroundStyle(labelColor)
+            }
             Text(value)
                 .foregroundStyle(tone.statusBarColor(settings: settings))
         }
-        .font(.system(size: settings.numberFontSize, weight: settings.numberFontWeight.fontWeight))
+        .font(.system(size: previewFontSize, weight: previewFontWeight))
         .monospacedDigit()
         .lineLimit(1)
         .minimumScaleFactor(0.78)
-    }
-}
-
-private struct SettingsPreviewLine: Identifiable {
-    let label: String
-    let value: String
-    let tone: UsageRemainingTone
-
-    var id: String {
-        label
     }
 }
 

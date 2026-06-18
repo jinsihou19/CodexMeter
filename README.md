@@ -1,11 +1,11 @@
 # CodexUsage
 
-macOS menu bar app plus WidgetKit widget for showing the local Codex quota snapshot.
+macOS menu bar app plus WidgetKit widget for showing Codex quota and profile usage.
 
 ## What It Shows
 
-- Menu bar title: `5h 83%` and `7d 89%`
-- Popover: plan type, 5 hour remaining quota, 7 day remaining quota, reset times, credits status, last sync time
+- Menu bar title: usage pace like `43% · -11%`, with a setting to switch back to `5h 83%` and `7d 89%`
+- Popover: plan type, 5 hour remaining quota, 7 day remaining quota, extra Codex Spark limits, reset times, credits status, token activity, profile stats, common plugins, and last sync time
 - Desktop widget: latest cached 5 hour and 7 day quota snapshot
 
 ## Data Source
@@ -13,8 +13,9 @@ macOS menu bar app plus WidgetKit widget for showing the local Codex quota snaps
 The app reads the local Codex auth token from `CODEX_HOME/auth.json` or `~/.codex/auth.json` and calls:
 
 1. `GET https://chatgpt.com/backend-api/wham/usage`
+2. `GET https://chatgpt.com/backend-api/wham/profiles/me`
 
-The token is used only in memory for the request. There is no secondary data source or fallback client.
+The token is used only in memory for the request. There is no local Codex log scanner or process-based fallback client.
 
 ## Build And Test
 

@@ -104,15 +104,19 @@ final class UsageViewModelTests: XCTestCase {
     func testMenuBarDisplaySettingsDefaultToCompactReadableValues() {
         let settings = MenuBarDisplaySettings()
 
+        XCTAssertEqual(settings.contentMode, .remainingWindows)
         XCTAssertEqual(settings.layoutDensity, .compact)
-        XCTAssertEqual(settings.itemSpacing, 1)
-        XCTAssertEqual(settings.rowSpacing, -2)
-        XCTAssertEqual(settings.numberFontSize, 9)
+        XCTAssertEqual(settings.itemSpacing, 2)
+        XCTAssertEqual(settings.rowSpacing, -1)
+        XCTAssertEqual(settings.numberFontSize, 9.5)
         XCTAssertEqual(settings.numberFontWeight, .medium)
         XCTAssertEqual(settings.goodColorHex, "#1AB85C")
         XCTAssertEqual(settings.warningColorHex, "#F5931A")
         XCTAssertEqual(settings.dangerColorHex, "#F23838")
-        XCTAssertEqual(settings.statusItemWidth, 38)
+        XCTAssertFalse(settings.showsAdditionalLimits)
+        XCTAssertFalse(settings.showsMenuBarIcon)
+        XCTAssertEqual(settings.statusItemWidth, 42)
+        XCTAssertEqual(MenuBarDisplayPreset.matchingPreset(for: settings), .balanced)
     }
 
     func testPopoverFrameAlignsJustBelowStatusItemAnchor() {
@@ -156,6 +160,8 @@ final class UsageViewModelTests: XCTestCase {
         defaults.set("#CC2222", forKey: MenuBarPreferenceKeys.dangerColorHex)
         defaults.set(false, forKey: MenuBarPreferenceKeys.showsSecondaryWindow)
         defaults.set(false, forKey: MenuBarPreferenceKeys.showsPercentSymbol)
+        defaults.set(true, forKey: MenuBarPreferenceKeys.showsAdditionalLimits)
+        defaults.set(true, forKey: MenuBarPreferenceKeys.showsMenuBarIcon)
 
         let settings = MenuBarDisplaySettings(defaults: defaults)
 
@@ -167,10 +173,61 @@ final class UsageViewModelTests: XCTestCase {
         XCTAssertEqual(settings.goodColorHex, "#33AA77")
         XCTAssertEqual(settings.warningColorHex, "#F5931A")
         XCTAssertEqual(settings.dangerColorHex, "#CC2222")
-        XCTAssertEqual(settings.statusItemWidth, 40)
+        XCTAssertEqual(settings.statusItemWidth, 61)
         XCTAssertTrue(settings.showsPrimaryWindow)
         XCTAssertFalse(settings.showsSecondaryWindow)
         XCTAssertFalse(settings.showsPercentSymbol)
+        XCTAssertTrue(settings.showsAdditionalLimits)
+        XCTAssertTrue(settings.showsMenuBarIcon)
+    }
+
+    func testStatusBarWidthUsesPaceContentInsteadOfRemainingFallbackWhenIconShown() {
+        let settings = MenuBarDisplaySettings(
+            contentMode: .paceComparison,
+            showsMenuBarIcon: true
+        )
+        let lines = [
+            StatusLineDisplay(id: "pace-remaining", label: "", value: "49%", tone: .warning),
+            StatusLineDisplay(id: "pace-delta", label: "", value: "-32%", tone: .good)
+        ]
+
+        let width = StatusBarDisplayMetrics.statusItemWidth(for: lines, settings: settings)
+        let textWidth = lines
+            .map { StatusBarDisplayMetrics.lineWidth(for: $0, settings: settings) }
+            .max() ?? 0
+        let expectedWidth = ceil(
+            MenuBarDisplaySettings.menuBarIconWidth
+                + MenuBarDisplaySettings.menuBarIconTextSpacing
+                + textWidth
+        )
+
+        XCTAssertEqual(MenuBarDisplaySettings.menuBarIconTextSpacing, 2)
+        XCTAssertEqual(width, expectedWidth, accuracy: 0.001)
+        XCTAssertLessThan(width, settings.statusItemWidth)
+    }
+
+    func testStatusBarWidthKeepsRemainingModeWiderThanPaceWhenLabelsAreShown() {
+        let paceSettings = MenuBarDisplaySettings(
+            contentMode: .paceComparison,
+            showsMenuBarIcon: true
+        )
+        let remainingSettings = MenuBarDisplaySettings(
+            contentMode: .remainingWindows,
+            showsMenuBarIcon: true
+        )
+        let paceLines = [
+            StatusLineDisplay(id: "pace-remaining", label: "", value: "49%", tone: .warning),
+            StatusLineDisplay(id: "pace-delta", label: "", value: "-32%", tone: .good)
+        ]
+        let remainingLines = [
+            StatusLineDisplay(id: "primary", label: "5h", value: "49%", tone: .warning),
+            StatusLineDisplay(id: "secondary", label: "7d", value: "51%", tone: .warning)
+        ]
+
+        let paceWidth = StatusBarDisplayMetrics.statusItemWidth(for: paceLines, settings: paceSettings)
+        let remainingWidth = StatusBarDisplayMetrics.statusItemWidth(for: remainingLines, settings: remainingSettings)
+
+        XCTAssertGreaterThan(remainingWidth, paceWidth)
     }
 
     func testMenuBarDisplaySettingsDefaultInitializerIgnoresSharedDefaults() {
@@ -210,6 +267,37 @@ final class UsageViewModelTests: XCTestCase {
         XCTAssertEqual(sharedDefaults.string(forKey: MenuBarPreferenceKeys.layoutDensity), MenuBarLayoutDensity.normal.rawValue)
         XCTAssertEqual(sharedDefaults.string(forKey: MenuBarPreferenceKeys.goodColorHex), "#00C853")
         XCTAssertFalse(sharedDefaults.bool(forKey: MenuBarPreferenceKeys.showsSecondaryWindow))
+    }
+
+    func testMenuBarDisplaySettingsMigratesLegacyDefaultsToCurrentDefaults() {
+        let suiteName = "CodexUsageTests.legacy.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defer {
+            defaults.removePersistentDomain(forName: suiteName)
+        }
+
+        defaults.set(MenuBarContentMode.paceComparison.rawValue, forKey: MenuBarPreferenceKeys.contentMode)
+        defaults.set(MenuBarLayoutDensity.compact.rawValue, forKey: MenuBarPreferenceKeys.layoutDensity)
+        defaults.set(1.0, forKey: MenuBarPreferenceKeys.itemSpacing)
+        defaults.set(-2.0, forKey: MenuBarPreferenceKeys.rowSpacing)
+        defaults.set(9.0, forKey: MenuBarPreferenceKeys.numberFontSize)
+        defaults.set(MenuBarNumberFontWeight.medium.rawValue, forKey: MenuBarPreferenceKeys.numberFontWeight)
+        defaults.set(false, forKey: MenuBarPreferenceKeys.showsMenuBarIcon)
+
+        MenuBarDisplaySettings.migrateLegacyDisplayDefaults(defaults: defaults)
+
+        let settings = MenuBarDisplaySettings(defaults: defaults)
+        XCTAssertEqual(settings.contentMode, .remainingWindows)
+        XCTAssertEqual(settings.layoutDensity, .compact)
+        XCTAssertEqual(settings.itemSpacing, 2)
+        XCTAssertEqual(settings.rowSpacing, -1)
+        XCTAssertEqual(settings.numberFontSize, 9.5)
+        XCTAssertEqual(settings.numberFontWeight, .medium)
+        XCTAssertFalse(settings.showsMenuBarIcon)
+        XCTAssertEqual(
+            defaults.integer(forKey: MenuBarPreferenceKeys.displayDefaultsVersion),
+            MenuBarDisplaySettings.currentDisplayDefaultsVersion
+        )
     }
 
     func testMenuBarDisplaySettingsPostsImmediateChangeNotification() {
@@ -267,12 +355,13 @@ final class UsageViewModelTests: XCTestCase {
         let display = CodexUsageWidgetDisplay(
             snapshot: snapshot,
             settings: settings,
-            formatter: UsageFormatter(locale: Locale(identifier: "en_US_POSIX"), timeZone: .gmt)
+            formatter: UsageFormatter(locale: Locale(identifier: "en_US_POSIX"), timeZone: .gmt),
+            now: Date(timeIntervalSince1970: 1_779_940_000)
         )
 
         XCTAssertEqual(display.lines.map(\.title), ["5 小时"])
         XCTAssertEqual(display.lines.map(\.value), ["55"])
-        XCTAssertEqual(display.lines.first?.resetText, "06:21")
+        XCTAssertEqual(display.lines.first?.resetText, "2 小时 34 分后")
         XCTAssertEqual(display.lines.first?.tone, .warning)
         XCTAssertEqual(settings.colorHex(for: display.lines.first?.tone ?? .unavailable), "#FFB000")
     }
@@ -364,9 +453,10 @@ final class UsageViewModelTests: XCTestCase {
         )
 
         XCTAssertEqual(info.endpoint, "https://chatgpt.com/backend-api/wham/usage")
+        XCTAssertEqual(info.profileEndpoint, "https://chatgpt.com/backend-api/wham/profiles/me")
         XCTAssertEqual(info.codexHomePath, codexHome.path)
         XCTAssertTrue(info.authFileExists)
-        XCTAssertEqual(info.displayRows.map(\.title), ["数据来源", "接口", "CODEX_HOME", "登录信息"])
+        XCTAssertEqual(info.displayRows.map(\.title), ["数据来源", "接口", "Profile", "CODEX_HOME", "登录信息"])
         let displayText = info.displayRows.map { "\($0.title) \($0.value)" }.joined(separator: "\n")
         XCTAssertFalse(displayText.contains("secret-token-value"))
         XCTAssertFalse(displayText.contains("auth.json"))
@@ -468,6 +558,42 @@ final class UsageViewModelTests: XCTestCase {
         XCTAssertEqual(display.windowDurationText, "窗口 --")
     }
 
+    func testUsagePaceDisplayUsesPrimaryRemainingAndSecondaryPaceDelta() {
+        let display = UsagePaceDisplay(
+            rateLimits: RateLimitSnapshot(
+                limitId: "codex",
+                limitName: nil,
+                primary: RateLimitWindow(usedPercent: 2, windowDurationMins: 300, resetsAt: 4_000),
+                secondary: RateLimitWindow(usedPercent: 40, windowDurationMins: 100, resetsAt: 4_000),
+                credits: nil,
+                planType: nil,
+                rateLimitReachedType: nil
+            ),
+            now: Date(timeIntervalSince1970: 1_000)
+        )
+
+        XCTAssertEqual(display?.valueText, "98% · -10%")
+        XCTAssertEqual(display?.compactValueText, "98%·-10%")
+        XCTAssertEqual(display?.detailText, "有余量 10% · 可持续到重置")
+        XCTAssertEqual(display?.tone, .good)
+    }
+
+    func testUsagePaceDisplayMarksFastUsageAsDeficit() {
+        let display = UsagePaceDisplay(
+            percentWindow: RateLimitWindow(usedPercent: 2, windowDurationMins: 300, resetsAt: 4_000),
+            paceWindow: RateLimitWindow(
+                usedPercent: 70,
+                windowDurationMins: 100,
+                resetsAt: 4_000
+            ),
+            now: Date(timeIntervalSince1970: 1_000)
+        )
+
+        XCTAssertEqual(display?.valueText, "98% · +20%")
+        XCTAssertEqual(display?.detailText, "用得偏快 20% · 预计 21分后用完")
+        XCTAssertEqual(display?.tone, .danger)
+    }
+
     func testSettingsPreviewShowsRealMenuBarBackdrops() {
         XCTAssertEqual(MenuBarPreviewAppearance.allCases.map(\.title), ["浅色", "深色", "半透明"])
     }
@@ -492,6 +618,9 @@ final class UsageViewModelTests: XCTestCase {
         XCTAssertEqual(previewData.secondaryValue, "37%")
         XCTAssertEqual(previewData.primaryTone, .good)
         XCTAssertEqual(previewData.secondaryTone, .danger)
+        XCTAssertEqual(previewData.paceRemainingValue, "--")
+        XCTAssertEqual(previewData.paceDeltaValue, "--")
+        XCTAssertEqual(previewData.paceRemainingTone, .unavailable)
     }
 
     func testSettingsPreviewDataFallsBackToReadablePlaceholders() {
@@ -501,6 +630,9 @@ final class UsageViewModelTests: XCTestCase {
         XCTAssertEqual(previewData.secondaryValue, "--")
         XCTAssertEqual(previewData.primaryTone, .unavailable)
         XCTAssertEqual(previewData.secondaryTone, .unavailable)
+        XCTAssertEqual(previewData.paceRemainingValue, "--")
+        XCTAssertEqual(previewData.paceDeltaValue, "--")
+        XCTAssertEqual(previewData.paceRemainingTone, .unavailable)
     }
 }
 

@@ -57,7 +57,7 @@ enum MenuBarDisplayPreset: String, CaseIterable, Identifiable {
             )
         case .balanced:
             return MenuBarDisplaySettings(
-                layoutDensity: .normal,
+                layoutDensity: .compact,
                 itemSpacing: 2,
                 rowSpacing: -1,
                 numberFontSize: 9.5,
@@ -240,12 +240,25 @@ struct SettingsPreviewData: Equatable {
     let secondaryValue: String
     let primaryTone: UsageRemainingTone
     let secondaryTone: UsageRemainingTone
+    let paceValue: String
+    let compactPaceValue: String
+    let paceRemainingValue: String
+    let paceDeltaValue: String
+    let paceRemainingTone: UsageRemainingTone
+    let paceTone: UsageRemainingTone
 
     init(snapshot: UsageSnapshot?) {
         self.primaryValue = Self.value(for: snapshot?.rateLimits.primary)
         self.secondaryValue = Self.value(for: snapshot?.rateLimits.secondary)
         self.primaryTone = Self.tone(for: snapshot?.rateLimits.primary?.remainingPercent)
         self.secondaryTone = Self.tone(for: snapshot?.rateLimits.secondary?.remainingPercent)
+        let paceDisplay = UsagePaceDisplay(rateLimits: snapshot?.rateLimits)
+        self.paceValue = paceDisplay?.valueText ?? "-- · --"
+        self.compactPaceValue = paceDisplay?.compactValueText ?? "--·--"
+        self.paceRemainingValue = paceDisplay.map { "\($0.remainingPercent)%" } ?? "--"
+        self.paceDeltaValue = paceDisplay?.deltaText ?? "--"
+        self.paceRemainingTone = Self.tone(for: paceDisplay?.remainingPercent)
+        self.paceTone = paceDisplay?.tone ?? .unavailable
     }
 
     private static func value(for window: RateLimitWindow?) -> String {
@@ -266,6 +279,249 @@ struct SettingsPreviewData: Equatable {
     }
 }
 
+struct UsagePaceDisplay: Equatable {
+    let remainingPercent: Int
+    let deltaPercent: Int
+    let expectedUsedPercent: Int
+    let etaSeconds: TimeInterval?
+    let willLastToReset: Bool
+
+    init?(rateLimits: RateLimitSnapshot?, now: Date = Date()) {
+        self.init(
+            percentWindow: rateLimits?.paceComparisonPercentWindow,
+            paceWindow: rateLimits?.paceComparisonPaceWindow,
+            now: now
+        )
+    }
+
+    init?(
+        percentWindow: RateLimitWindow?,
+        paceWindow: RateLimitWindow?,
+        now: Date = Date()
+    ) {
+        guard let percentWindow, let pace = paceWindow?.usagePace(now: now) else {
+            return nil
+        }
+        self.remainingPercent = percentWindow.remainingPercent
+        self.deltaPercent = pace.roundedDeltaPercent
+        self.expectedUsedPercent = pace.roundedExpectedUsedPercent
+        self.etaSeconds = pace.etaSeconds
+        self.willLastToReset = pace.willLastToReset
+    }
+
+    var valueText: String {
+        "\(remainingPercent)% · \(deltaText)"
+    }
+
+    var compactValueText: String {
+        "\(remainingPercent)%·\(deltaText)"
+    }
+
+    var detailText: String {
+        let leftText: String
+        if deltaPercent == 0 {
+            leftText = "按正常节奏"
+        } else if deltaPercent > 0 {
+            leftText = "用得偏快 \(deltaPercent)%"
+        } else {
+            leftText = "有余量 \(abs(deltaPercent))%"
+        }
+
+        guard let rightText else {
+            return leftText
+        }
+        return "\(leftText) · \(rightText)"
+    }
+
+    private var rightText: String? {
+        if willLastToReset {
+            return "可持续到重置"
+        }
+        guard let etaSeconds else {
+            return nil
+        }
+        let duration = Self.durationText(seconds: etaSeconds)
+        if duration == "现在" {
+            return "预计现在用完"
+        }
+        return "预计 \(duration)后用完"
+    }
+
+    var deltaText: String {
+        "\(deltaPercent >= 0 ? "+" : "")\(deltaPercent)%"
+    }
+
+    var tone: UsageRemainingTone {
+        if deltaPercent <= 2 {
+            return .good
+        }
+        if deltaPercent <= 12 {
+            return .warning
+        }
+        return .danger
+    }
+
+    private static func durationText(seconds: TimeInterval) -> String {
+        guard seconds > 60 else {
+            return "现在"
+        }
+
+        let totalMinutes = max(1, Int((seconds / 60).rounded()))
+        let days = totalMinutes / (24 * 60)
+        let hours = (totalMinutes % (24 * 60)) / 60
+        let minutes = totalMinutes % 60
+
+        if days > 0, hours > 0 {
+            return "\(days)天\(hours)小时"
+        }
+        if days > 0 {
+            return "\(days)天"
+        }
+        if hours > 0, minutes > 0 {
+            return "\(hours)小时\(minutes)分"
+        }
+        if hours > 0 {
+            return "\(hours)小时"
+        }
+        return "\(minutes)分"
+    }
+}
+
+extension RateLimitSnapshot {
+    var paceComparisonPercentWindow: RateLimitWindow? {
+        primary ?? secondary
+    }
+
+    var paceComparisonPaceWindow: RateLimitWindow? {
+        secondary ?? primary
+    }
+}
+
+struct StatusLineDisplay: Identifiable, Equatable {
+    let id: String
+    let label: String
+    let value: String
+    let tone: UsageRemainingTone
+
+    /// 根据当前设置和快照生成菜单栏两行内容；Pace 和剩余额度各自走自己的展示模型。
+    @MainActor
+    static func lines(viewModel: UsageViewModel, settings: MenuBarDisplaySettings) -> [StatusLineDisplay] {
+        if settings.contentMode == .paceComparison,
+           let paceDisplay = UsagePaceDisplay(rateLimits: viewModel.snapshot?.rateLimits) {
+            return paceLines(paceDisplay: paceDisplay, settings: settings)
+        }
+
+        var lines: [StatusLineDisplay] = []
+        if settings.showsPrimaryWindow {
+            lines.append(StatusLineDisplay(
+                id: "primary",
+                label: viewModel.menuBarPrimaryLabel,
+                value: formattedValue(viewModel.menuBarPrimaryValue, settings: settings),
+                tone: viewModel.menuBarPrimaryTone
+            ))
+        }
+        if settings.showsSecondaryWindow {
+            lines.append(StatusLineDisplay(
+                id: "secondary",
+                label: viewModel.menuBarSecondaryLabel,
+                value: formattedValue(viewModel.menuBarSecondaryValue, settings: settings),
+                tone: viewModel.menuBarSecondaryTone
+            ))
+        }
+        if lines.isEmpty {
+            lines.append(StatusLineDisplay(
+                id: "fallback-primary",
+                label: viewModel.menuBarPrimaryLabel,
+                value: formattedValue(viewModel.menuBarPrimaryValue, settings: settings),
+                tone: viewModel.menuBarPrimaryTone
+            ))
+        }
+        return lines
+    }
+
+    /// Pace 模式只显示百分比和预期消耗偏差，不套用剩余额度的标签宽度。
+    static func paceLines(paceDisplay: UsagePaceDisplay, settings: MenuBarDisplaySettings) -> [StatusLineDisplay] {
+        [
+            StatusLineDisplay(
+                id: "pace-remaining",
+                label: "",
+                value: formattedValue("\(paceDisplay.remainingPercent)%", settings: settings),
+                tone: UsageRemainingTone(remainingPercent: paceDisplay.remainingPercent)
+            ),
+            StatusLineDisplay(
+                id: "pace-delta",
+                label: "",
+                value: paceDisplay.deltaText,
+                tone: paceDisplay.tone
+            )
+        ]
+    }
+
+    /// 统一处理隐藏百分号的设置，避免宽度计算和真实文字展示不一致。
+    static func formattedValue(_ value: String, settings: MenuBarDisplaySettings) -> String {
+        guard !settings.showsPercentSymbol, value.hasSuffix("%") else {
+            return value
+        }
+        return String(value.dropLast())
+    }
+}
+
+enum StatusBarDisplayMetrics {
+    /// 按当前两行文字真实宽度计算菜单栏项目宽度，避免 Pace 和剩余额度共用同一块空白。
+    static func statusItemWidth(for lines: [StatusLineDisplay], settings: MenuBarDisplaySettings) -> CGFloat {
+        let textWidth = lines
+            .map { lineWidth(for: $0, settings: settings) }
+            .max() ?? minimumTextWidth(settings: settings)
+        let iconWidth = settings.showsMenuBarIcon
+            ? MenuBarDisplaySettings.menuBarIconWidth + MenuBarDisplaySettings.menuBarIconTextSpacing
+            : 0
+        let densityPadding: CGFloat = settings.layoutDensity == .normal ? 2 : 0
+
+        return max(
+            ceil(iconWidth + textWidth + densityPadding),
+            minimumStatusItemWidth(settings: settings)
+        )
+    }
+
+    /// 根据标签和值分别测量单行宽度，只有剩余额度模式会因为 label 额外变宽。
+    static func lineWidth(for line: StatusLineDisplay, settings: MenuBarDisplaySettings) -> CGFloat {
+        let font = NSFont.systemFont(ofSize: settings.numberFontSize, weight: settings.numberFontWeight.nsFontWeight)
+        let valueWidth = textWidth(line.value, font: font)
+        guard !line.label.isEmpty else {
+            return valueWidth
+        }
+        return textWidth(line.label, font: font) + CGFloat(settings.itemSpacing) + valueWidth
+    }
+
+    private static func textWidth(_ text: String, font: NSFont) -> CGFloat {
+        (text as NSString).size(withAttributes: [.font: font]).width
+    }
+
+    private static func minimumTextWidth(settings: MenuBarDisplaySettings) -> CGFloat {
+        settings.contentMode == .paceComparison ? 18 : 24
+    }
+
+    private static func minimumStatusItemWidth(settings: MenuBarDisplaySettings) -> CGFloat {
+        let iconWidth = settings.showsMenuBarIcon
+            ? MenuBarDisplaySettings.menuBarIconWidth + MenuBarDisplaySettings.menuBarIconTextSpacing
+            : 0
+        return iconWidth + minimumTextWidth(settings: settings)
+    }
+}
+
+private extension MenuBarNumberFontWeight {
+    var nsFontWeight: NSFont.Weight {
+        switch self {
+        case .regular:
+            return .regular
+        case .medium:
+            return .medium
+        case .semibold:
+            return .semibold
+        }
+    }
+}
+
 struct CodexConfigurationInfo: Equatable {
     struct Row: Equatable, Identifiable {
         let title: String
@@ -278,6 +534,7 @@ struct CodexConfigurationInfo: Equatable {
 
     let dataSource: String
     let endpoint: String
+    let profileEndpoint: String
     let codexHomePath: String
     let authFileExists: Bool
 
@@ -285,6 +542,7 @@ struct CodexConfigurationInfo: Equatable {
         [
             Row(title: "数据来源", value: dataSource),
             Row(title: "接口", value: endpoint),
+            Row(title: "Profile", value: profileEndpoint),
             Row(title: "CODEX_HOME", value: codexHomePath),
             Row(title: "登录信息", value: authFileExists ? "已找到" : "未找到")
         ]
@@ -299,6 +557,7 @@ struct CodexConfigurationInfo: Equatable {
         return CodexConfigurationInfo(
             dataSource: "ChatGPT Codex usage",
             endpoint: DirectCodexUsageClient.defaultEndpointURL.absoluteString,
+            profileEndpoint: DirectCodexUsageClient.defaultProfileEndpointURL.absoluteString,
             codexHomePath: authFileURL.deletingLastPathComponent().path,
             authFileExists: FileManager.default.fileExists(atPath: authFileURL.path)
         )

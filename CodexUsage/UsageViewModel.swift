@@ -129,8 +129,7 @@ final class UsageViewModel: ObservableObject {
         defer { isRefreshing = false }
 
         do {
-            let rateLimits = try await client.fetchRateLimits()
-            let updatedSnapshot = UsageSnapshot(fetchedAt: Date(), rateLimits: rateLimits)
+            let updatedSnapshot = try await client.fetchUsageSnapshot()
             try store.save(updatedSnapshot)
             snapshot = updatedSnapshot
             errorMessage = nil

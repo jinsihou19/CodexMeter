@@ -1,4 +1,5 @@
 import AppKit
+import Combine
 import CodexUsageShared
 import SwiftUI
 
@@ -24,6 +25,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         MenuBarDisplaySettings.migrateStandardDefaultsToSharedDefaults()
+        MenuBarDisplaySettings.migrateLegacyDisplayDefaults()
         let viewModel = UsageViewModel()
         self.viewModel = viewModel
         statusBarController = StatusBarController(viewModel: viewModel)
@@ -44,16 +46,21 @@ final class StatusBarController: NSObject {
     private let popover = NSPopover()
     private var statusLabel: PassthroughHostingView<StatusBarLabel>?
     private var defaultsObservers: [NSObjectProtocol] = []
+    private var usageObserver: AnyCancellable?
+    private var preferredPopoverSize = MenuBarPopoverLayout.initialSize
 
     init(viewModel: UsageViewModel) {
         self.viewModel = viewModel
+        let initialSettings = MenuBarDisplaySettings(defaults: MenuBarDisplaySettings.sharedDefaults)
+        let initialLines = StatusLineDisplay.lines(viewModel: viewModel, settings: initialSettings)
         self.statusItem = NSStatusBar.system.statusItem(
-            withLength: MenuBarDisplaySettings(defaults: MenuBarDisplaySettings.sharedDefaults).statusItemWidth
+            withLength: StatusBarDisplayMetrics.statusItemWidth(for: initialLines, settings: initialSettings)
         )
         super.init()
         configureStatusItem()
         configurePopover()
         observeSettings()
+        observeUsageChanges()
     }
 
     private func configureStatusItem() {
@@ -67,9 +74,13 @@ final class StatusBarController: NSObject {
         button.target = self
         button.action = #selector(togglePopover(_:))
 
+        let settings = MenuBarDisplaySettings(defaults: MenuBarDisplaySettings.sharedDefaults)
+        let lines = StatusLineDisplay.lines(viewModel: viewModel, settings: settings)
+        let statusWidth = StatusBarDisplayMetrics.statusItemWidth(for: lines, settings: settings)
         let label = PassthroughHostingView(rootView: StatusBarLabel(
             viewModel: viewModel,
-            settings: MenuBarDisplaySettings(defaults: MenuBarDisplaySettings.sharedDefaults)
+            settings: settings,
+            statusWidth: statusWidth
         ))
         statusLabel = label
         label.translatesAutoresizingMaskIntoConstraints = false
@@ -85,8 +96,8 @@ final class StatusBarController: NSObject {
 
     private func configurePopover() {
         popover.behavior = .transient
-        popover.contentSize = NSSize(width: 320, height: 455)
-        popover.contentViewController = NSHostingController(rootView: MenuBarView(viewModel: viewModel))
+        popover.contentSize = preferredPopoverSize
+        popover.contentViewController = makePopoverContentController()
     }
 
     private func observeSettings() {
@@ -103,11 +114,61 @@ final class StatusBarController: NSObject {
         applySettings()
     }
 
+    private func observeUsageChanges() {
+        usageObserver = viewModel.objectWillChange.sink { [weak self] _ in
+            DispatchQueue.main.async {
+                self?.applyStatusDisplay()
+            }
+        }
+    }
+
     private func applySettings() {
         let settings = MenuBarDisplaySettings(defaults: MenuBarDisplaySettings.sharedDefaults)
-        statusItem.length = settings.statusItemWidth
-        statusLabel?.rootView = StatusBarLabel(viewModel: viewModel, settings: settings)
-        popover.contentViewController = NSHostingController(rootView: MenuBarView(viewModel: viewModel))
+        applyStatusDisplay(settings: settings)
+        popover.contentViewController = makePopoverContentController()
+        popover.contentSize = preferredPopoverSize
+    }
+
+    private func applyStatusDisplay(settings: MenuBarDisplaySettings? = nil) {
+        let settings = settings ?? MenuBarDisplaySettings(defaults: MenuBarDisplaySettings.sharedDefaults)
+        let lines = StatusLineDisplay.lines(viewModel: viewModel, settings: settings)
+        let statusWidth = StatusBarDisplayMetrics.statusItemWidth(for: lines, settings: settings)
+        statusItem.length = statusWidth
+        statusLabel?.rootView = StatusBarLabel(viewModel: viewModel, settings: settings, statusWidth: statusWidth)
+    }
+
+    private func makePopoverContentController() -> NSViewController {
+        let controller = NSHostingController(rootView: MenuBarView(viewModel: viewModel) { [weak self] size in
+            self?.updatePopoverSize(for: size)
+        })
+        controller.preferredContentSize = preferredPopoverSize
+        return controller
+    }
+
+    private func updatePopoverSize(for contentSize: CGSize) {
+        let height = min(
+            max(ceil(contentSize.height), MenuBarPopoverLayout.minimumHeight),
+            maximumPopoverHeight
+        )
+        let newSize = NSSize(width: MenuBarPopoverLayout.width, height: height)
+        guard abs(preferredPopoverSize.width - newSize.width) > 0.5
+            || abs(preferredPopoverSize.height - newSize.height) > 0.5
+        else {
+            return
+        }
+
+        preferredPopoverSize = newSize
+        popover.contentSize = newSize
+        popover.contentViewController?.preferredContentSize = newSize
+        if popover.isShown, let button = statusItem.button {
+            alignPopoverWindow(to: button)
+        }
+    }
+
+    private var maximumPopoverHeight: CGFloat {
+        let screenFrame = statusItem.button?.window?.screen?.visibleFrame ?? NSScreen.main?.visibleFrame
+        let availableHeight = (screenFrame?.height ?? MenuBarPopoverLayout.maximumHeight) - 64
+        return max(MenuBarPopoverLayout.minimumHeight, min(MenuBarPopoverLayout.maximumHeight, availableHeight))
     }
 
     @objc private func togglePopover(_ sender: NSStatusBarButton) {
@@ -148,54 +209,46 @@ final class StatusBarController: NSObject {
 private struct StatusBarLabel: View {
     @ObservedObject var viewModel: UsageViewModel
     let settings: MenuBarDisplaySettings
+    let statusWidth: CGFloat
 
     var body: some View {
-        let lines = statusLines(settings: settings)
-        VStack(spacing: settings.rowSpacing) {
-            ForEach(lines) { line in
-                statusLine(
-                    label: line.label,
-                    value: line.value,
-                    tone: line.tone,
-                    settings: settings
-                )
+        let lines = StatusLineDisplay.lines(viewModel: viewModel, settings: settings)
+        HStack(spacing: settings.showsMenuBarIcon ? MenuBarDisplaySettings.menuBarIconTextSpacing : 0) {
+            if settings.showsMenuBarIcon {
+                CodexMenuBarIcon()
+            }
+
+            VStack(alignment: textColumnAlignment, spacing: lineSpacing(settings: settings)) {
+                ForEach(lines) { line in
+                    statusLine(
+                        label: line.label,
+                        value: line.value,
+                        tone: line.tone,
+                        settings: settings
+                    )
+                }
             }
         }
-        .frame(width: settings.statusItemWidth, height: settings.statusLabelHeight, alignment: .center)
+        .frame(width: statusWidth, height: settings.statusLabelHeight, alignment: .center)
         .accessibilityLabel(Text(lines.map { "\($0.label) \($0.value)" }.joined(separator: ", ")))
     }
 
-    private func statusLines(settings: MenuBarDisplaySettings) -> [StatusLineDisplay] {
-        var lines: [StatusLineDisplay] = []
-        if settings.showsPrimaryWindow {
-            lines.append(StatusLineDisplay(
-                label: viewModel.menuBarPrimaryLabel,
-                value: formattedValue(viewModel.menuBarPrimaryValue, settings: settings),
-                tone: viewModel.menuBarPrimaryTone
-            ))
-        }
-        if settings.showsSecondaryWindow {
-            lines.append(StatusLineDisplay(
-                label: viewModel.menuBarSecondaryLabel,
-                value: formattedValue(viewModel.menuBarSecondaryValue, settings: settings),
-                tone: viewModel.menuBarSecondaryTone
-            ))
-        }
-        if lines.isEmpty {
-            lines.append(StatusLineDisplay(
-                label: viewModel.menuBarPrimaryLabel,
-                value: formattedValue(viewModel.menuBarPrimaryValue, settings: settings),
-                tone: viewModel.menuBarPrimaryTone
-            ))
-        }
-        return lines
+    /// 所有两行菜单栏读数都使用同一行距设置，保证预设和滑块对 Pace 同样生效。
+    private func lineSpacing(settings: MenuBarDisplaySettings) -> Double {
+        settings.rowSpacing
     }
 
-    private func formattedValue(_ value: String, settings: MenuBarDisplaySettings) -> String {
-        guard !settings.showsPercentSymbol, value.hasSuffix("%") else {
-            return value
-        }
-        return String(value.dropLast())
+    private var textColumnAlignment: HorizontalAlignment {
+        settings.showsMenuBarIcon ? .trailing : .center
+    }
+
+    /// 菜单栏字号完全跟随设置页，避免同一设置在不同显示模式下产生意外差异。
+    private func fontSize(settings: MenuBarDisplaySettings) -> Double {
+        settings.numberFontSize
+    }
+
+    private func fontWeight(settings: MenuBarDisplaySettings) -> Font.Weight {
+        settings.numberFontWeight.fontWeight
     }
 
     private func statusLine(
@@ -205,26 +258,30 @@ private struct StatusBarLabel: View {
         settings: MenuBarDisplaySettings
     ) -> some View {
         HStack(alignment: .firstTextBaseline, spacing: settings.itemSpacing) {
-            Text(label)
-                .foregroundStyle(.primary)
+            if !label.isEmpty {
+                Text(label)
+                    .foregroundStyle(.primary)
+            }
             Text(value)
                 .foregroundStyle(tone.statusBarColor(settings: settings))
         }
-        .font(.system(size: settings.numberFontSize, weight: settings.numberFontWeight.fontWeight))
+        .font(.system(size: fontSize(settings: settings), weight: fontWeight(settings: settings)))
         .monospacedDigit()
         .lineLimit(1)
         .minimumScaleFactor(0.82)
-        .frame(maxWidth: .infinity, alignment: .center)
     }
 }
 
-private struct StatusLineDisplay: Identifiable {
-    let label: String
-    let value: String
-    let tone: UsageRemainingTone
-
-    var id: String {
-        label
+/// 菜单栏可选 Codex/OpenAI 图标，只参与视觉识别，不影响点击区域或可访问读数。
+private struct CodexMenuBarIcon: View {
+    var body: some View {
+        Image("OpenAIStatusIcon")
+            .resizable()
+            .renderingMode(.template)
+            .scaledToFit()
+            .frame(width: MenuBarDisplaySettings.menuBarIconWidth, height: MenuBarDisplaySettings.menuBarIconWidth)
+            .foregroundStyle(.primary)
+            .accessibilityHidden(true)
     }
 }
 

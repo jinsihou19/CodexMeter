@@ -30,6 +30,7 @@ struct SettingsView: View {
         }
     }
 
+    @AppStorage(MenuBarPreferenceKeys.contentMode, store: MenuBarDisplaySettings.sharedDefaults) private var contentMode = MenuBarDisplaySettings.defaultContentMode.rawValue
     @AppStorage(MenuBarPreferenceKeys.layoutDensity, store: MenuBarDisplaySettings.sharedDefaults) private var layoutDensity = MenuBarDisplaySettings.defaultLayoutDensity.rawValue
     @AppStorage(MenuBarPreferenceKeys.itemSpacing, store: MenuBarDisplaySettings.sharedDefaults) private var itemSpacing = MenuBarDisplaySettings.defaultItemSpacing
     @AppStorage(MenuBarPreferenceKeys.rowSpacing, store: MenuBarDisplaySettings.sharedDefaults) private var rowSpacing = MenuBarDisplaySettings.defaultRowSpacing
@@ -41,10 +42,21 @@ struct SettingsView: View {
     @AppStorage(MenuBarPreferenceKeys.showsPrimaryWindow, store: MenuBarDisplaySettings.sharedDefaults) private var showsPrimaryWindow = MenuBarDisplaySettings.defaultShowsPrimaryWindow
     @AppStorage(MenuBarPreferenceKeys.showsSecondaryWindow, store: MenuBarDisplaySettings.sharedDefaults) private var showsSecondaryWindow = MenuBarDisplaySettings.defaultShowsSecondaryWindow
     @AppStorage(MenuBarPreferenceKeys.showsPercentSymbol, store: MenuBarDisplaySettings.sharedDefaults) private var showsPercentSymbol = MenuBarDisplaySettings.defaultShowsPercentSymbol
+    @AppStorage(MenuBarPreferenceKeys.showsAdditionalLimits, store: MenuBarDisplaySettings.sharedDefaults) private var showsAdditionalLimits = MenuBarDisplaySettings.defaultShowsAdditionalLimits
+    @AppStorage(MenuBarPreferenceKeys.showsMenuBarIcon, store: MenuBarDisplaySettings.sharedDefaults) private var showsMenuBarIcon = MenuBarDisplaySettings.defaultShowsMenuBarIcon
 
     @State private var selectedPane = Pane.display
     @State private var configurationInfo = CodexConfigurationInfo.current()
     @State private var previewSnapshot: UsageSnapshot?
+
+    private static let expectedUsageComparisonHelp = """
+    预期对比会结合当前周期还剩多久，告诉你现在的使用速度是否合理：
+    +5%：实际用量比预期多 5%，用得偏快，可能提前耗尽。
+    -10%：实际用量比预期少 10%，还有余量。
+    0% 或接近 0：基本按正常节奏使用。
+
+    例如一周额度已经过了 50% 的时间，理论上大概应该用到 50%。如果实际已经用了 70%，就会显示大约 +20%，详情里会说类似 20% 亏损，并在能估算时显示「预计多久后用完」或「可持续到重置」。
+    """
 
     var body: some View {
         VStack(spacing: 0) {
@@ -154,9 +166,30 @@ struct SettingsView: View {
             }
 
             SettingsSection(title: "显示内容", subtitle: "控制菜单栏里出现的读数") {
+                HStack(spacing: 12) {
+                    HStack(spacing: 5) {
+                        Text("菜单栏内容")
+                        QuickHelpIcon(text: Self.expectedUsageComparisonHelp)
+                    }
+                    .frame(width: 98, alignment: .leading)
+
+                    Picker("", selection: $contentMode) {
+                        ForEach(MenuBarContentMode.allCases) { mode in
+                            Text(mode.title).tag(mode.rawValue)
+                        }
+                    }
+                    .labelsHidden()
+                    .pickerStyle(.segmented)
+
+                    Spacer(minLength: 0)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+
                 Toggle("显示 5 小时窗口", isOn: primaryWindowBinding)
                 Toggle("显示 7 天窗口", isOn: secondaryWindowBinding)
                 Toggle("显示百分号", isOn: $showsPercentSymbol)
+                Toggle("显示 Codex 图标", isOn: $showsMenuBarIcon)
+                Toggle("显示额外额度", isOn: $showsAdditionalLimits)
             }
 
             SettingsSection(title: "排版", subtitle: "细调菜单栏占位和文字节奏") {
@@ -261,6 +294,7 @@ struct SettingsView: View {
 
     private var currentSettings: MenuBarDisplaySettings {
         MenuBarDisplaySettings(
+            contentMode: MenuBarContentMode(rawValue: contentMode) ?? .paceComparison,
             layoutDensity: MenuBarLayoutDensity(rawValue: layoutDensity) ?? .compact,
             itemSpacing: itemSpacing,
             rowSpacing: rowSpacing,
@@ -271,7 +305,9 @@ struct SettingsView: View {
             dangerColorHex: dangerColorHex,
             showsPrimaryWindow: showsPrimaryWindow,
             showsSecondaryWindow: showsSecondaryWindow,
-            showsPercentSymbol: showsPercentSymbol
+            showsPercentSymbol: showsPercentSymbol,
+            showsAdditionalLimits: showsAdditionalLimits,
+            showsMenuBarIcon: showsMenuBarIcon
         )
     }
 
@@ -330,6 +366,7 @@ struct SettingsView: View {
     }
 
     private func resetDisplaySettings() {
+        contentMode = MenuBarDisplaySettings.defaultContentMode.rawValue
         layoutDensity = MenuBarDisplaySettings.defaultLayoutDensity.rawValue
         itemSpacing = MenuBarDisplaySettings.defaultItemSpacing
         rowSpacing = MenuBarDisplaySettings.defaultRowSpacing
@@ -341,6 +378,8 @@ struct SettingsView: View {
         showsPrimaryWindow = MenuBarDisplaySettings.defaultShowsPrimaryWindow
         showsSecondaryWindow = MenuBarDisplaySettings.defaultShowsSecondaryWindow
         showsPercentSymbol = MenuBarDisplaySettings.defaultShowsPercentSymbol
+        showsAdditionalLimits = MenuBarDisplaySettings.defaultShowsAdditionalLimits
+        showsMenuBarIcon = MenuBarDisplaySettings.defaultShowsMenuBarIcon
     }
 
     private func loadPreviewSnapshot() {
@@ -349,6 +388,7 @@ struct SettingsView: View {
 
     private func normalizeStoredSettings() {
         let settings = currentSettings
+        contentMode = settings.contentMode.rawValue
         layoutDensity = settings.layoutDensity.rawValue
         itemSpacing = settings.itemSpacing
         rowSpacing = settings.rowSpacing
@@ -360,5 +400,32 @@ struct SettingsView: View {
         showsPrimaryWindow = settings.showsPrimaryWindow
         showsSecondaryWindow = settings.showsSecondaryWindow
         showsPercentSymbol = settings.showsPercentSymbol
+        showsAdditionalLimits = settings.showsAdditionalLimits
+        showsMenuBarIcon = settings.showsMenuBarIcon
+    }
+}
+
+/// 轻量悬停帮助图标，用自定义 popover 替代系统 tooltip，避免系统延迟影响设置说明的可读性。
+private struct QuickHelpIcon: View {
+    let text: String
+    @State private var isShowing = false
+
+    var body: some View {
+        Image(systemName: "questionmark.circle")
+            .font(.caption)
+            .foregroundStyle(.secondary)
+            .contentShape(Rectangle())
+            .onHover { hovering in
+                isShowing = hovering
+            }
+            .popover(isPresented: $isShowing, arrowEdge: .bottom) {
+                Text(text)
+                    .font(.caption)
+                    .foregroundStyle(.primary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(width: 330, alignment: .leading)
+                    .padding(10)
+            }
+            .accessibilityLabel("预期消耗对比说明")
     }
 }

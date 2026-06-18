@@ -29,6 +29,20 @@ final class UsageFormatterTests: XCTestCase {
         XCTAssertEqual(formatter.widgetResetDate(epochSeconds: nil), "--")
     }
 
+    func testResetRemainingTextUsesResetAfterSecondsBeforeAbsoluteResetTime() {
+        let formatter = UsageFormatter(locale: Locale(identifier: "zh_CN"), timeZone: .gmt)
+        let now = Date(timeIntervalSince1970: 1_000)
+        let window = RateLimitWindow(
+            usedPercent: 40,
+            windowDurationMins: 300,
+            resetsAt: 99_999,
+            resetAfterSeconds: 9_290
+        )
+
+        XCTAssertEqual(formatter.resetRemainingText(window: window, now: now), "2 小时 34 分后")
+        XCTAssertEqual(formatter.resetRemainingText(window: nil, now: now), "--")
+    }
+
     func testCreditsStatusCoversUnlimitedBalanceAndNoCredits() {
         let formatter = UsageFormatter(locale: Locale(identifier: "en_US_POSIX"), timeZone: .gmt)
 

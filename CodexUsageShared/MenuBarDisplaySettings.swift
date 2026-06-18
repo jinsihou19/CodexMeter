@@ -2,6 +2,8 @@ import Foundation
 import SwiftUI
 
 public enum MenuBarPreferenceKeys {
+    public static let displayDefaultsVersion = "menuBar.displayDefaultsVersion"
+    public static let contentMode = "menuBar.contentMode"
     public static let layoutDensity = "menuBar.layoutDensity"
     public static let itemSpacing = "menuBar.itemSpacing"
     public static let rowSpacing = "menuBar.rowSpacing"
@@ -13,8 +15,11 @@ public enum MenuBarPreferenceKeys {
     public static let showsPrimaryWindow = "menuBar.showsPrimaryWindow"
     public static let showsSecondaryWindow = "menuBar.showsSecondaryWindow"
     public static let showsPercentSymbol = "menuBar.showsPercentSymbol"
+    public static let showsAdditionalLimits = "menuBar.showsAdditionalLimits"
+    public static let showsMenuBarIcon = "menuBar.showsMenuBarIcon"
 
     public static let allKeys = [
+        contentMode,
         layoutDensity,
         itemSpacing,
         rowSpacing,
@@ -25,8 +30,28 @@ public enum MenuBarPreferenceKeys {
         dangerColorHex,
         showsPrimaryWindow,
         showsSecondaryWindow,
-        showsPercentSymbol
+        showsPercentSymbol,
+        showsAdditionalLimits,
+        showsMenuBarIcon
     ]
+}
+
+public enum MenuBarContentMode: String, CaseIterable, Identifiable, Sendable {
+    case paceComparison
+    case remainingWindows
+
+    public var id: String {
+        rawValue
+    }
+
+    public var title: String {
+        switch self {
+        case .paceComparison:
+            return "预期消耗对比"
+        case .remainingWindows:
+            return "剩余额度"
+        }
+    }
 }
 
 public enum UsageRemainingTone: Equatable, Sendable {
@@ -102,18 +127,20 @@ public enum MenuBarLayoutDensity: String, CaseIterable, Identifiable, Sendable {
     public var statusItemWidth: CGFloat {
         switch self {
         case .compact:
-            return 38
+            return 42
         case .normal:
-            return 40
+            return 44
         }
     }
 }
 
 public struct MenuBarDisplaySettings: Equatable, Sendable {
+    public static let currentDisplayDefaultsVersion = 2
+    public static let defaultContentMode = MenuBarContentMode.remainingWindows
     public static let defaultLayoutDensity = MenuBarLayoutDensity.compact
-    public static let defaultItemSpacing = 1.0
-    public static let defaultRowSpacing = -2.0
-    public static let defaultNumberFontSize = 9.0
+    public static let defaultItemSpacing = 2.0
+    public static let defaultRowSpacing = -1.0
+    public static let defaultNumberFontSize = 9.5
     public static let defaultNumberFontWeight = MenuBarNumberFontWeight.medium
     public static let defaultGoodColorHex = "#1AB85C"
     public static let defaultWarningColorHex = "#F5931A"
@@ -121,10 +148,18 @@ public struct MenuBarDisplaySettings: Equatable, Sendable {
     public static let defaultShowsPrimaryWindow = true
     public static let defaultShowsSecondaryWindow = true
     public static let defaultShowsPercentSymbol = true
+    public static let defaultShowsAdditionalLimits = false
+    public static let defaultShowsMenuBarIcon = false
+    public static let menuBarIconWidth: CGFloat = 15
+    public static let menuBarIconTextSpacing: CGFloat = 2
+    public static var menuBarIconStatusItemWidth: CGFloat {
+        menuBarIconWidth + menuBarIconTextSpacing
+    }
     public nonisolated(unsafe) static let sharedDefaults: UserDefaults = UserDefaults(
         suiteName: UsageSnapshotStore.defaultAppGroupIdentifier
     ) ?? .standard
 
+    public let contentMode: MenuBarContentMode
     public let layoutDensity: MenuBarLayoutDensity
     public let itemSpacing: Double
     public let rowSpacing: Double
@@ -136,8 +171,11 @@ public struct MenuBarDisplaySettings: Equatable, Sendable {
     public let showsPrimaryWindow: Bool
     public let showsSecondaryWindow: Bool
     public let showsPercentSymbol: Bool
+    public let showsAdditionalLimits: Bool
+    public let showsMenuBarIcon: Bool
 
     public init(
+        contentMode: MenuBarContentMode = Self.defaultContentMode,
         layoutDensity: MenuBarLayoutDensity = Self.defaultLayoutDensity,
         itemSpacing: Double = Self.defaultItemSpacing,
         rowSpacing: Double = Self.defaultRowSpacing,
@@ -148,8 +186,11 @@ public struct MenuBarDisplaySettings: Equatable, Sendable {
         dangerColorHex: String = Self.defaultDangerColorHex,
         showsPrimaryWindow: Bool = Self.defaultShowsPrimaryWindow,
         showsSecondaryWindow: Bool = Self.defaultShowsSecondaryWindow,
-        showsPercentSymbol: Bool = Self.defaultShowsPercentSymbol
+        showsPercentSymbol: Bool = Self.defaultShowsPercentSymbol,
+        showsAdditionalLimits: Bool = Self.defaultShowsAdditionalLimits,
+        showsMenuBarIcon: Bool = Self.defaultShowsMenuBarIcon
     ) {
+        self.contentMode = contentMode
         self.layoutDensity = layoutDensity
         self.itemSpacing = Self.clamp(itemSpacing, min: 0, max: 8)
         self.rowSpacing = Self.clamp(rowSpacing, min: -5, max: 6)
@@ -161,10 +202,15 @@ public struct MenuBarDisplaySettings: Equatable, Sendable {
         self.showsPrimaryWindow = showsPrimaryWindow || !showsSecondaryWindow
         self.showsSecondaryWindow = showsSecondaryWindow || !showsPrimaryWindow
         self.showsPercentSymbol = showsPercentSymbol
+        self.showsAdditionalLimits = showsAdditionalLimits
+        self.showsMenuBarIcon = showsMenuBarIcon
     }
 
     public init(defaults: UserDefaults) {
         self.init(
+            contentMode: MenuBarContentMode(
+                rawValue: defaults.string(forKey: MenuBarPreferenceKeys.contentMode) ?? ""
+            ) ?? Self.defaultContentMode,
             layoutDensity: MenuBarLayoutDensity(
                 rawValue: defaults.string(forKey: MenuBarPreferenceKeys.layoutDensity) ?? ""
             ) ?? Self.defaultLayoutDensity,
@@ -188,12 +234,17 @@ public struct MenuBarDisplaySettings: Equatable, Sendable {
             showsSecondaryWindow: defaults.object(forKey: MenuBarPreferenceKeys.showsSecondaryWindow) as? Bool
                 ?? Self.defaultShowsSecondaryWindow,
             showsPercentSymbol: defaults.object(forKey: MenuBarPreferenceKeys.showsPercentSymbol) as? Bool
-                ?? Self.defaultShowsPercentSymbol
+                ?? Self.defaultShowsPercentSymbol,
+            showsAdditionalLimits: defaults.object(forKey: MenuBarPreferenceKeys.showsAdditionalLimits) as? Bool
+                ?? Self.defaultShowsAdditionalLimits,
+            showsMenuBarIcon: defaults.object(forKey: MenuBarPreferenceKeys.showsMenuBarIcon) as? Bool
+                ?? Self.defaultShowsMenuBarIcon
         )
     }
 
+    /// 菜单栏占位只按内容真实需要增长；Pace 上下两行后复用剩余额度的紧凑宽度。
     public var statusItemWidth: CGFloat {
-        layoutDensity.statusItemWidth
+        layoutDensity.statusItemWidth + (showsMenuBarIcon ? Self.menuBarIconStatusItemWidth : 0)
     }
 
     public var statusLabelHeight: CGFloat {
@@ -237,6 +288,59 @@ public struct MenuBarDisplaySettings: Equatable, Sendable {
         }
     }
 
+    /// 将已经写入的旧默认值迁移到当前默认值，避免菜单栏和小组件继续读取旧版默认设置。
+    public static func migrateLegacyDisplayDefaults(defaults: UserDefaults = Self.sharedDefaults) {
+        guard defaults.integer(forKey: MenuBarPreferenceKeys.displayDefaultsVersion) < currentDisplayDefaultsVersion else {
+            return
+        }
+
+        replaceStoredValue(
+            defaults: defaults,
+            key: MenuBarPreferenceKeys.contentMode,
+            legacyValue: MenuBarContentMode.paceComparison.rawValue,
+            currentValue: defaultContentMode.rawValue
+        )
+        replaceStoredValue(
+            defaults: defaults,
+            key: MenuBarPreferenceKeys.layoutDensity,
+            legacyValue: MenuBarLayoutDensity.compact.rawValue,
+            currentValue: defaultLayoutDensity.rawValue
+        )
+        replaceStoredValue(
+            defaults: defaults,
+            key: MenuBarPreferenceKeys.itemSpacing,
+            legacyValue: 1.0,
+            currentValue: defaultItemSpacing
+        )
+        replaceStoredValue(
+            defaults: defaults,
+            key: MenuBarPreferenceKeys.rowSpacing,
+            legacyValue: -2.0,
+            currentValue: defaultRowSpacing
+        )
+        replaceStoredValue(
+            defaults: defaults,
+            key: MenuBarPreferenceKeys.numberFontSize,
+            legacyValue: 9.0,
+            currentValue: defaultNumberFontSize
+        )
+        replaceStoredValue(
+            defaults: defaults,
+            key: MenuBarPreferenceKeys.numberFontWeight,
+            legacyValue: MenuBarNumberFontWeight.medium.rawValue,
+            currentValue: defaultNumberFontWeight.rawValue
+        )
+        replaceStoredValue(
+            defaults: defaults,
+            key: MenuBarPreferenceKeys.showsMenuBarIcon,
+            legacyValue: false,
+            currentValue: defaultShowsMenuBarIcon
+        )
+
+        defaults.set(currentDisplayDefaultsVersion, forKey: MenuBarPreferenceKeys.displayDefaultsVersion)
+        defaults.synchronize()
+    }
+
     public static func notifyDidChange(defaults: UserDefaults = Self.sharedDefaults) {
         defaults.synchronize()
         NotificationCenter.default.post(name: .menuBarDisplaySettingsDidChange, object: defaults)
@@ -255,6 +359,45 @@ public struct MenuBarDisplaySettings: Equatable, Sendable {
 
     private static func clamp(_ value: Double, min: Double, max: Double) -> Double {
         Swift.max(min, Swift.min(max, value))
+    }
+
+    /// 只替换仍等于旧默认的字符串设置，保留用户主动改过的值。
+    private static func replaceStoredValue(
+        defaults: UserDefaults,
+        key: String,
+        legacyValue: String,
+        currentValue: String
+    ) {
+        let storedValue = defaults.string(forKey: key)
+        if storedValue == nil || storedValue == legacyValue {
+            defaults.set(currentValue, forKey: key)
+        }
+    }
+
+    /// 只替换仍等于旧默认的数值设置，保留用户主动改过的值。
+    private static func replaceStoredValue(
+        defaults: UserDefaults,
+        key: String,
+        legacyValue: Double,
+        currentValue: Double
+    ) {
+        let storedValue = defaults.object(forKey: key) as? Double
+        if storedValue == nil || storedValue == legacyValue {
+            defaults.set(currentValue, forKey: key)
+        }
+    }
+
+    /// 只替换仍等于旧默认的布尔设置，保留用户主动改过的值。
+    private static func replaceStoredValue(
+        defaults: UserDefaults,
+        key: String,
+        legacyValue: Bool,
+        currentValue: Bool
+    ) {
+        let storedValue = defaults.object(forKey: key) as? Bool
+        if storedValue == nil || storedValue == legacyValue {
+            defaults.set(currentValue, forKey: key)
+        }
     }
 }
 
@@ -277,7 +420,8 @@ public struct CodexUsageWidgetDisplay: Equatable, Sendable {
     public init(
         snapshot: UsageSnapshot,
         settings: MenuBarDisplaySettings,
-        formatter: UsageFormatter = UsageFormatter()
+        formatter: UsageFormatter = UsageFormatter(),
+        now: Date = Date()
     ) {
         var lines: [Line] = []
         if settings.showsPrimaryWindow {
@@ -285,7 +429,7 @@ public struct CodexUsageWidgetDisplay: Equatable, Sendable {
                 id: "primary",
                 title: "5 小时",
                 window: snapshot.rateLimits.primary,
-                resetText: formatter.widgetResetClock(epochSeconds: snapshot.rateLimits.primary?.resetsAt),
+                resetText: formatter.resetRemainingText(window: snapshot.rateLimits.primary, now: now),
                 settings: settings
             ))
         }
@@ -294,7 +438,7 @@ public struct CodexUsageWidgetDisplay: Equatable, Sendable {
                 id: "secondary",
                 title: "7 天",
                 window: snapshot.rateLimits.secondary,
-                resetText: formatter.widgetResetDate(epochSeconds: snapshot.rateLimits.secondary?.resetsAt),
+                resetText: formatter.resetRemainingText(window: snapshot.rateLimits.secondary, now: now),
                 settings: settings
             ))
         }
@@ -303,7 +447,7 @@ public struct CodexUsageWidgetDisplay: Equatable, Sendable {
                 id: "primary",
                 title: "5 小时",
                 window: snapshot.rateLimits.primary,
-                resetText: formatter.widgetResetClock(epochSeconds: snapshot.rateLimits.primary?.resetsAt),
+                resetText: formatter.resetRemainingText(window: snapshot.rateLimits.primary, now: now),
                 settings: settings
             ))
         }
