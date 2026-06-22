@@ -8,7 +8,7 @@ enum MenuBarPopoverLayout {
     static let minimumHeight: CGFloat = 220
     static let maximumHeight: CGFloat = 660
     static let maximumScrollableContentHeight: CGFloat = 520
-    static let summaryCardMinimumHeight: CGFloat = 82
+    static let paceMarkerTooltipTopOffset: CGFloat = 112
     static let scrollOverflowHysteresis: CGFloat = 28
     static let initialSize = NSSize(width: width, height: 560)
 
@@ -55,6 +55,7 @@ struct MenuBarView: View {
     @State private var activityMode = TokenActivityMode.daily
     @State private var measuredScrollContentHeight: CGFloat = 0
     @State private var usesScrollableContent = false
+    @State private var activePaceHelpText: String?
     private let formatter = UsageFormatter()
     private var settings: MenuBarDisplaySettings {
         MenuBarDisplaySettings(defaults: MenuBarDisplaySettings.sharedDefaults)
@@ -137,6 +138,18 @@ struct MenuBarView: View {
         }
         .padding(MenuBarPopoverLayout.horizontalPadding)
         .frame(width: MenuBarPopoverLayout.width)
+        .overlay(alignment: .topLeading) {
+            if let activePaceHelpText {
+                PaceMarkerHelpBubble(text: activePaceHelpText)
+                    .frame(width: MenuBarPopoverLayout.contentWidth, alignment: .leading)
+                    .offset(
+                        x: MenuBarPopoverLayout.horizontalPadding,
+                        y: MenuBarPopoverLayout.paceMarkerTooltipTopOffset
+                    )
+                    .transition(.opacity)
+                    .zIndex(100)
+            }
+        }
         .background(
             GeometryReader { proxy in
                 Color.clear.preference(key: MenuBarSizePreferenceKey.self, value: proxy.size)
@@ -245,7 +258,8 @@ struct MenuBarView: View {
                 snapshot: snapshot.rateLimits,
                 formatter: formatter,
                 settings: settings,
-                resetTimeDisplayStyle: activePopoverSettings.resetTimeDisplayStyle
+                resetTimeDisplayStyle: activePopoverSettings.resetTimeDisplayStyle,
+                onPaceMarkerHoverChange: updateActivePaceHelpText
             )
 
             let paceDisplays = UsageWindowPaceDisplay.displays(
@@ -264,7 +278,8 @@ struct MenuBarView: View {
                             limit: limit,
                             formatter: formatter,
                             settings: settings,
-                            resetTimeDisplayStyle: activePopoverSettings.resetTimeDisplayStyle
+                            resetTimeDisplayStyle: activePopoverSettings.resetTimeDisplayStyle,
+                            onPaceMarkerHoverChange: updateActivePaceHelpText
                         )
                     }
                 }
@@ -292,6 +307,17 @@ struct MenuBarView: View {
             ContentUnavailableView("暂无用量数据", systemImage: "clock")
                 .frame(width: 320)
                 .padding(.vertical, 24)
+        }
+    }
+
+    /// 统一由弹窗根视图管理理论节奏线说明，避免局部 tooltip 改变卡片布局或内容高度测量。
+    private func updateActivePaceHelpText(_ text: String?, _ isHovered: Bool) {
+        withAnimation(.easeOut(duration: 0.08)) {
+            if isHovered {
+                activePaceHelpText = text
+            } else if activePaceHelpText == text {
+                activePaceHelpText = nil
+            }
         }
     }
 
@@ -347,8 +373,11 @@ private struct QuotaSummaryGrid: View {
     let formatter: UsageFormatter
     let settings: MenuBarDisplaySettings
     let resetTimeDisplayStyle: ResetTimeDisplayStyle
+    let onPaceMarkerHoverChange: (String?, Bool) -> Void
 
     var body: some View {
+        let primaryPaceMarker = paceMarker(for: snapshot.primary)
+        let secondaryPaceMarker = paceMarker(for: snapshot.secondary)
         HStack(spacing: 8) {
             QuotaSummaryCard(
                 title: "5 小时",
@@ -357,7 +386,8 @@ private struct QuotaSummaryGrid: View {
                 tone: UsageRemainingTone(remainingPercent: snapshot.primary?.remainingPercent),
                 settings: settings,
                 workdayMarkers: [],
-                paceMarker: paceMarker(for: snapshot.primary)
+                paceMarker: primaryPaceMarker,
+                onPaceMarkerHoverChange: updateActivePaceHelpText
             )
             QuotaSummaryCard(
                 title: "7 天",
@@ -369,7 +399,8 @@ private struct QuotaSummaryGrid: View {
                     workDays: settings.weeklyProgressWorkDays,
                     windowDurationMins: snapshot.secondary?.windowDurationMins
                 ),
-                paceMarker: paceMarker(for: snapshot.secondary)
+                paceMarker: secondaryPaceMarker,
+                onPaceMarkerHoverChange: updateActivePaceHelpText
             )
         }
     }
@@ -394,8 +425,16 @@ private struct QuotaSummaryGrid: View {
         }
         return ProgressPaceMarker(
             percent: 100 - pace.expectedUsedPercent,
-            color: pace.deltaPercent <= 0 ? .green : .red
+            color: pace.deltaPercent <= 0 ? .green : .red,
+            helpText: pace.deltaPercent <= 0
+                ? "绿色线：按当前时间进度推算的理论剩余位置；绿色表示实际用得比理论慢，有余量。"
+                : "红色线：按当前时间进度推算的理论剩余位置；红色表示实际用得比理论快，可能提前耗尽。"
         )
+    }
+
+    /// 统一由弹窗根视图管理理论节奏线说明，避免局部 tooltip 改变卡片布局或内容高度测量。
+    private func updateActivePaceHelpText(_ text: String?, _ isHovered: Bool) {
+        onPaceMarkerHoverChange(text, isHovered)
     }
 }
 
@@ -403,6 +442,7 @@ private struct QuotaSummaryGrid: View {
 private struct ProgressPaceMarker {
     let percent: Double
     let color: Color
+    let helpText: String
 }
 
 private struct QuotaSummaryCard: View {
@@ -413,6 +453,7 @@ private struct QuotaSummaryCard: View {
     let settings: MenuBarDisplaySettings
     let workdayMarkers: [Double]
     let paceMarker: ProgressPaceMarker?
+    let onPaceMarkerHoverChange: (String?, Bool) -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 5) {
@@ -433,7 +474,10 @@ private struct QuotaSummaryCard: View {
                 value: display.progressValue,
                 tint: tone.statusBarColor(settings: settings),
                 markers: workdayMarkers,
-                paceMarker: paceMarker
+                paceMarker: paceMarker,
+                onPaceMarkerHoverChange: { isHovered in
+                    onPaceMarkerHoverChange(paceMarker?.helpText, isHovered)
+                }
             )
 
             HStack(spacing: 4) {
@@ -450,13 +494,31 @@ private struct QuotaSummaryCard: View {
         }
         .padding(8)
         .fixedSize(horizontal: false, vertical: true)
-        .frame(
-            maxWidth: .infinity,
-            minHeight: MenuBarPopoverLayout.summaryCardMinimumHeight,
-            alignment: .topLeading
-        )
+        .frame(maxWidth: .infinity, alignment: .topLeading)
         .background(Color(nsColor: .controlBackgroundColor).opacity(0.55))
         .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+    }
+}
+
+/// 理论节奏线的快速说明气泡，只作为根视图悬浮层展示，不参与额度卡片布局。
+private struct PaceMarkerHelpBubble: View {
+    let text: String
+
+    var body: some View {
+        Text(text)
+            .font(.caption2)
+            .foregroundStyle(.primary)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .fixedSize(horizontal: false, vertical: true)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 5)
+            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                    .stroke(Color.primary.opacity(0.14), lineWidth: 1)
+            )
+            .shadow(color: .black.opacity(0.16), radius: 6, y: 2)
+            .allowsHitTesting(false)
     }
 }
 
@@ -466,61 +528,92 @@ private struct WorkdayMarkedProgressView: View {
     let tint: Color
     let markers: [Double]
     let paceMarker: ProgressPaceMarker?
+    let onPaceMarkerHoverChange: (Bool) -> Void
     @Environment(\.displayScale) private var displayScale
 
     var body: some View {
+        progressBody
+            .overlay {
+                GeometryReader { proxy in
+                    if let paceMarker {
+                        paceMarkerOverlay(marker: paceMarker, size: proxy.size)
+                    }
+                }
+                .allowsHitTesting(paceMarker != nil)
+            }
+    }
+
+    private var progressBody: some View {
         Canvas { context, size in
-            let scale = max(displayScale, 1)
-            let rect = CGRect(origin: .zero, size: size)
-            let cornerRadius = size.height / 2
-            let cornerSize = CGSize(width: cornerRadius, height: cornerRadius)
-            let clampedValue = min(max(value, 0), 100)
-            let fillWidth = size.width * clampedValue / 100
-
-            context.clip(to: Path(rect))
-
-            let trackPath = Path { path in
-                path.addRoundedRect(in: rect, cornerSize: cornerSize)
-            }
-            context.fill(trackPath, with: .color(Color.primary.opacity(0.10)))
-
-            if fillWidth > 0 {
-                let fillRect = CGRect(
-                    x: 0,
-                    y: 0,
-                    width: min(fillWidth, size.width),
-                    height: size.height
-                )
-                let fillPath = Path { path in
-                    path.addRoundedRect(in: fillRect, cornerSize: cornerSize)
-                }
-                context.fill(fillPath, with: .color(tint))
-            }
-
-            for marker in markers.map(Self.clampedPercent).filter({ $0 > 0 && $0 < 100 }) {
-                let x = size.width * marker / 100
-                let markerRect = Self.markerRect(x: x, size: size, scale: scale)
-                let markerPath = Path { path in
-                    path.addRoundedRect(
-                        in: markerRect,
-                        cornerSize: CGSize(width: markerRect.width / 2, height: markerRect.width / 2)
-                    )
-                }
-                context.fill(markerPath, with: .color(Color.primary.opacity(0.54)))
-            }
-
-            if let paceMarker {
-                let x = size.width * Self.clampedPercent(paceMarker.percent) / 100
-                let stripes = Self.paceMarkerPaths(x: x, size: size, scale: scale)
-                context.blendMode = .destinationOut
-                context.fill(stripes.punch, with: .color(.white.opacity(0.9)))
-                context.blendMode = .normal
-                context.fill(stripes.center, with: .color(paceMarker.color))
-            }
+            drawProgress(context: &context, size: size)
         }
-        .frame(height: 6)
-        .accessibilityLabel("用量进度")
-        .accessibilityValue("\(Int(min(max(value, 0), 100)))%")
+            .frame(height: 6)
+            .accessibilityLabel("用量进度")
+            .accessibilityValue("\(Int(min(max(value, 0), 100)))%")
+    }
+
+    /// 只在理论节奏线附近建立悬浮热区，避免鼠标经过整条进度条时频繁弹出说明。
+    @ViewBuilder
+    private func paceMarkerOverlay(marker: ProgressPaceMarker, size: CGSize) -> some View {
+        let x = size.width * Self.clampedPercent(marker.percent) / 100
+        Color.clear
+            .frame(width: Self.paceMarkerHitWidth, height: Self.paceMarkerHitHeight)
+            .contentShape(Rectangle())
+            .position(x: x, y: size.height / 2)
+            .onHover { isHovered in
+                onPaceMarkerHoverChange(isHovered)
+            }
+    }
+
+    /// 绘制完整进度条；让 body 只负责组合 tooltip，避免悬浮提示逻辑和绘制逻辑混在一起。
+    private func drawProgress(context: inout GraphicsContext, size: CGSize) {
+        let scale = max(displayScale, 1)
+        let rect = CGRect(origin: .zero, size: size)
+        let cornerRadius = size.height / 2
+        let cornerSize = CGSize(width: cornerRadius, height: cornerRadius)
+        let clampedValue = min(max(value, 0), 100)
+        let fillWidth = size.width * clampedValue / 100
+
+        context.clip(to: Path(rect))
+
+        let trackPath = Path { path in
+            path.addRoundedRect(in: rect, cornerSize: cornerSize)
+        }
+        context.fill(trackPath, with: .color(Color.primary.opacity(0.10)))
+
+        if fillWidth > 0 {
+            let fillRect = CGRect(
+                x: 0,
+                y: 0,
+                width: min(fillWidth, size.width),
+                height: size.height
+            )
+            let fillPath = Path { path in
+                path.addRoundedRect(in: fillRect, cornerSize: cornerSize)
+            }
+            context.fill(fillPath, with: .color(tint))
+        }
+
+        for marker in markers.map(Self.clampedPercent).filter({ $0 > 0 && $0 < 100 }) {
+            let x = size.width * marker / 100
+            let markerRect = Self.markerRect(x: x, size: size, scale: scale)
+            let markerPath = Path { path in
+                path.addRoundedRect(
+                    in: markerRect,
+                    cornerSize: CGSize(width: markerRect.width / 2, height: markerRect.width / 2)
+                )
+            }
+            context.fill(markerPath, with: .color(Color.primary.opacity(0.54)))
+        }
+
+        if let paceMarker {
+            let x = size.width * Self.clampedPercent(paceMarker.percent) / 100
+            let stripes = Self.paceMarkerPaths(x: x, size: size, scale: scale)
+            context.blendMode = .destinationOut
+            context.fill(stripes.punch, with: .color(.white.opacity(0.9)))
+            context.blendMode = .normal
+            context.fill(stripes.center, with: .color(paceMarker.color))
+        }
     }
 
     /// 与 CodexBar 的刻度线保持一致：像素对齐、窄线、只占进度条中间一段高度。
@@ -542,6 +635,9 @@ private struct WorkdayMarkedProgressView: View {
     private static func clampedPercent(_ value: Double) -> Double {
         min(max(value, 0), 100)
     }
+
+    private static let paceMarkerHitWidth: CGFloat = 24
+    private static let paceMarkerHitHeight: CGFloat = 22
 
     /// 绿色/红色节奏标记仿照 CodexBar：先挖出一条窄槽，再在中心绘制醒目的节奏线。
     private static func paceMarkerPaths(
@@ -637,8 +733,11 @@ private struct AdditionalRateLimitView: View {
     let formatter: UsageFormatter
     let settings: MenuBarDisplaySettings
     let resetTimeDisplayStyle: ResetTimeDisplayStyle
+    let onPaceMarkerHoverChange: (String?, Bool) -> Void
 
     var body: some View {
+        let primaryPaceMarker = paceMarker(for: limit.primary)
+        let secondaryPaceMarker = paceMarker(for: limit.secondary)
         HStack(spacing: 8) {
             QuotaSummaryCard(
                 title: "\(displayName) 5 小时",
@@ -647,7 +746,8 @@ private struct AdditionalRateLimitView: View {
                 tone: UsageRemainingTone(remainingPercent: limit.primary?.remainingPercent),
                 settings: settings,
                 workdayMarkers: [],
-                paceMarker: paceMarker(for: limit.primary)
+                paceMarker: primaryPaceMarker,
+                onPaceMarkerHoverChange: updateActivePaceHelpText
             )
             QuotaSummaryCard(
                 title: "\(displayName) 7 天",
@@ -659,7 +759,8 @@ private struct AdditionalRateLimitView: View {
                     workDays: settings.weeklyProgressWorkDays,
                     windowDurationMins: limit.secondary?.windowDurationMins
                 ),
-                paceMarker: paceMarker(for: limit.secondary)
+                paceMarker: secondaryPaceMarker,
+                onPaceMarkerHoverChange: updateActivePaceHelpText
             )
         }
     }
@@ -690,8 +791,16 @@ private struct AdditionalRateLimitView: View {
         }
         return ProgressPaceMarker(
             percent: 100 - pace.expectedUsedPercent,
-            color: pace.deltaPercent <= 0 ? .green : .red
+            color: pace.deltaPercent <= 0 ? .green : .red,
+            helpText: pace.deltaPercent <= 0
+                ? "绿色线：按当前时间进度推算的理论剩余位置；绿色表示实际用得比理论慢，有余量。"
+                : "红色线：按当前时间进度推算的理论剩余位置；红色表示实际用得比理论快，可能提前耗尽。"
         )
+    }
+
+    /// 额外额度同样把节奏线说明放在卡片组下方，避免被后续内容覆盖。
+    private func updateActivePaceHelpText(_ text: String?, _ isHovered: Bool) {
+        onPaceMarkerHoverChange(text, isHovered)
     }
 }
 
