@@ -115,7 +115,8 @@ public struct RateLimitWindow: Codable, Equatable, Sendable {
         Int(min(max(usedPercent, 0), 100).rounded())
     }
 
-    public func usagePace(now: Date = Date()) -> UsagePace? {
+    /// 计算窗口的理论消耗进度；周窗口可按工作日切分，避免周末时间稀释工作日用量节奏。
+    public func usagePace(now: Date = Date(), weeklyProgressWorkDays: Int? = nil, calendar: Calendar = .current) -> UsagePace? {
         guard let windowDurationMins, windowDurationMins > 0 else {
             return nil
         }
@@ -135,7 +136,14 @@ public struct RateLimitWindow: Codable, Equatable, Sendable {
         }
 
         let elapsedSeconds = durationSeconds - remainingSeconds
-        let expectedUsedPercent = (elapsedSeconds / durationSeconds) * 100
+        let workdayProgress = Self.weeklyWorkdayProgress(
+            now: now,
+            durationSeconds: durationSeconds,
+            remainingSeconds: remainingSeconds,
+            workDays: weeklyProgressWorkDays,
+            calendar: calendar
+        )
+        let expectedUsedPercent = workdayProgress?.expectedUsedPercent ?? (elapsedSeconds / durationSeconds) * 100
         let actualUsedPercent = min(max(usedPercent, 0), 100)
         guard elapsedSeconds > 0 || actualUsedPercent == 0 else {
             return nil
@@ -145,18 +153,28 @@ public struct RateLimitWindow: Codable, Equatable, Sendable {
         var etaSeconds: TimeInterval?
         var willLastToReset = false
 
+        let paceElapsedSeconds = workdayProgress?.elapsedSeconds ?? elapsedSeconds
         if actualUsedPercent >= 100 {
             etaSeconds = 0
-        } else if elapsedSeconds > 0, actualUsedPercent > 0 {
-            let usageRate = actualUsedPercent / elapsedSeconds
+        } else if paceElapsedSeconds > 0, actualUsedPercent > 0 {
+            let usageRate = actualUsedPercent / paceElapsedSeconds
             let remainingUsagePercent = 100 - actualUsedPercent
             let candidateEtaSeconds = remainingUsagePercent / usageRate
-            if candidateEtaSeconds >= remainingSeconds {
+            let effectiveRemainingSeconds = workdayProgress?.remainingSeconds ?? remainingSeconds
+            if candidateEtaSeconds >= effectiveRemainingSeconds {
                 willLastToReset = true
+            } else if let workDays = workdayProgress?.workDays {
+                etaSeconds = Self.wallClockInterval(
+                    from: now,
+                    consumingWorkSeconds: candidateEtaSeconds,
+                    resetAfterSeconds: remainingSeconds,
+                    workDays: workDays,
+                    calendar: calendar
+                )
             } else {
                 etaSeconds = candidateEtaSeconds
             }
-        } else if elapsedSeconds > 0 {
+        } else if paceElapsedSeconds > 0 {
             willLastToReset = true
         }
 
@@ -172,9 +190,114 @@ public struct RateLimitWindow: Codable, Equatable, Sendable {
     public func paceDeltaPercent(now: Date = Date()) -> Int? {
         usagePace(now: now).map { Int($0.deltaPercent.rounded()) }
     }
+
+    private struct WorkdayProgress {
+        let workDays: Int
+        let totalSeconds: TimeInterval
+        let elapsedSeconds: TimeInterval
+        let remainingSeconds: TimeInterval
+
+        var expectedUsedPercent: Double {
+            min(max((elapsedSeconds / totalSeconds) * 100, 0), 100)
+        }
+    }
+
+    /// 只对标准 7 天窗口启用工作日进度；其他窗口继续使用线性时间进度。
+    private static func weeklyWorkdayProgress(
+        now: Date,
+        durationSeconds: TimeInterval,
+        remainingSeconds: TimeInterval,
+        workDays: Int?,
+        calendar: Calendar
+    ) -> WorkdayProgress? {
+        guard let workDays, workDays >= 2, workDays < 7, Int(durationSeconds) == 10_080 * 60 else {
+            return nil
+        }
+
+        let resetsAt = now.addingTimeInterval(remainingSeconds)
+        let windowStart = resetsAt.addingTimeInterval(-durationSeconds)
+        var totalWorkSeconds: TimeInterval = 0
+        var elapsedWorkSeconds: TimeInterval = 0
+        var remainingWorkSeconds: TimeInterval = 0
+        var cursor = windowStart
+
+        while cursor < resetsAt {
+            guard let nextDay = nextDayBoundary(after: cursor, calendar: calendar), nextDay > cursor else {
+                return nil
+            }
+            let sliceEnd = min(nextDay, resetsAt)
+            if isWorkday(cursor, calendar: calendar, workDays: workDays) {
+                let sliceDuration = sliceEnd.timeIntervalSince(cursor)
+                totalWorkSeconds += sliceDuration
+                if now > cursor {
+                    elapsedWorkSeconds += min(now, sliceEnd).timeIntervalSince(cursor)
+                }
+                if now < sliceEnd {
+                    remainingWorkSeconds += sliceEnd.timeIntervalSince(max(now, cursor))
+                }
+            }
+            cursor = sliceEnd
+        }
+
+        guard totalWorkSeconds > 0 else {
+            return nil
+        }
+        return WorkdayProgress(
+            workDays: workDays,
+            totalSeconds: totalWorkSeconds,
+            elapsedSeconds: elapsedWorkSeconds,
+            remainingSeconds: remainingWorkSeconds
+        )
+    }
+
+    /// 把剩余可工作秒数换算回自然时间，保证 ETA 会跨过非工作日空档。
+    private static func wallClockInterval(
+        from now: Date,
+        consumingWorkSeconds requiredWorkSeconds: TimeInterval,
+        resetAfterSeconds: TimeInterval,
+        workDays: Int,
+        calendar: Calendar
+    ) -> TimeInterval? {
+        guard requiredWorkSeconds > 0 else {
+            return 0
+        }
+
+        let resetsAt = now.addingTimeInterval(resetAfterSeconds)
+        var remaining = requiredWorkSeconds
+        var cursor = now
+        while cursor < resetsAt {
+            guard let nextDay = nextDayBoundary(after: cursor, calendar: calendar), nextDay > cursor else {
+                return nil
+            }
+            let sliceEnd = min(nextDay, resetsAt)
+            if isWorkday(cursor, calendar: calendar, workDays: workDays) {
+                let available = sliceEnd.timeIntervalSince(cursor)
+                if remaining <= available {
+                    return cursor.addingTimeInterval(remaining).timeIntervalSince(now)
+                }
+                remaining -= available
+            }
+            cursor = sliceEnd
+        }
+        return nil
+    }
+
+    /// 按本地日界切片，避免窗口重置时间不是零点时把整天归类错位。
+    private static func nextDayBoundary(after date: Date, calendar: Calendar) -> Date? {
+        calendar.date(byAdding: .day, value: 1, to: calendar.startOfDay(for: date))
+    }
+
+    /// 使用 ISO 周序号判定工作日，1...workDays 分别对应周一到配置的最后工作日。
+    private static func isWorkday(_ date: Date, calendar: Calendar, workDays: Int) -> Bool {
+        let weekday = calendar.component(.weekday, from: date)
+        let isoWeekday = weekday == 1 ? 7 : weekday - 1
+        return isoWeekday <= workDays
+    }
 }
 
 public struct UsagePace: Equatable, Sendable {
+    public static let minimumDisplayExpectedUsedPercent = 3.0
+
     public let deltaPercent: Double
     public let expectedUsedPercent: Double
     public let actualUsedPercent: Double
@@ -206,6 +329,13 @@ public struct UsagePace: Equatable, Sendable {
     public var roundedExpectedUsedPercent: Int {
         Int(expectedUsedPercent.rounded())
     }
+
+    /// 判断当前窗口进度是否足够用于展示 Pace，避免刚重置时少量用量造成夸张偏差。
+    public func isDisplayable(
+        minimumExpectedUsedPercent: Double = UsagePace.minimumDisplayExpectedUsedPercent
+    ) -> Bool {
+        expectedUsedPercent >= minimumExpectedUsedPercent
+    }
 }
 
 public struct CreditsSnapshot: Codable, Equatable, Sendable {
@@ -223,16 +353,108 @@ public struct CreditsSnapshot: Codable, Equatable, Sendable {
 public struct UsageSnapshot: Codable, Equatable, Sendable {
     public let fetchedAt: Date
     public let rateLimits: RateLimitSnapshot
+    public let account: CodexAccountSnapshot?
     public let profileStats: CodexProfileStats?
 
     public init(
         fetchedAt: Date,
         rateLimits: RateLimitSnapshot,
+        account: CodexAccountSnapshot? = nil,
         profileStats: CodexProfileStats? = nil
     ) {
         self.fetchedAt = fetchedAt
         self.rateLimits = rateLimits
+        self.account = account
         self.profileStats = profileStats
+    }
+
+    public var accountEmail: String? {
+        account?.email
+    }
+
+    public var accountPlanType: String? {
+        account?.planType ?? rateLimits.planType
+    }
+
+    public var accountPlanDisplayText: String? {
+        CodexPlanFormatter.displayName(for: accountPlanType)
+    }
+}
+
+/// 保存来自本机 Codex 登录态的账户身份摘要；只包含可展示字段，不保存 token 或认证材料。
+public struct CodexAccountSnapshot: Codable, Equatable, Sendable {
+    public let email: String?
+    public let planType: String?
+
+    public init(email: String?, planType: String?) {
+        self.email = Self.normalizedEmail(email)
+        self.planType = Self.normalizedField(planType)
+    }
+
+    public var isEmpty: Bool {
+        email == nil && planType == nil
+    }
+
+    /// 归一化邮箱字段，避免空白字符串写入缓存或展示在弹窗头部。
+    private static func normalizedEmail(_ value: String?) -> String? {
+        normalizedField(value)?.lowercased()
+    }
+
+    /// 归一化账户字段；空字符串代表未知，不参与快照。
+    private static func normalizedField(_ value: String?) -> String? {
+        guard let value = value?.trimmingCharacters(in: .whitespacesAndNewlines), !value.isEmpty else {
+            return nil
+        }
+        return value
+    }
+}
+
+/// 将 Codex API 的内部套餐标识转成适合 UI 展示的短标签。
+public enum CodexPlanFormatter {
+    /// 返回可读套餐名称；未知标识会做轻量清洗，避免把 snake_case 原样显示给用户。
+    public static func displayName(for rawPlanType: String?) -> String? {
+        guard let rawPlanType = rawPlanType?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !rawPlanType.isEmpty
+        else {
+            return nil
+        }
+
+        switch normalizedKey(rawPlanType) {
+        case "prolite":
+            return "Pro 5x"
+        case "pro":
+            return "Pro 20x"
+        case "plus":
+            return "Plus"
+        case "team":
+            return "Team"
+        case "enterprise":
+            return "Enterprise"
+        case "free":
+            return "Free"
+        default:
+            return cleanedDisplayName(rawPlanType)
+        }
+    }
+
+    /// 统一内部标识的大小写和分隔符，方便兼容 prolite / pro_lite / pro-lite。
+    private static func normalizedKey(_ value: String) -> String {
+        value
+            .lowercased()
+            .filter { $0.isLetter || $0.isNumber }
+    }
+
+    /// 将未知套餐标识拆词首字母大写，作为比原始字段更友好的兜底展示。
+    private static func cleanedDisplayName(_ value: String) -> String {
+        let words = value
+            .replacingOccurrences(of: "-", with: " ")
+            .replacingOccurrences(of: "_", with: " ")
+            .split(separator: " ")
+            .map { word in
+                let lowercased = word.lowercased()
+                return lowercased.prefix(1).uppercased() + String(lowercased.dropFirst())
+            }
+        return words.isEmpty ? value : words.joined(separator: " ")
     }
 }
 

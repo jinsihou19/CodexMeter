@@ -1,4 +1,5 @@
 import AppKit
+import ServiceManagement
 import XCTest
 @testable import CodexUsageShared
 
@@ -99,6 +100,92 @@ final class UsageViewModelTests: XCTestCase {
 
         XCTAssertTrue(shouldHandle)
         XCTAssertEqual(showCount, 1)
+    }
+
+    func testLaunchAtLoginManagerRegistersAndUnregistersOnlyWhenStateChanges() throws {
+        var status = SMAppService.Status.notRegistered
+        var registerCount = 0
+        var unregisterCount = 0
+        let manager = LaunchAtLoginManager(
+            statusProvider: { status },
+            registerApp: {
+                registerCount += 1
+                status = .enabled
+            },
+            unregisterApp: {
+                unregisterCount += 1
+                status = .notRegistered
+            }
+        )
+
+        try manager.setEnabled(true)
+        try manager.setEnabled(true)
+        try manager.setEnabled(false)
+
+        XCTAssertEqual(registerCount, 1)
+        XCTAssertEqual(unregisterCount, 1)
+        XCTAssertFalse(manager.isEnabled)
+    }
+
+    func testAppBehaviorSettingsReadDefaultsAndInvalidRefreshCadence() {
+        let suiteName = "CodexUsageTests.appBehavior.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defer {
+            defaults.removePersistentDomain(forName: suiteName)
+        }
+        defaults.set(true, forKey: AppBehaviorPreferenceKeys.opensSettingsAtLaunch)
+        defaults.set("bad-value", forKey: AppBehaviorPreferenceKeys.refreshCadence)
+
+        let settings = AppBehaviorSettings(defaults: defaults)
+
+        XCTAssertTrue(settings.opensSettingsAtLaunch)
+        XCTAssertEqual(settings.refreshCadence, .seconds30)
+        XCTAssertNil(UsageRefreshCadence.manual.intervalSeconds)
+        XCTAssertEqual(UsageRefreshCadence.minutes5.intervalSeconds, 300)
+    }
+
+    func testWidgetAndPopoverSettingsNormalizeStoredValues() {
+        let suiteName = "CodexUsageTests.displaySettings.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defer {
+            defaults.removePersistentDomain(forName: suiteName)
+        }
+        defaults.set("secondaryOnly", forKey: WidgetDisplayPreferenceKeys.contentMode)
+        defaults.set("bad-appearance", forKey: SurfaceAppearancePreferenceKeys.appearanceMode)
+        defaults.set(2.0, forKey: SurfaceAppearancePreferenceKeys.cardOpacity)
+        defaults.set("bad-appearance", forKey: WidgetDisplayPreferenceKeys.appearanceMode)
+        defaults.set(2.0, forKey: WidgetDisplayPreferenceKeys.cardOpacity)
+        defaults.set(false, forKey: WidgetDisplayPreferenceKeys.showsResetTime)
+        defaults.set(false, forKey: WidgetDisplayPreferenceKeys.showsPaceComparison)
+        defaults.set(false, forKey: WidgetDisplayPreferenceKeys.showsLastSync)
+        defaults.set(false, forKey: WidgetDisplayPreferenceKeys.showsPlanLabel)
+        defaults.set("not-a-style", forKey: PopoverPreferenceKeys.resetTimeDisplayStyle)
+        defaults.set(true, forKey: MenuBarPreferenceKeys.showsAdditionalLimits)
+
+        let widgetSettings = WidgetDisplaySettings(defaults: defaults)
+        let surfaceSettings = SurfaceAppearanceSettings(defaults: defaults)
+        let popoverSettings = PopoverDisplaySettings(defaults: defaults)
+
+        XCTAssertEqual(widgetSettings.contentMode, .secondaryOnly)
+        XCTAssertEqual(widgetSettings.appearanceMode, .automatic)
+        XCTAssertEqual(widgetSettings.cardOpacity, WidgetDisplaySettings.cardOpacityRange.upperBound)
+        XCTAssertEqual(surfaceSettings.appearanceMode, .automatic)
+        XCTAssertEqual(surfaceSettings.cardOpacity, SurfaceAppearanceSettings.cardOpacityRange.upperBound)
+        XCTAssertEqual(
+            SurfaceAppearanceSettings(cardOpacity: 0.01).cardOpacity,
+            SurfaceAppearanceSettings.cardOpacityRange.lowerBound
+        )
+        XCTAssertEqual(
+            WidgetDisplaySettings(cardOpacity: 0.01).cardOpacity,
+            WidgetDisplaySettings.cardOpacityRange.lowerBound
+        )
+        XCTAssertFalse(widgetSettings.showsResetTime)
+        XCTAssertFalse(widgetSettings.showsPaceComparison)
+        XCTAssertFalse(widgetSettings.showsLastSync)
+        XCTAssertFalse(widgetSettings.showsPlanLabel)
+        XCTAssertTrue(WidgetDisplaySettings().showsPaceComparison)
+        XCTAssertEqual(popoverSettings.resetTimeDisplayStyle, .countdown)
+        XCTAssertTrue(popoverSettings.showsAdditionalLimits)
     }
 
     func testMenuBarDisplaySettingsDefaultToCompactReadableValues() {
@@ -366,6 +453,79 @@ final class UsageViewModelTests: XCTestCase {
         XCTAssertEqual(settings.colorHex(for: display.lines.first?.tone ?? .unavailable), "#FFB000")
     }
 
+    func testWidgetDisplayCanOverrideMenuBarWindowSelectionAndHideResetTime() {
+        let snapshot = UsageSnapshot(
+            fetchedAt: Date(timeIntervalSince1970: 1_779_940_000),
+            rateLimits: RateLimitSnapshot(
+                limitId: "codex",
+                limitName: nil,
+                primary: RateLimitWindow(usedPercent: 45, windowDurationMins: 300, resetsAt: 1_779_949_290),
+                secondary: RateLimitWindow(usedPercent: 12, windowDurationMins: 10_080, resetsAt: 1_780_392_047),
+                credits: nil,
+                planType: nil,
+                rateLimitReachedType: nil
+            )
+        )
+        let menuBarSettings = MenuBarDisplaySettings(
+            showsPrimaryWindow: true,
+            showsSecondaryWindow: false
+        )
+        let widgetSettings = WidgetDisplaySettings(
+            contentMode: .secondaryOnly,
+            showsResetTime: false,
+            showsPaceComparison: false,
+            showsLastSync: false,
+            showsPlanLabel: false
+        )
+
+        let display = CodexUsageWidgetDisplay(
+            snapshot: snapshot,
+            settings: menuBarSettings,
+            widgetSettings: widgetSettings
+        )
+
+        XCTAssertEqual(display.lines.map(\.title), ["7 天"])
+        XCTAssertEqual(display.lines.map(\.value), ["88%"])
+        XCTAssertEqual(display.lines.map(\.resetText), [""])
+        XCTAssertEqual(display.lines.map(\.paceStatusText), [""])
+    }
+
+    func testWidgetDisplayIncludesPaceComparisonForVisibleWindows() {
+        let snapshot = UsageSnapshot(
+            fetchedAt: Date(timeIntervalSince1970: 1_779_940_000),
+            rateLimits: RateLimitSnapshot(
+                limitId: "codex",
+                limitName: nil,
+                primary: RateLimitWindow(
+                    usedPercent: 18,
+                    windowDurationMins: 300,
+                    resetsAt: nil,
+                    resetAfterSeconds: 14_700
+                ),
+                secondary: RateLimitWindow(
+                    usedPercent: 11,
+                    windowDurationMins: 10_080,
+                    resetsAt: nil,
+                    resetAfterSeconds: 580_608
+                ),
+                credits: nil,
+                planType: nil,
+                rateLimitReachedType: nil
+            )
+        )
+        let display = CodexUsageWidgetDisplay(
+            snapshot: snapshot,
+            settings: MenuBarDisplaySettings(),
+            widgetSettings: WidgetDisplaySettings(contentMode: .bothWindows)
+        )
+
+        XCTAssertEqual(display.lines.map(\.title), ["5 小时", "7 天"])
+        XCTAssertEqual(display.lines.map(\.value), ["82%", "89%"])
+        XCTAssertEqual(display.lines.map(\.paceStatusText), ["节奏正常", "超额 5%"])
+        XCTAssertEqual(display.lines.map(\.paceProjectionText), ["持续到重置", "预计 2天6小时后耗尽"])
+        XCTAssertEqual(display.lines.map(\.paceTone), [.good, .warning])
+    }
+
     func testMenuBarDisplayPresetAppliesReadableDefaults() {
         let relaxed = MenuBarDisplayPreset.relaxed.settings
 
@@ -475,6 +635,38 @@ final class UsageViewModelTests: XCTestCase {
         XCTAssertTrue(client is DirectCodexUsageClient)
     }
 
+    func testManualRefreshCadenceDoesNotStartBackgroundRefresh() async {
+        let client = CountingRateLimitClient(snapshot: RateLimitSnapshot(
+            limitId: "codex",
+            limitName: nil,
+            primary: RateLimitWindow(usedPercent: 4, windowDurationMins: 300, resetsAt: nil),
+            secondary: RateLimitWindow(usedPercent: 14, windowDurationMins: 10_080, resetsAt: nil),
+            credits: nil,
+            planType: nil,
+            rateLimitReachedType: nil
+        ))
+        let viewModel = UsageViewModel(
+            client: client,
+            store: UsageSnapshotStore(
+                appGroupIdentifier: "",
+                fallbackDirectory: FileManager.default.temporaryDirectory
+                    .appendingPathComponent(UUID().uuidString, isDirectory: true)
+            ),
+            reloadWidgetTimelines: {},
+            refreshCadenceProvider: { .manual }
+        )
+
+        viewModel.start()
+        await Task.yield()
+        try? await Task.sleep(nanoseconds: 50_000_000)
+
+        XCTAssertEqual(client.fetchCount, 0)
+
+        await viewModel.refresh()
+
+        XCTAssertEqual(client.fetchCount, 1)
+    }
+
     func testRefreshReloadsWidgetTimelinesAfterSavingSnapshot() async throws {
         let storeDirectory = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString, isDirectory: true)
@@ -578,6 +770,94 @@ final class UsageViewModelTests: XCTestCase {
         XCTAssertEqual(display?.tone, .good)
     }
 
+    func testUsagePaceDisplayHidesWhenExpectedUsageIsTooEarlyInWindow() {
+        let display = UsagePaceDisplay(
+            percentWindow: RateLimitWindow(
+                usedPercent: 10,
+                windowDurationMins: 300,
+                resetsAt: nil,
+                resetAfterSeconds: 16_200
+            ),
+            paceWindow: RateLimitWindow(
+                usedPercent: 6,
+                windowDurationMins: 10_080,
+                resetsAt: nil,
+                resetAfterSeconds: 597_600
+            )
+        )
+
+        XCTAssertNil(display)
+    }
+
+    func testPaceMenuFallsBackToRemainingLinesWhenWindowProgressIsTooEarly() async {
+        let viewModel = UsageViewModel(
+            client: StubRateLimitClient(
+                snapshot: RateLimitSnapshot(
+                    limitId: "codex",
+                    limitName: nil,
+                    primary: RateLimitWindow(
+                        usedPercent: 10,
+                        windowDurationMins: 300,
+                        resetsAt: nil,
+                        resetAfterSeconds: 16_200
+                    ),
+                    secondary: RateLimitWindow(
+                        usedPercent: 6,
+                        windowDurationMins: 10_080,
+                        resetsAt: nil,
+                        resetAfterSeconds: 597_600
+                    ),
+                    credits: nil,
+                    planType: nil,
+                    rateLimitReachedType: nil
+                )
+            ),
+            store: UsageSnapshotStore(
+                appGroupIdentifier: "",
+                fallbackDirectory: FileManager.default.temporaryDirectory
+                    .appendingPathComponent(UUID().uuidString, isDirectory: true)
+            ),
+            reloadWidgetTimelines: {}
+        )
+        await viewModel.refresh()
+
+        let lines = StatusLineDisplay.lines(
+            viewModel: viewModel,
+            settings: MenuBarDisplaySettings(contentMode: .paceComparison)
+        )
+
+        XCTAssertEqual(lines.map(\.id), ["primary", "secondary"])
+        XCTAssertEqual(lines.map(\.value), ["90%", "94%"])
+    }
+
+    func testWindowPaceDisplaysIncludeFiveHourPaceAndHideEarlyWeeklyPace() {
+        let displays = UsageWindowPaceDisplay.displays(
+            rateLimits: RateLimitSnapshot(
+                limitId: "codex",
+                limitName: nil,
+                primary: RateLimitWindow(
+                    usedPercent: 60,
+                    windowDurationMins: 300,
+                    resetsAt: nil,
+                    resetAfterSeconds: 9_000
+                ),
+                secondary: RateLimitWindow(
+                    usedPercent: 6,
+                    windowDurationMins: 10_080,
+                    resetsAt: nil,
+                    resetAfterSeconds: 597_600
+                ),
+                credits: nil,
+                planType: nil,
+                rateLimitReachedType: nil
+            )
+        )
+
+        XCTAssertEqual(displays.map(\.id), ["primary"])
+        XCTAssertEqual(displays.first?.title, "5 小时")
+        XCTAssertEqual(displays.first?.display.valueText, "40% · +10%")
+    }
+
     func testUsagePaceDisplayMarksFastUsageAsDeficit() {
         let display = UsagePaceDisplay(
             percentWindow: RateLimitWindow(usedPercent: 2, windowDurationMins: 300, resetsAt: 4_000),
@@ -645,5 +925,28 @@ private struct StubRateLimitClient: UsageRateLimitFetching {
 
     func fetchRateLimits() async throws -> RateLimitSnapshot {
         snapshot
+    }
+}
+
+private final class CountingRateLimitClient: UsageRateLimitFetching, @unchecked Sendable {
+    private let snapshot: RateLimitSnapshot
+    private let lock = NSLock()
+    private var protectedFetchCount = 0
+
+    init(snapshot: RateLimitSnapshot) {
+        self.snapshot = snapshot
+    }
+
+    var fetchCount: Int {
+        lock.withLock {
+            protectedFetchCount
+        }
+    }
+
+    func fetchRateLimits() async throws -> RateLimitSnapshot {
+        lock.withLock {
+            protectedFetchCount += 1
+        }
+        return snapshot
     }
 }

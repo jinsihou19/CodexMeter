@@ -4,11 +4,17 @@ import SwiftUI
 
 enum MenuBarPopoverLayout {
     static let width: CGFloat = 380
+    static let horizontalPadding: CGFloat = 12
     static let minimumHeight: CGFloat = 220
     static let maximumHeight: CGFloat = 660
     static let maximumScrollableContentHeight: CGFloat = 520
-    static let initialScrollableContentHeight: CGFloat = 430
+    static let summaryCardMinimumHeight: CGFloat = 82
+    static let scrollOverflowHysteresis: CGFloat = 28
     static let initialSize = NSSize(width: width, height: 560)
+
+    static var contentWidth: CGFloat {
+        width - horizontalPadding * 2
+    }
 }
 
 private enum TokenActivityMode: String, CaseIterable, Identifiable {
@@ -47,10 +53,17 @@ struct MenuBarView: View {
     @ObservedObject var viewModel: UsageViewModel
     let onSizeChange: ((CGSize) -> Void)?
     @State private var activityMode = TokenActivityMode.daily
-    @State private var measuredScrollContentHeight = MenuBarPopoverLayout.initialScrollableContentHeight
+    @State private var measuredScrollContentHeight: CGFloat = 0
+    @State private var usesScrollableContent = false
     private let formatter = UsageFormatter()
     private var settings: MenuBarDisplaySettings {
         MenuBarDisplaySettings(defaults: MenuBarDisplaySettings.sharedDefaults)
+    }
+    private var popoverSettings: PopoverDisplaySettings {
+        PopoverDisplaySettings(defaults: MenuBarDisplaySettings.sharedDefaults)
+    }
+    private var appearanceSettings: SurfaceAppearanceSettings {
+        SurfaceAppearanceSettings(defaults: MenuBarDisplaySettings.sharedDefaults)
     }
 
     init(viewModel: UsageViewModel, onSizeChange: ((CGSize) -> Void)? = nil) {
@@ -59,35 +72,36 @@ struct MenuBarView: View {
     }
 
     var body: some View {
+        themedBody
+    }
+
+    /// 将弹窗内容包在全局外观层中，确保设置页的明暗和透明度立即影响下拉框。
+    @ViewBuilder private var themedBody: some View {
+        let activeAppearance = appearanceSettings
+        let baseContent = contentBody
+            .background(
+                PopoverSurfaceBackground(
+                    appearanceMode: activeAppearance.appearanceMode,
+                    opacity: activeAppearance.cardOpacity
+                )
+            )
+        if let colorScheme = activeAppearance.appearanceMode.colorScheme {
+            baseContent.environment(\.colorScheme, colorScheme)
+        } else {
+            baseContent
+        }
+    }
+
+    private var contentBody: some View {
         VStack(alignment: .leading, spacing: 8) {
             header
 
             Divider()
 
-            ScrollView {
-                scrollContent
-                    .background(
-                        GeometryReader { proxy in
-                            Color.clear.preference(
-                                key: MenuBarScrollContentHeightPreferenceKey.self,
-                                value: proxy.size.height
-                            )
-                        }
-                    )
-            }
-            .scrollIndicators(.hidden)
-            .frame(height: scrollContentViewportHeight)
-            .onPreferenceChange(MenuBarScrollContentHeightPreferenceKey.self) { height in
-                guard height > 0, abs(measuredScrollContentHeight - height) > 0.5 else {
-                    return
+            contentArea
+                .onPreferenceChange(MenuBarScrollContentHeightPreferenceKey.self) { height in
+                    updateMeasuredScrollContentHeight(height)
                 }
-                DispatchQueue.main.async {
-                    guard abs(measuredScrollContentHeight - height) > 0.5 else {
-                        return
-                    }
-                    measuredScrollContentHeight = height
-                }
-            }
 
             if let errorMessage = viewModel.errorMessage {
                 Label(errorMessage, systemImage: "exclamationmark.triangle")
@@ -121,7 +135,7 @@ struct MenuBarView: View {
                 }
             }
         }
-        .padding(12)
+        .padding(MenuBarPopoverLayout.horizontalPadding)
         .frame(width: MenuBarPopoverLayout.width)
         .background(
             GeometryReader { proxy in
@@ -151,35 +165,123 @@ struct MenuBarView: View {
                 ProgressView()
                     .controlSize(.small)
             }
+            if let snapshot = viewModel.snapshot {
+                MenuBarAccountSummary(snapshot: snapshot)
+            }
+        }
+    }
+
+    @ViewBuilder private var contentArea: some View {
+        visibleContentArea
+            .background(alignment: .topLeading) {
+                measuredScrollContent
+            }
+    }
+
+    @ViewBuilder private var visibleContentArea: some View {
+        if usesScrollableContent {
+            ScrollView {
+                scrollContent
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .scrollIndicators(.automatic)
+            .frame(height: MenuBarPopoverLayout.maximumScrollableContentHeight)
+        } else {
+            scrollContent
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
+    /// 使用不参与布局的隐藏副本测量真实内容高度，避免 ScrollView 视口高度反向污染测量值。
+    private var measuredScrollContent: some View {
+        scrollContent
+            .frame(width: MenuBarPopoverLayout.contentWidth, alignment: .leading)
+            .fixedSize(horizontal: false, vertical: true)
+            .hidden()
+            .allowsHitTesting(false)
+            .accessibilityHidden(true)
+            .background(
+                GeometryReader { proxy in
+                    Color.clear.preference(
+                        key: MenuBarScrollContentHeightPreferenceKey.self,
+                        value: proxy.size.height
+                    )
+                }
+            )
+    }
+
+    /// 更新内容高度并带滞后地切换滚动状态，防止高度接近阈值时在滚动/非滚动之间抖动。
+    private func updateMeasuredScrollContentHeight(_ height: CGFloat) {
+        guard height > 0 else {
+            return
+        }
+        let roundedHeight = ceil(height)
+        DispatchQueue.main.async {
+            if abs(measuredScrollContentHeight - roundedHeight) > 0.5 {
+                measuredScrollContentHeight = roundedHeight
+            }
+
+            let maximumHeight = MenuBarPopoverLayout.maximumScrollableContentHeight
+            let hysteresis = MenuBarPopoverLayout.scrollOverflowHysteresis
+            let shouldUseScrollableContent = usesScrollableContent
+                ? roundedHeight > maximumHeight - hysteresis
+                : roundedHeight > maximumHeight + hysteresis
+            guard shouldUseScrollableContent != usesScrollableContent else {
+                return
+            }
+
+            var transaction = Transaction()
+            transaction.disablesAnimations = true
+            withTransaction(transaction) {
+                usesScrollableContent = shouldUseScrollableContent
+            }
         }
     }
 
     private func usageContent(_ snapshot: UsageSnapshot) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            QuotaSummaryGrid(snapshot: snapshot.rateLimits, formatter: formatter, settings: settings)
+        let activePopoverSettings = popoverSettings
+        return VStack(alignment: .leading, spacing: 8) {
+            QuotaSummaryGrid(
+                snapshot: snapshot.rateLimits,
+                formatter: formatter,
+                settings: settings,
+                resetTimeDisplayStyle: activePopoverSettings.resetTimeDisplayStyle
+            )
 
-            if let paceDisplay = UsagePaceDisplay(rateLimits: snapshot.rateLimits) {
-                PaceComparisonRow(display: paceDisplay)
+            let paceDisplays = UsageWindowPaceDisplay.displays(
+                rateLimits: snapshot.rateLimits,
+                weeklyProgressWorkDays: settings.weeklyProgressWorkDays
+            )
+            if activePopoverSettings.showsPaceComparison, !paceDisplays.isEmpty {
+                PaceComparisonSection(displays: paceDisplays)
             }
 
-            if settings.showsAdditionalLimits, !snapshot.rateLimits.additionalLimits.isEmpty {
+            if activePopoverSettings.showsAdditionalLimits, !snapshot.rateLimits.additionalLimits.isEmpty {
                 VStack(alignment: .leading, spacing: 10) {
                     SectionTitle("额外额度")
                     ForEach(snapshot.rateLimits.additionalLimits) { limit in
-                        AdditionalRateLimitView(limit: limit, formatter: formatter, settings: settings)
+                        AdditionalRateLimitView(
+                            limit: limit,
+                            formatter: formatter,
+                            settings: settings,
+                            resetTimeDisplayStyle: activePopoverSettings.resetTimeDisplayStyle
+                        )
                     }
                 }
             }
 
-            if let profileStats = snapshot.profileStats {
+            if let profileStats = snapshot.profileStats, activePopoverSettings.showsAnyProfileSection {
                 ProfileStatsSection(
                     stats: profileStats,
                     activityMode: $activityMode,
-                    formatter: formatter
+                    formatter: formatter,
+                    popoverSettings: activePopoverSettings
                 )
             }
 
-            SnapshotDetailsSection(snapshot: snapshot, formatter: formatter)
+            if activePopoverSettings.showsSyncDetails {
+                SnapshotDetailsSection(snapshot: snapshot, formatter: formatter)
+            }
         }
     }
 
@@ -193,12 +295,50 @@ struct MenuBarView: View {
         }
     }
 
-    private var scrollContentViewportHeight: CGFloat {
-        min(measuredScrollContentHeight, MenuBarPopoverLayout.maximumScrollableContentHeight)
-    }
-
     private func tone(for window: RateLimitWindow?) -> UsageRemainingTone {
         UsageRemainingTone(remainingPercent: window?.remainingPercent)
+    }
+}
+
+/// 下拉弹窗的全局背景层，按用户选择的外观和透明度绘制，不依赖 NSWindow 默认底色。
+private struct PopoverSurfaceBackground: View {
+    @Environment(\.colorScheme) private var colorScheme
+    let appearanceMode: SurfaceAppearanceMode
+    let opacity: Double
+
+    var body: some View {
+        Rectangle()
+            .fill(backgroundColor.opacity(SurfaceAppearanceSettings.normalizedCardOpacity(opacity)))
+    }
+
+    private var backgroundColor: Color {
+        effectiveColorScheme == .dark ? .black : .white
+    }
+
+    private var effectiveColorScheme: ColorScheme {
+        appearanceMode.colorScheme ?? colorScheme
+    }
+}
+
+/// 菜单栏弹窗头部右侧的账户摘要，只展示邮箱和套餐，不读取本地认证文件。
+private struct MenuBarAccountSummary: View {
+    let snapshot: UsageSnapshot
+
+    var body: some View {
+        VStack(alignment: .trailing, spacing: 2) {
+            if let email = snapshot.accountEmail {
+                Text(email)
+                    .font(.callout.weight(.medium))
+            }
+            if let plan = snapshot.accountPlanDisplayText {
+                Text(plan)
+                    .font(.caption.weight(.semibold))
+            }
+        }
+        .foregroundStyle(.secondary)
+        .lineLimit(1)
+        .minimumScaleFactor(0.72)
+        .frame(maxWidth: 210, alignment: .trailing)
     }
 }
 
@@ -206,25 +346,63 @@ private struct QuotaSummaryGrid: View {
     let snapshot: RateLimitSnapshot
     let formatter: UsageFormatter
     let settings: MenuBarDisplaySettings
+    let resetTimeDisplayStyle: ResetTimeDisplayStyle
 
     var body: some View {
         HStack(spacing: 8) {
             QuotaSummaryCard(
                 title: "5 小时",
                 display: UsageMetricDisplay(title: "5 小时", window: snapshot.primary),
-                resetText: formatter.resetRemainingText(window: snapshot.primary),
+                resetText: resetText(for: snapshot.primary),
                 tone: UsageRemainingTone(remainingPercent: snapshot.primary?.remainingPercent),
-                settings: settings
+                settings: settings,
+                workdayMarkers: [],
+                paceMarker: paceMarker(for: snapshot.primary)
             )
             QuotaSummaryCard(
                 title: "7 天",
                 display: UsageMetricDisplay(title: "7 天", window: snapshot.secondary),
-                resetText: formatter.resetRemainingText(window: snapshot.secondary),
+                resetText: resetText(for: snapshot.secondary),
                 tone: UsageRemainingTone(remainingPercent: snapshot.secondary?.remainingPercent),
-                settings: settings
+                settings: settings,
+                workdayMarkers: weeklyWorkdayMarkerPercents(
+                    workDays: settings.weeklyProgressWorkDays,
+                    windowDurationMins: snapshot.secondary?.windowDurationMins
+                ),
+                paceMarker: paceMarker(for: snapshot.secondary)
             )
         }
     }
+
+    /// 根据弹窗时间样式格式化窗口重置文案。
+    private func resetText(for window: RateLimitWindow?) -> String {
+        switch resetTimeDisplayStyle {
+        case .countdown:
+            return formatter.resetRemainingText(window: window)
+        case .absolute:
+            return formatter.resetTime(epochSeconds: window?.resetsAt)
+        }
+    }
+
+    /// 绿色/红色标记表示按当前时间推进后的理论剩余位置，和灰色工作日刻度分开表达。
+    private func paceMarker(for window: RateLimitWindow?) -> ProgressPaceMarker? {
+        guard let pace = window?.usagePace(weeklyProgressWorkDays: settings.weeklyProgressWorkDays),
+              pace.isDisplayable(),
+              abs(pace.roundedDeltaPercent) > 2
+        else {
+            return nil
+        }
+        return ProgressPaceMarker(
+            percent: 100 - pace.expectedUsedPercent,
+            color: pace.deltaPercent <= 0 ? .green : .red
+        )
+    }
+}
+
+/// 用量条上的理论节奏标记：绿色表示当前用量慢于预期，红色表示快于预期。
+private struct ProgressPaceMarker {
+    let percent: Double
+    let color: Color
 }
 
 private struct QuotaSummaryCard: View {
@@ -233,6 +411,8 @@ private struct QuotaSummaryCard: View {
     let resetText: String
     let tone: UsageRemainingTone
     let settings: MenuBarDisplaySettings
+    let workdayMarkers: [Double]
+    let paceMarker: ProgressPaceMarker?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 5) {
@@ -240,6 +420,8 @@ private struct QuotaSummaryCard: View {
                 Text(title)
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.78)
                 Spacer()
                 Text(display.remainingText)
                     .font(.system(.title3, design: .rounded).weight(.semibold))
@@ -247,69 +429,151 @@ private struct QuotaSummaryCard: View {
                     .foregroundStyle(tone.statusBarColor(settings: settings))
             }
 
-            ProgressView(value: display.progressValue, total: 100)
-                .tint(tone.statusBarColor(settings: settings))
+            WorkdayMarkedProgressView(
+                value: display.progressValue,
+                tint: tone.statusBarColor(settings: settings),
+                markers: workdayMarkers,
+                paceMarker: paceMarker
+            )
 
             HStack(spacing: 4) {
                 Text(display.usedText.replacingOccurrences(of: "已用 ", with: "用 "))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.82)
                 Spacer(minLength: 4)
                 Text("重置 \(resetText)")
                     .lineLimit(1)
-                    .minimumScaleFactor(0.76)
+                    .minimumScaleFactor(0.82)
             }
-            .font(.caption2)
+            .font(.caption)
             .foregroundStyle(.secondary)
         }
         .padding(8)
-        .frame(maxWidth: .infinity, minHeight: 64, alignment: .topLeading)
+        .fixedSize(horizontal: false, vertical: true)
+        .frame(
+            maxWidth: .infinity,
+            minHeight: MenuBarPopoverLayout.summaryCardMinimumHeight,
+            alignment: .topLeading
+        )
         .background(Color(nsColor: .controlBackgroundColor).opacity(0.55))
         .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
     }
 }
 
-private struct UsageMetricCard: View {
-    let display: UsageMetricDisplay
-    let resetText: String
-    let tone: UsageRemainingTone
-    let settings: MenuBarDisplaySettings
+/// 参考 CodexBar 的菜单卡片进度条，用单个 Canvas 绘制轨道、填充和内嵌刻度线。
+private struct WorkdayMarkedProgressView: View {
+    let value: Double
+    let tint: Color
+    let markers: [Double]
+    let paceMarker: ProgressPaceMarker?
+    @Environment(\.displayScale) private var displayScale
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 9) {
-            HStack(alignment: .firstTextBaseline) {
-                Text(display.title)
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(.secondary)
-                Spacer()
-                Text("重置 \(resetText)")
-                    .font(.caption.monospacedDigit())
-                    .foregroundStyle(.secondary)
+        Canvas { context, size in
+            let scale = max(displayScale, 1)
+            let rect = CGRect(origin: .zero, size: size)
+            let cornerRadius = size.height / 2
+            let cornerSize = CGSize(width: cornerRadius, height: cornerRadius)
+            let clampedValue = min(max(value, 0), 100)
+            let fillWidth = size.width * clampedValue / 100
+
+            context.clip(to: Path(rect))
+
+            let trackPath = Path { path in
+                path.addRoundedRect(in: rect, cornerSize: cornerSize)
+            }
+            context.fill(trackPath, with: .color(Color.primary.opacity(0.10)))
+
+            if fillWidth > 0 {
+                let fillRect = CGRect(
+                    x: 0,
+                    y: 0,
+                    width: min(fillWidth, size.width),
+                    height: size.height
+                )
+                let fillPath = Path { path in
+                    path.addRoundedRect(in: fillRect, cornerSize: cornerSize)
+                }
+                context.fill(fillPath, with: .color(tint))
             }
 
-            HStack(alignment: .lastTextBaseline, spacing: 6) {
-                Text(display.remainingText)
-                    .font(.system(size: 30, weight: .semibold, design: .rounded))
-                    .monospacedDigit()
-                    .foregroundStyle(tone.statusBarColor(settings: settings))
-                Text("剩余")
-                    .font(.caption.weight(.medium))
-                    .foregroundStyle(.secondary)
-                Spacer()
+            for marker in markers.map(Self.clampedPercent).filter({ $0 > 0 && $0 < 100 }) {
+                let x = size.width * marker / 100
+                let markerRect = Self.markerRect(x: x, size: size, scale: scale)
+                let markerPath = Path { path in
+                    path.addRoundedRect(
+                        in: markerRect,
+                        cornerSize: CGSize(width: markerRect.width / 2, height: markerRect.width / 2)
+                    )
+                }
+                context.fill(markerPath, with: .color(Color.primary.opacity(0.54)))
             }
 
-            ProgressView(value: display.progressValue, total: 100)
-                .tint(tone.statusBarColor(settings: settings))
-
-            HStack {
-                Text(display.usedText)
-                Spacer()
-                Text(display.windowDurationText)
+            if let paceMarker {
+                let x = size.width * Self.clampedPercent(paceMarker.percent) / 100
+                let stripes = Self.paceMarkerPaths(x: x, size: size, scale: scale)
+                context.blendMode = .destinationOut
+                context.fill(stripes.punch, with: .color(.white.opacity(0.9)))
+                context.blendMode = .normal
+                context.fill(stripes.center, with: .color(paceMarker.color))
             }
-                .font(.caption)
-                .foregroundStyle(.secondary)
         }
-        .padding(12)
-        .background(Color(nsColor: .controlBackgroundColor).opacity(0.62))
-        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .frame(height: 6)
+        .accessibilityLabel("用量进度")
+        .accessibilityValue("\(Int(min(max(value, 0), 100)))%")
+    }
+
+    /// 与 CodexBar 的刻度线保持一致：像素对齐、窄线、只占进度条中间一段高度。
+    private static func markerRect(x: CGFloat, size: CGSize, scale rawScale: CGFloat) -> CGRect {
+        let scale = max(rawScale, 1)
+        let width = max(1 / scale, 1)
+        let height = min(size.height, max(1 / scale, size.height * 0.72))
+        let align: (CGFloat) -> CGFloat = { value in
+            (value * scale).rounded() / scale
+        }
+        return CGRect(
+            x: align(x - width / 2),
+            y: align((size.height - height) / 2),
+            width: width,
+            height: align(height)
+        )
+    }
+
+    private static func clampedPercent(_ value: Double) -> Double {
+        min(max(value, 0), 100)
+    }
+
+    /// 绿色/红色节奏标记仿照 CodexBar：先挖出一条窄槽，再在中心绘制醒目的节奏线。
+    private static func paceMarkerPaths(
+        x: CGFloat,
+        size: CGSize,
+        scale rawScale: CGFloat
+    ) -> (punch: Path, center: Path) {
+        let scale = max(rawScale, 1)
+        let align: (CGFloat) -> CGFloat = { value in
+            (value * scale).rounded() / scale
+        }
+        let stripeWidth: CGFloat = 2
+        let punchWidth = stripeWidth * 3
+        let extendedHeight = size.height * 3
+        let y = align(-size.height)
+        let height = align(extendedHeight)
+        let punchRect = CGRect(
+            x: align(x - punchWidth / 2),
+            y: y,
+            width: punchWidth,
+            height: height
+        )
+        let centerRect = CGRect(
+            x: align(x - stripeWidth / 2),
+            y: y,
+            width: stripeWidth,
+            height: height
+        )
+        return (
+            Path { path in path.addRect(punchRect) },
+            Path { path in path.addRect(centerRect) }
+        )
     }
 }
 
@@ -327,26 +591,44 @@ private struct SectionTitle: View {
     }
 }
 
-private struct PaceComparisonRow: View {
-    let display: UsagePaceDisplay
+private struct PaceComparisonSection: View {
+    let displays: [UsageWindowPaceDisplay]
 
     var body: some View {
-        HStack(spacing: 8) {
+        VStack(alignment: .leading, spacing: 6) {
             Label("用量速度", systemImage: "speedometer")
                 .foregroundStyle(.secondary)
-            Spacer()
-            Text(display.valueText)
-                .font(.system(.caption, design: .rounded).weight(.semibold))
-                .monospacedDigit()
-                .foregroundStyle(display.tone.statusBarColor(settings: MenuBarDisplaySettings(
-                    defaults: MenuBarDisplaySettings.sharedDefaults
-                )))
-            Text(display.detailText)
-                .font(.caption2)
-                .foregroundStyle(.secondary)
+            ForEach(displays) { paceDisplay in
+                PaceComparisonLine(display: paceDisplay)
+            }
         }
         .font(.caption2)
         .menuSectionCard(padding: 8)
+    }
+}
+
+private struct PaceComparisonLine: View {
+    let display: UsageWindowPaceDisplay
+
+    private var settings: MenuBarDisplaySettings {
+        MenuBarDisplaySettings(defaults: MenuBarDisplaySettings.sharedDefaults)
+    }
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            Text(display.title)
+                .foregroundStyle(.secondary)
+                .frame(width: 42, alignment: .leading)
+            Text(display.display.valueText)
+                .font(.system(.caption, design: .rounded).weight(.semibold))
+                .monospacedDigit()
+                .foregroundStyle(display.display.tone.statusBarColor(settings: settings))
+            Spacer(minLength: 6)
+            Text(display.display.detailText)
+                .lineLimit(1)
+                .minimumScaleFactor(0.8)
+                .foregroundStyle(.secondary)
+        }
     }
 }
 
@@ -354,20 +636,30 @@ private struct AdditionalRateLimitView: View {
     let limit: AdditionalRateLimitSnapshot
     let formatter: UsageFormatter
     let settings: MenuBarDisplaySettings
+    let resetTimeDisplayStyle: ResetTimeDisplayStyle
 
     var body: some View {
-        VStack(spacing: 8) {
-            UsageMetricCard(
+        HStack(spacing: 8) {
+            QuotaSummaryCard(
+                title: "\(displayName) 5 小时",
                 display: UsageMetricDisplay(title: "\(displayName) 5 小时", window: limit.primary),
-                resetText: formatter.resetRemainingText(window: limit.primary),
+                resetText: resetText(for: limit.primary),
                 tone: UsageRemainingTone(remainingPercent: limit.primary?.remainingPercent),
-                settings: settings
+                settings: settings,
+                workdayMarkers: [],
+                paceMarker: paceMarker(for: limit.primary)
             )
-            UsageMetricCard(
+            QuotaSummaryCard(
+                title: "\(displayName) 7 天",
                 display: UsageMetricDisplay(title: "\(displayName) 7 天", window: limit.secondary),
-                resetText: formatter.resetRemainingText(window: limit.secondary),
+                resetText: resetText(for: limit.secondary),
                 tone: UsageRemainingTone(remainingPercent: limit.secondary?.remainingPercent),
-                settings: settings
+                settings: settings,
+                workdayMarkers: weeklyWorkdayMarkerPercents(
+                    workDays: settings.weeklyProgressWorkDays,
+                    windowDurationMins: limit.secondary?.windowDurationMins
+                ),
+                paceMarker: paceMarker(for: limit.secondary)
             )
         }
     }
@@ -377,34 +669,65 @@ private struct AdditionalRateLimitView: View {
             .replacingOccurrences(of: "GPT-5.3-", with: "")
             .replacingOccurrences(of: "-", with: " ")
     }
+
+    /// 根据弹窗时间样式格式化额外额度的重置文案。
+    private func resetText(for window: RateLimitWindow?) -> String {
+        switch resetTimeDisplayStyle {
+        case .countdown:
+            return formatter.resetRemainingText(window: window)
+        case .absolute:
+            return formatter.resetTime(epochSeconds: window?.resetsAt)
+        }
+    }
+
+    /// 额外额度也按同一语义展示理论节奏线，避免主额度和额外额度的进度条含义不一致。
+    private func paceMarker(for window: RateLimitWindow?) -> ProgressPaceMarker? {
+        guard let pace = window?.usagePace(weeklyProgressWorkDays: settings.weeklyProgressWorkDays),
+              pace.isDisplayable(),
+              abs(pace.roundedDeltaPercent) > 2
+        else {
+            return nil
+        }
+        return ProgressPaceMarker(
+            percent: 100 - pace.expectedUsedPercent,
+            color: pace.deltaPercent <= 0 ? .green : .red
+        )
+    }
 }
 
 private struct ProfileStatsSection: View {
     let stats: CodexProfileStats
     @Binding var activityMode: TokenActivityMode
     let formatter: UsageFormatter
+    let popoverSettings: PopoverDisplaySettings
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             SectionTitle("Profile")
 
-            LazyVGrid(columns: metricColumns, alignment: .leading, spacing: 6) {
-                ProfileMetric(title: "累计 Token", value: formatter.tokenCount(stats.lifetimeTokens))
-                ProfileMetric(title: "峰值 Token", value: formatter.tokenCount(stats.peakDailyTokens))
-                ProfileMetric(title: "最长任务", value: formatter.compactDuration(seconds: stats.longestRunningTurnSeconds))
-                ProfileMetric(title: "连续天数", value: streakText)
+            if popoverSettings.showsProfileOverview {
+                LazyVGrid(columns: metricColumns, alignment: .leading, spacing: 6) {
+                    ProfileMetric(title: "累计 Token", value: formatter.tokenCount(stats.lifetimeTokens))
+                    ProfileMetric(title: "峰值 Token", value: formatter.tokenCount(stats.peakDailyTokens))
+                    ProfileMetric(title: "最长任务", value: formatter.compactDuration(seconds: stats.longestRunningTurnSeconds))
+                    ProfileMetric(title: "连续天数", value: streakText)
+                }
+                .menuSectionCard(padding: 8)
             }
-            .menuSectionCard(padding: 8)
 
-            TokenActivitySection(
-                stats: stats,
-                activityMode: $activityMode,
-                formatter: formatter
-            )
+            if popoverSettings.showsTokenActivity {
+                TokenActivitySection(
+                    stats: stats,
+                    activityMode: $activityMode,
+                    formatter: formatter
+                )
+            }
 
-            ActivityInsightsSection(stats: stats, formatter: formatter)
+            if popoverSettings.showsActivityInsights {
+                ActivityInsightsSection(stats: stats, formatter: formatter)
+            }
 
-            if !stats.topInvocations.isEmpty {
+            if popoverSettings.showsTopInvocations, !stats.topInvocations.isEmpty {
                 TopInvocationsSection(invocations: Array(stats.topInvocations.prefix(3)))
             }
         }
@@ -688,5 +1011,12 @@ private extension View {
             .padding(padding)
             .background(Color(nsColor: .controlBackgroundColor).opacity(0.46))
             .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+    }
+}
+
+private extension PopoverDisplaySettings {
+    /// Profile 数据分成多个模块显示；全部关闭时整块 Profile 区域都隐藏。
+    var showsAnyProfileSection: Bool {
+        showsProfileOverview || showsTokenActivity || showsActivityInsights || showsTopInvocations
     }
 }
