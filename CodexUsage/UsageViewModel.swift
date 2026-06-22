@@ -12,19 +12,26 @@ final class UsageViewModel: ObservableObject {
     private let client: any UsageRateLimitFetching
     private let store: UsageSnapshotStore
     private let reloadWidgetTimelines: () -> Void
+    private let refreshCadenceProvider: @MainActor @Sendable () -> UsageRefreshCadence
     private let logger = Logger(subsystem: "com.jinsihou.CodexUsage", category: "Usage")
     private var refreshTask: Task<Void, Never>?
+    private var hasStartedRefreshLoop = false
+    private var appBehaviorObserver: NSObjectProtocol?
 
     init(
         client: any UsageRateLimitFetching = DirectCodexUsageClient(),
         store: UsageSnapshotStore = UsageSnapshotStore(),
         reloadWidgetTimelines: @escaping () -> Void = {
             WidgetCenter.shared.reloadTimelines(ofKind: "CodexUsageWidget")
+        },
+        refreshCadenceProvider: @escaping @MainActor @Sendable () -> UsageRefreshCadence = {
+            AppBehaviorSettings(defaults: MenuBarDisplaySettings.sharedDefaults).refreshCadence
         }
     ) {
         self.client = client
         self.store = store
         self.reloadWidgetTimelines = reloadWidgetTimelines
+        self.refreshCadenceProvider = refreshCadenceProvider
         self.snapshot = try? store.load()
     }
 
@@ -110,17 +117,13 @@ final class UsageViewModel: ObservableObject {
     }
 
     func start() {
-        guard refreshTask == nil else {
+        guard !hasStartedRefreshLoop else {
             return
         }
 
-        refreshTask = Task { [self] in
-            await refresh()
-            while !Task.isCancelled {
-                try? await Task.sleep(nanoseconds: 30_000_000_000)
-                await refresh()
-            }
-        }
+        hasStartedRefreshLoop = true
+        observeAppBehaviorSettings()
+        applyRefreshCadence()
     }
 
     func refresh() async {
@@ -146,6 +149,46 @@ final class UsageViewModel: ObservableObject {
 
     private static func tone(for remainingPercent: Int?) -> UsageRemainingTone {
         UsageRemainingTone(remainingPercent: remainingPercent)
+    }
+
+    /// 监听设置页里刷新频率的变化；只关心本 app 的偏好通知，避免 UserDefaults 全局噪声反复重启任务。
+    private func observeAppBehaviorSettings() {
+        guard appBehaviorObserver == nil else {
+            return
+        }
+        appBehaviorObserver = NotificationCenter.default.addObserver(
+            forName: .appBehaviorSettingsDidChange,
+            object: MenuBarDisplaySettings.sharedDefaults,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in
+                self?.applyRefreshCadence()
+            }
+        }
+    }
+
+    /// 按当前刷新频率重建后台任务；手动模式不做启动同步，也不保留定时循环。
+    private func applyRefreshCadence() {
+        refreshTask?.cancel()
+        refreshTask = nil
+
+        guard let intervalNanoseconds = refreshCadenceProvider().intervalNanoseconds else {
+            return
+        }
+
+        refreshTask = Task { [weak self] in
+            guard let self else {
+                return
+            }
+            await self.refresh()
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: intervalNanoseconds)
+                guard !Task.isCancelled else {
+                    return
+                }
+                await self.refresh()
+            }
+        }
     }
 }
 

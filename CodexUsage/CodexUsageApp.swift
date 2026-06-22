@@ -30,7 +30,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         self.viewModel = viewModel
         statusBarController = StatusBarController(viewModel: viewModel)
         viewModel.start()
-        settingsWindowOpener.open()
+        if AppBehaviorSettings(defaults: MenuBarDisplaySettings.sharedDefaults).opensSettingsAtLaunch {
+            settingsWindowOpener.open()
+        }
     }
 
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
@@ -48,6 +50,9 @@ final class StatusBarController: NSObject {
     private var defaultsObservers: [NSObjectProtocol] = []
     private var usageObserver: AnyCancellable?
     private var preferredPopoverSize = MenuBarPopoverLayout.initialSize
+    private var pendingPopoverSize: NSSize?
+    private var pendingPopoverSizeWorkItem: DispatchWorkItem?
+    private static let popoverResizeDebounceDelay = DispatchTimeInterval.milliseconds(80)
 
     init(viewModel: UsageViewModel) {
         self.viewModel = viewModel
@@ -101,8 +106,17 @@ final class StatusBarController: NSObject {
     }
 
     private func observeSettings() {
+        observeSettingsNotification(.menuBarDisplaySettingsDidChange)
+        observeSettingsNotification(.popoverDisplaySettingsDidChange)
+        observeSettingsNotification(.widgetDisplaySettingsDidChange)
+        observeSettingsNotification(.surfaceAppearanceSettingsDidChange)
+        applySettings()
+    }
+
+    /// 统一监听会影响菜单栏或弹窗内容的偏好通知，避免每个设置页分支各自刷新 AppKit 控件。
+    private func observeSettingsNotification(_ name: Notification.Name) {
         let observer = NotificationCenter.default.addObserver(
-            forName: .menuBarDisplaySettingsDidChange,
+            forName: name,
             object: MenuBarDisplaySettings.sharedDefaults,
             queue: .main
         ) { [weak self] _ in
@@ -111,7 +125,6 @@ final class StatusBarController: NSObject {
             }
         }
         defaultsObservers.append(observer)
-        applySettings()
     }
 
     private func observeUsageChanges() {
@@ -125,8 +138,12 @@ final class StatusBarController: NSObject {
     private func applySettings() {
         let settings = MenuBarDisplaySettings(defaults: MenuBarDisplaySettings.sharedDefaults)
         applyStatusDisplay(settings: settings)
+        pendingPopoverSizeWorkItem?.cancel()
+        pendingPopoverSizeWorkItem = nil
+        pendingPopoverSize = nil
         popover.contentViewController = makePopoverContentController()
         popover.contentSize = preferredPopoverSize
+        configurePopoverWindowAppearance()
     }
 
     private func applyStatusDisplay(settings: MenuBarDisplaySettings? = nil) {
@@ -141,27 +158,71 @@ final class StatusBarController: NSObject {
         let controller = NSHostingController(rootView: MenuBarView(viewModel: viewModel) { [weak self] size in
             self?.updatePopoverSize(for: size)
         })
+        controller.view.wantsLayer = true
+        controller.view.layer?.backgroundColor = NSColor.clear.cgColor
         controller.preferredContentSize = preferredPopoverSize
         return controller
     }
 
+    /// 清掉 AppKit 宿主窗口的默认不透明底色，让 SwiftUI 半透明弹窗背景真正透出桌面内容。
+    private func configurePopoverWindowAppearance() {
+        guard let popoverWindow = popover.contentViewController?.view.window else {
+            return
+        }
+        popoverWindow.isOpaque = false
+        popoverWindow.backgroundColor = .clear
+        popoverWindow.contentView?.wantsLayer = true
+        popoverWindow.contentView?.layer?.backgroundColor = NSColor.clear.cgColor
+    }
+
+    /// 接收 SwiftUI 内容实测尺寸，先裁剪到屏幕可用范围，再合并连续变化以避免弹窗抖动。
     private func updatePopoverSize(for contentSize: CGSize) {
         let height = min(
             max(ceil(contentSize.height), MenuBarPopoverLayout.minimumHeight),
             maximumPopoverHeight
         )
         let newSize = NSSize(width: MenuBarPopoverLayout.width, height: height)
-        guard abs(preferredPopoverSize.width - newSize.width) > 0.5
-            || abs(preferredPopoverSize.height - newSize.height) > 0.5
+        let referenceSize = pendingPopoverSize ?? preferredPopoverSize
+        guard abs(referenceSize.width - newSize.width) > 1
+            || abs(referenceSize.height - newSize.height) > 1
+        else {
+            return
+        }
+
+        pendingPopoverSize = newSize
+        pendingPopoverSizeWorkItem?.cancel()
+        let workItem = DispatchWorkItem { [weak self] in
+            Task { @MainActor in
+                self?.applyPendingPopoverSize()
+            }
+        }
+        pendingPopoverSizeWorkItem = workItem
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.popoverResizeDebounceDelay, execute: workItem)
+    }
+
+    /// 真正应用已稳定的弹窗尺寸；关闭隐式动画，避免系统窗口和 SwiftUI 布局互相追逐。
+    private func applyPendingPopoverSize() {
+        guard let newSize = pendingPopoverSize else {
+            return
+        }
+        pendingPopoverSize = nil
+        pendingPopoverSizeWorkItem = nil
+        guard abs(preferredPopoverSize.width - newSize.width) > 1
+            || abs(preferredPopoverSize.height - newSize.height) > 1
         else {
             return
         }
 
         preferredPopoverSize = newSize
-        popover.contentSize = newSize
-        popover.contentViewController?.preferredContentSize = newSize
-        if popover.isShown, let button = statusItem.button {
-            alignPopoverWindow(to: button)
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = 0
+            context.allowsImplicitAnimation = false
+            popover.contentSize = newSize
+            popover.contentViewController?.preferredContentSize = newSize
+            configurePopoverWindowAppearance()
+            if popover.isShown, let button = statusItem.button {
+                alignPopoverWindow(to: button)
+            }
         }
     }
 
@@ -177,6 +238,7 @@ final class StatusBarController: NSObject {
         } else {
             NSApp.activate(ignoringOtherApps: true)
             popover.show(relativeTo: sender.bounds, of: sender, preferredEdge: .minY)
+            configurePopoverWindowAppearance()
             alignPopoverWindow(to: sender)
             activatePopoverWindow()
         }
@@ -210,10 +272,28 @@ private struct StatusBarLabel: View {
     @ObservedObject var viewModel: UsageViewModel
     let settings: MenuBarDisplaySettings
     let statusWidth: CGFloat
+    private var appearanceSettings: SurfaceAppearanceSettings {
+        SurfaceAppearanceSettings(defaults: MenuBarDisplaySettings.sharedDefaults)
+    }
 
     var body: some View {
+        themedContent
+    }
+
+    /// 菜单栏标签跟随全局外观设置，保证浅色/深色强制模式能覆盖系统当前主题。
+    @ViewBuilder private var themedContent: some View {
+        let activeAppearance = appearanceSettings
+        let baseContent = content
+        if let colorScheme = activeAppearance.appearanceMode.colorScheme {
+            baseContent.environment(\.colorScheme, colorScheme)
+        } else {
+            baseContent
+        }
+    }
+
+    private var content: some View {
         let lines = StatusLineDisplay.lines(viewModel: viewModel, settings: settings)
-        HStack(spacing: settings.showsMenuBarIcon ? MenuBarDisplaySettings.menuBarIconTextSpacing : 0) {
+        return HStack(spacing: settings.showsMenuBarIcon ? MenuBarDisplaySettings.menuBarIconTextSpacing : 0) {
             if settings.showsMenuBarIcon {
                 CodexMenuBarIcon()
             }

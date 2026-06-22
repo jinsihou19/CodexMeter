@@ -45,8 +45,8 @@ final class SettingsWindowPresenter {
         settingsWindow.title = "Codex 用量设置"
         settingsWindow.styleMask = [.titled, .closable, .miniaturizable, .resizable]
         settingsWindow.isReleasedWhenClosed = false
-        settingsWindow.setContentSize(NSSize(width: 780, height: 560))
-        settingsWindow.minSize = NSSize(width: 740, height: 520)
+        settingsWindow.setContentSize(NSSize(width: 820, height: 600))
+        settingsWindow.minSize = NSSize(width: 780, height: 560)
         settingsWindow.center()
         return settingsWindow
     }

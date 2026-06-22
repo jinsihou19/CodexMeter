@@ -39,18 +39,24 @@ struct DirectCodexUsageClient: UsageRateLimitFetching {
     }
 
     func fetchRateLimits() async throws -> RateLimitSnapshot {
-        let accessToken = try loadAccessToken()
-        return try await fetchRateLimits(accessToken: accessToken)
+        let authContext = try loadAuthContext()
+        return try await fetchRateLimits(accessToken: authContext.accessToken)
     }
 
     func fetchUsageSnapshot() async throws -> UsageSnapshot {
-        let accessToken = try loadAccessToken()
-        async let rateLimits = fetchRateLimits(accessToken: accessToken)
-        async let profileStats = fetchProfileStatsIfAvailable(accessToken: accessToken)
+        let authContext = try loadAuthContext()
+        async let rateLimits = fetchRateLimits(accessToken: authContext.accessToken)
+        async let profileStats = fetchProfileStatsIfAvailable(accessToken: authContext.accessToken)
+        let fetchedRateLimits = try await rateLimits
+        let account = CodexAccountSnapshot(
+            email: authContext.accountEmail,
+            planType: authContext.planType ?? fetchedRateLimits.planType
+        )
 
         return UsageSnapshot(
             fetchedAt: Date(),
-            rateLimits: try await rateLimits,
+            rateLimits: fetchedRateLimits,
+            account: account.isEmpty ? nil : account,
             profileStats: await profileStats
         )
     }
@@ -119,7 +125,8 @@ struct DirectCodexUsageClient: UsageRateLimitFetching {
         return request
     }
 
-    private func loadAccessToken() throws -> String {
+    /// 从本机 Codex auth.json 读取 API token 和可展示账户摘要；不会把 token 写入快照。
+    private func loadAuthContext() throws -> CodexAuthContext {
         guard FileManager.default.fileExists(atPath: authFileURL.path) else {
             throw DirectCodexUsageClientError.missingAuthFile
         }
@@ -128,7 +135,11 @@ struct DirectCodexUsageClient: UsageRateLimitFetching {
         guard let token = auth.tokens?.accessToken, !token.isEmpty else {
             throw DirectCodexUsageClientError.missingAccessToken
         }
-        return token
+        return CodexAuthContext(
+            accessToken: token,
+            accountEmail: Self.accountEmail(fromIDToken: auth.tokens?.idToken),
+            planType: Self.planType(fromIDToken: auth.tokens?.idToken)
+        )
     }
 
     static func defaultAuthFileURL(
@@ -147,6 +158,46 @@ struct DirectCodexUsageClient: UsageRateLimitFetching {
             throw DirectCodexUsageClientError.invalidHTTPResponse
         }
         return (data, httpResponse)
+    }
+
+    /// 从 Codex id_token 的 JWT payload 中读取邮箱，兼容 OpenAI 自定义 profile 命名空间。
+    private static func accountEmail(fromIDToken idToken: String?) -> String? {
+        let payload = jwtPayload(idToken)
+        let profile = payload?["https://api.openai.com/profile"] as? [String: Any]
+        return normalizedField((payload?["email"] as? String) ?? (profile?["email"] as? String))?.lowercased()
+    }
+
+    /// 从 Codex id_token 的 JWT payload 中读取套餐标识，作为用量接口 plan_type 的补充来源。
+    private static func planType(fromIDToken idToken: String?) -> String? {
+        let payload = jwtPayload(idToken)
+        let auth = payload?["https://api.openai.com/auth"] as? [String: Any]
+        return normalizedField((auth?["chatgpt_plan_type"] as? String) ?? (payload?["chatgpt_plan_type"] as? String))
+    }
+
+    /// 解码 JWT payload；签名校验由 Codex 登录态负责，这里只读取本地已保存的展示字段。
+    private static func jwtPayload(_ idToken: String?) -> [String: Any]? {
+        guard let payloadPart = idToken?.split(separator: ".").dropFirst().first else {
+            return nil
+        }
+        var base64 = String(payloadPart)
+            .replacingOccurrences(of: "-", with: "+")
+            .replacingOccurrences(of: "_", with: "/")
+        let paddingLength = (4 - base64.count % 4) % 4
+        base64.append(String(repeating: "=", count: paddingLength))
+        guard let data = Data(base64Encoded: base64),
+              let payload = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        else {
+            return nil
+        }
+        return payload
+    }
+
+    /// 归一化 auth payload 字段；空字符串视为未知，避免污染账户摘要。
+    private static func normalizedField(_ value: String?) -> String? {
+        guard let value = value?.trimmingCharacters(in: .whitespacesAndNewlines), !value.isEmpty else {
+            return nil
+        }
+        return value
     }
 }
 
@@ -184,11 +235,20 @@ private struct CodexAuthFile: Decodable {
 
     struct Tokens: Decodable {
         let accessToken: String?
+        let idToken: String?
 
         enum CodingKeys: String, CodingKey {
             case accessToken = "access_token"
+            case idToken = "id_token"
         }
     }
+}
+
+/// auth.json 的安全读取结果；只把 access token 留在内存里，展示字段才会进入缓存。
+private struct CodexAuthContext {
+    let accessToken: String
+    let accountEmail: String?
+    let planType: String?
 }
 
 private struct WhamUsageResponse: Decodable {
@@ -243,6 +303,15 @@ private struct WhamWindow: Decodable {
         case resetAt = "reset_at"
     }
 
+    /// 宽容解析 Codex 用量窗口；接口在归零边界可能省略或字符串化数值，展示层按 0% 继续处理。
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.usedPercent = try container.decodeFlexibleDoubleIfPresent(forKey: .usedPercent) ?? 0
+        self.limitWindowSeconds = try container.decodeFlexibleIntIfPresent(forKey: .limitWindowSeconds)
+        self.resetAfterSeconds = try container.decodeFlexibleIntIfPresent(forKey: .resetAfterSeconds)
+        self.resetAt = try container.decodeFlexibleIntIfPresent(forKey: .resetAt)
+    }
+
     var rateLimitWindow: RateLimitWindow {
         RateLimitWindow(
             usedPercent: usedPercent,
@@ -250,6 +319,37 @@ private struct WhamWindow: Decodable {
             resetsAt: resetAt,
             resetAfterSeconds: resetAfterSeconds
         )
+    }
+}
+
+private extension KeyedDecodingContainer {
+    /// 解码可能由数字或字符串承载的小数字段；空字符串视为缺失，保留上层兜底语义。
+    func decodeFlexibleDoubleIfPresent(forKey key: Key) throws -> Double? {
+        if let doubleValue = try? decode(Double.self, forKey: key) {
+            return doubleValue
+        }
+        if let stringValue = (try? decode(String.self, forKey: key))?
+            .trimmingCharacters(in: .whitespacesAndNewlines),
+           !stringValue.isEmpty {
+            return Double(stringValue)
+        }
+        return nil
+    }
+
+    /// 解码可能由数字或字符串承载的整数字段；无法转成整数时交给调用方当作缺失字段。
+    func decodeFlexibleIntIfPresent(forKey key: Key) throws -> Int? {
+        if let intValue = try? decode(Int.self, forKey: key) {
+            return intValue
+        }
+        if let doubleValue = try? decode(Double.self, forKey: key) {
+            return Int(doubleValue)
+        }
+        if let stringValue = (try? decode(String.self, forKey: key))?
+            .trimmingCharacters(in: .whitespacesAndNewlines),
+           !stringValue.isEmpty {
+            return Int(stringValue) ?? Double(stringValue).map(Int.init)
+        }
+        return nil
     }
 }
 

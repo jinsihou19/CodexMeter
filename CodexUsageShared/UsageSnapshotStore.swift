@@ -36,6 +36,15 @@ public struct UsageSnapshotStore: Sendable {
         return try JSONDecoder().decode(UsageSnapshot.self, from: data)
     }
 
+    /// 删除最近一次成功同步的快照；文件不存在时视为已经清理完成，方便设置页重复触发。
+    public func deleteSnapshot() throws {
+        let url = snapshotURL()
+        guard FileManager.default.fileExists(atPath: url.path) else {
+            return
+        }
+        try FileManager.default.removeItem(at: url)
+    }
+
     public func snapshotURL() -> URL {
         directoryURL().appendingPathComponent(fileName, isDirectory: false)
     }

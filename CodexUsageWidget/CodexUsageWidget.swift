@@ -8,7 +8,6 @@ struct CodexUsageWidget: Widget {
     var body: some WidgetConfiguration {
         StaticConfiguration(kind: kind, provider: CodexUsageTimelineProvider()) { entry in
             CodexUsageWidgetView(entry: entry)
-                .containerBackground(.background, for: .widget)
         }
         .configurationDisplayName("Codex 用量")
         .description("显示 Codex 5 小时与 7 天窗口的最近同步余量。")
@@ -35,7 +34,8 @@ struct CodexUsageTimelineProvider: TimelineProvider {
                 credits: CreditsSnapshot(hasCredits: false, unlimited: false, balance: "0"),
                 planType: "prolite",
                 rateLimitReachedType: nil
-            )
+            ),
+            account: CodexAccountSnapshot(email: "codex@example.com", planType: "prolite")
         ))
     }
 
@@ -56,23 +56,48 @@ struct CodexUsageWidgetView: View {
     private var settings: MenuBarDisplaySettings {
         MenuBarDisplaySettings(defaults: MenuBarDisplaySettings.sharedDefaults)
     }
+    private var widgetSettings: WidgetDisplaySettings {
+        WidgetDisplaySettings(defaults: MenuBarDisplaySettings.sharedDefaults)
+    }
+    private var appearanceSettings: SurfaceAppearanceSettings {
+        SurfaceAppearanceSettings(defaults: MenuBarDisplaySettings.sharedDefaults)
+    }
 
     var body: some View {
+        themedContent
+    }
+
+    /// 根据小组件外观设置套用明暗模式和半透明卡片背景。
+    @ViewBuilder private var themedContent: some View {
+        let activeAppearance = appearanceSettings
+        let baseContent = content
+            .containerBackground(for: .widget) {
+                WidgetCardBackground(appearanceMode: activeAppearance.appearanceMode, opacity: activeAppearance.cardOpacity)
+            }
+        if let colorScheme = activeAppearance.appearanceMode.colorScheme {
+            baseContent.environment(\.colorScheme, colorScheme)
+        } else {
+            baseContent
+        }
+    }
+
+    private var content: some View {
         VStack(alignment: .leading, spacing: contentSpacing) {
-            HStack {
+            HStack(spacing: 6) {
                 Label("Codex", systemImage: "gauge.with.needle")
                     .font(.headline)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.82)
+                    .layoutPriority(1)
                 Spacer()
-                if let plan = entry.snapshot?.rateLimits.planType {
-                    Text(plan)
-                        .font(.caption2.weight(.semibold))
-                        .foregroundStyle(.secondary)
+                if widgetSettings.showsPlanLabel, let snapshot = entry.snapshot {
+                    WidgetAccountSummary(snapshot: snapshot, family: family)
                 }
             }
 
             if let snapshot = entry.snapshot {
-                usageRows(snapshot)
-                syncFooter(snapshot)
+                let display = widgetDisplay(snapshot)
+                snapshotContent(snapshot, display: display)
             } else {
                 Spacer(minLength: 0)
                 Text("暂无数据")
@@ -87,19 +112,59 @@ struct CodexUsageWidgetView: View {
     }
 
     private var contentSpacing: CGFloat {
-        family == .systemSmall ? 6 : 10
+        family == .systemSmall ? 4 : 10
     }
 
-    private func usageRows(_ snapshot: UsageSnapshot) -> some View {
-        let display = CodexUsageWidgetDisplay(
+    /// 小号小组件使用可伸缩布局填满卡片高度，避免内容贴顶后底部出现大块空白。
+    @ViewBuilder private func snapshotContent(_ snapshot: UsageSnapshot, display: CodexUsageWidgetDisplay) -> some View {
+        if family == .systemSmall {
+            VStack(alignment: .leading, spacing: 0) {
+                usageRows(display)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                if widgetSettings.showsLastSync {
+                    syncFooter(snapshot)
+                }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
+        } else {
+            usageRows(display)
+            if widgetSettings.showsLastSync {
+                syncFooter(snapshot)
+            }
+        }
+    }
+
+    /// 统一生成小组件展示模型，避免正文和页脚为了判断布局重复计算快照。
+    private func widgetDisplay(_ snapshot: UsageSnapshot) -> CodexUsageWidgetDisplay {
+        CodexUsageWidgetDisplay(
             snapshot: snapshot,
             settings: settings,
+            widgetSettings: widgetSettings,
             formatter: formatter,
             now: entry.date
         )
-        return VStack(alignment: .leading, spacing: family == .systemSmall ? 6 : 8) {
-            ForEach(display.lines) { line in
-                WidgetMetric(display: line, settings: settings)
+    }
+
+    /// 按当前 Widget 家族渲染窗口列表，小号把多条窗口记录拉开以填满固定卡片高度。
+    private func usageRows(_ display: CodexUsageWidgetDisplay) -> some View {
+        Group {
+            if family == .systemSmall {
+                let enumeratedLines = Array(display.lines.enumerated())
+                VStack(alignment: .leading, spacing: 0) {
+                    ForEach(enumeratedLines, id: \.element.id) { index, line in
+                        WidgetMetric(display: line, settings: settings, family: family)
+                        if index < enumeratedLines.count - 1 {
+                            Spacer(minLength: 12)
+                        }
+                    }
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
+            } else {
+                VStack(alignment: .leading, spacing: 8) {
+                    ForEach(display.lines) { line in
+                        WidgetMetric(display: line, settings: settings, family: family)
+                    }
+                }
             }
         }
     }
@@ -112,7 +177,7 @@ struct CodexUsageWidgetView: View {
             .lineLimit(1)
             .minimumScaleFactor(0.85)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.top, family == .systemSmall ? 0 : 6)
+            .padding(.top, family == .systemSmall ? 2 : 6)
     }
 
     private func syncText(_ snapshot: UsageSnapshot) -> String {
@@ -121,28 +186,192 @@ struct CodexUsageWidgetView: View {
     }
 }
 
+/// 小组件卡片背景，按当前明暗模式绘制半透明底色，避免桌面图案直接压低文字可读性。
+private struct WidgetCardBackground: View {
+    @Environment(\.colorScheme) private var colorScheme
+    let appearanceMode: SurfaceAppearanceMode
+    let opacity: Double
+
+    var body: some View {
+        Rectangle()
+            .fill(backgroundColor.opacity(SurfaceAppearanceSettings.normalizedCardOpacity(opacity)))
+    }
+
+    private var backgroundColor: Color {
+        effectiveColorScheme == .dark ? .black : .white
+    }
+
+    private var effectiveColorScheme: ColorScheme {
+        appearanceMode.colorScheme ?? colorScheme
+    }
+}
+
+/// 小组件头部右侧的账户摘要，受“显示套餐标签”设置控制，避免额外增加配置复杂度。
+private struct WidgetAccountSummary: View {
+    let snapshot: UsageSnapshot
+    let family: WidgetFamily
+
+    var body: some View {
+        VStack(alignment: .trailing, spacing: 1) {
+            if family != .systemSmall, let email = snapshot.accountEmail {
+                Text(email)
+                    .font(.caption.weight(.medium))
+            }
+            if let plan = snapshot.accountPlanDisplayText {
+                Text(plan)
+                    .font(.caption2.weight(.semibold))
+            }
+        }
+        .foregroundStyle(.secondary)
+        .lineLimit(1)
+        .minimumScaleFactor(0.68)
+        .frame(maxWidth: family == .systemSmall ? 58 : 190, alignment: .trailing)
+    }
+}
+
+/// 小组件单个窗口的额度块；中号完整展示，小号压缩长文案但保留进度和速度判断。
 private struct WidgetMetric: View {
     let display: CodexUsageWidgetDisplay.Line
     let settings: MenuBarDisplaySettings
+    let family: WidgetFamily
+
+    private var isSmallFamily: Bool {
+        family == .systemSmall
+    }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            HStack(alignment: .firstTextBaseline, spacing: 8) {
-                Text(display.title)
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
-                Spacer()
-                Text(display.value)
-                    .font(.system(size: 13, weight: settings.numberFontWeight.fontWeight).monospacedDigit())
-                    .foregroundStyle(display.tone.statusBarColor(settings: settings))
-                Text(display.resetText)
-                    .font(.callout.monospacedDigit())
-                    .foregroundStyle(.secondary)
+        VStack(alignment: .leading, spacing: isSmallFamily ? 3 : 5) {
+            WidgetBalanceRow(display: display, settings: settings, family: family)
+
+            if !display.paceStatusText.isEmpty {
+                WidgetPaceRow(display: display, settings: settings, family: family)
             }
-            .lineLimit(1)
-            .minimumScaleFactor(0.75)
-            ProgressView(value: display.progressValue, total: 100)
-                .tint(display.tone.statusBarColor(settings: settings))
+
+            WidgetUsageProgressBar(
+                value: display.progressValue,
+                color: display.tone.statusBarColor(settings: settings),
+                family: family
+            )
         }
+    }
+}
+
+/// 小组件专用进度条，避开 WidgetKit 对系统 ProgressView 的重绘，保证全局颜色预设能稳定生效。
+private struct WidgetUsageProgressBar: View {
+    let value: Double
+    let color: Color
+    let family: WidgetFamily
+
+    private var progress: CGFloat {
+        CGFloat(min(max(value / 100, 0), 1))
+    }
+
+    private var height: CGFloat {
+        family == .systemSmall ? 7 : 6
+    }
+
+    var body: some View {
+        GeometryReader { proxy in
+            let width = progress > 0 ? max(proxy.size.width * progress, height) : 0
+            ZStack(alignment: .leading) {
+                Capsule()
+                    .fill(Color.secondary.opacity(0.34))
+                Capsule()
+                    .fill(color)
+                    .frame(width: width)
+            }
+        }
+        .frame(height: height)
+        .widgetAccentable(false)
+    }
+}
+
+/// 小组件的余额和重置文案统一放在进度条上方，减少每个窗口占用的垂直行数。
+private struct WidgetBalanceRow: View {
+    let display: CodexUsageWidgetDisplay.Line
+    let settings: MenuBarDisplaySettings
+    let family: WidgetFamily
+
+    private var isSmallFamily: Bool {
+        family == .systemSmall
+    }
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline, spacing: isSmallFamily ? 6 : 8) {
+            Text(display.title)
+                .foregroundStyle(.secondary)
+                .layoutPriority(2)
+            Text(display.value)
+                .font(.system(isSmallFamily ? .caption : .callout, design: .default)
+                    .weight(settings.numberFontWeight.fontWeight))
+                .monospacedDigit()
+                .foregroundStyle(display.tone.statusBarColor(settings: settings))
+                .widgetAccentable(false)
+                .layoutPriority(3)
+            Spacer(minLength: isSmallFamily ? 4 : 6)
+            if !display.resetText.isEmpty {
+                Text(resetText)
+                    .foregroundStyle(.secondary)
+                    .layoutPriority(1)
+                    .truncationMode(.tail)
+            }
+        }
+        .font((isSmallFamily ? Font.caption : Font.callout).monospacedDigit())
+        .lineLimit(1)
+        .minimumScaleFactor(isSmallFamily ? 0.82 : 0.9)
+    }
+
+    /// 小号小组件去掉中文时间里的空格，避免同一信息被迫缩小到不可读。
+    private var resetText: String {
+        isSmallFamily ? display.resetText.replacingOccurrences(of: " ", with: "") : display.resetText
+    }
+}
+
+/// 小组件里的速度辅助行，复用共享 Pace 展示模型，只负责压缩排版和着色。
+private struct WidgetPaceRow: View {
+    let display: CodexUsageWidgetDisplay.Line
+    let settings: MenuBarDisplaySettings
+    let family: WidgetFamily
+
+    private var isSmallFamily: Bool {
+        family == .systemSmall
+    }
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline, spacing: isSmallFamily ? 4 : 6) {
+            Text(paceStatusText)
+                .foregroundStyle(display.paceTone.statusBarColor(settings: settings))
+                .widgetAccentable(false)
+                .layoutPriority(2)
+            if !display.paceProjectionText.isEmpty {
+                if !isSmallFamily {
+                    Spacer(minLength: 4)
+                }
+                Text(paceProjectionText)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                    .layoutPriority(1)
+            }
+        }
+        .font((isSmallFamily ? Font.caption : Font.callout).monospacedDigit())
+        .lineLimit(1)
+        .minimumScaleFactor(isSmallFamily ? 0.82 : 0.9)
+    }
+
+    /// 小号宽度优先展示判断结果，去掉空格让“超额 25%”不再被压成单字。
+    private var paceStatusText: String {
+        isSmallFamily ? display.paceStatusText.replacingOccurrences(of: " ", with: "") : display.paceStatusText
+    }
+
+    /// 小号里用更短的预测文案，完整文案仍保留给中号小组件和弹窗。
+    private var paceProjectionText: String {
+        guard isSmallFamily else {
+            return display.paceProjectionText
+        }
+        return display.paceProjectionText
+            .replacingOccurrences(of: "预计 ", with: "预计")
+            .replacingOccurrences(of: " ", with: "")
+            .replacingOccurrences(of: "后耗尽", with: "耗尽")
     }
 }

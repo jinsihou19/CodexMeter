@@ -921,7 +921,7 @@ public struct UsagePaceDisplay: Equatable, Sendable {
         }
         let duration = Self.durationText(seconds: etaSeconds)
         if duration == "现在" {
-            return "预计现在耗尽"
+            return "额度已耗尽"
         }
         return "预计 \(duration)后耗尽"
     }
@@ -935,7 +935,7 @@ public struct UsagePaceDisplay: Equatable, Sendable {
         }
         let duration = Self.durationText(seconds: etaSeconds)
         if duration == "现在" {
-            return "预计现在用完"
+            return "额度已耗尽"
         }
         return "预计 \(duration)后用完"
     }

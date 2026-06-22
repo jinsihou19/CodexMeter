@@ -7,7 +7,23 @@ struct SettingsResetActionState: Equatable {
 
     init(settings: MenuBarDisplaySettings) {
         self.isVisible = true
-        self.isEnabled = !settings.usesDefaultValues
+        self.isEnabled = !Self.usesMenuBarDefaultValues(settings)
+    }
+
+    /// 菜单栏重置只判断菜单栏专属项；颜色已提升为全局外观，不再影响该按钮状态。
+    private static func usesMenuBarDefaultValues(_ settings: MenuBarDisplaySettings) -> Bool {
+        let defaults = MenuBarDisplaySettings()
+        return settings.contentMode == defaults.contentMode
+            && settings.layoutDensity == defaults.layoutDensity
+            && settings.itemSpacing == defaults.itemSpacing
+            && settings.rowSpacing == defaults.rowSpacing
+            && settings.numberFontSize == defaults.numberFontSize
+            && settings.numberFontWeight == defaults.numberFontWeight
+            && settings.showsPrimaryWindow == defaults.showsPrimaryWindow
+            && settings.showsSecondaryWindow == defaults.showsSecondaryWindow
+            && settings.showsPercentSymbol == defaults.showsPercentSymbol
+            && settings.showsAdditionalLimits == defaults.showsAdditionalLimits
+            && settings.showsMenuBarIcon == defaults.showsMenuBarIcon
     }
 }
 
@@ -137,15 +153,90 @@ struct SettingsInfoRow: View {
     }
 }
 
+/// 设置页通用偏好行，左侧解释业务含义，右侧承载开关、菜单或按钮等控件。
+struct SettingsPreferenceRow<Control: View>: View {
+    let title: String
+    let subtitle: String
+    let control: Control
+
+    init(
+        title: String,
+        subtitle: String,
+        @ViewBuilder control: () -> Control
+    ) {
+        self.title = title
+        self.subtitle = subtitle
+        self.control = control()
+    }
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 14) {
+            VStack(alignment: .leading, spacing: 3) {
+                Text(title)
+                    .font(.subheadline.weight(.semibold))
+                Text(subtitle)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            Spacer(minLength: 12)
+
+            control
+                .frame(maxWidth: 240, alignment: .trailing)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+/// 带说明文案的开关行，用于需要解释影响范围的设置项。
+struct SettingsToggleRow: View {
+    let title: String
+    let subtitle: String
+    @Binding var isOn: Bool
+
+    var body: some View {
+        SettingsPreferenceRow(title: title, subtitle: subtitle) {
+            Toggle("", isOn: $isOn)
+                .labelsHidden()
+                .toggleStyle(.switch)
+        }
+    }
+}
+
+/// 字符串 rawValue picker 行，适合和 @AppStorage 直接绑定，避免设置页重复转换枚举。
+struct SettingsPickerRow: View {
+    let title: String
+    let subtitle: String
+    @Binding var selection: String
+    let options: [(value: String, title: String)]
+
+    var body: some View {
+        SettingsPreferenceRow(title: title, subtitle: subtitle) {
+            Picker("", selection: $selection) {
+                ForEach(options, id: \.value) { option in
+                    Text(option.title).tag(option.value)
+                }
+            }
+            .labelsHidden()
+            .pickerStyle(.menu)
+            .frame(width: 180)
+        }
+    }
+}
+
 struct SettingsSidebarButtonStyle: ButtonStyle {
     let isSelected: Bool
 
+    /// 让整行设置侧栏按钮都参与点击命中，而不是只命中文字和图标。
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
+            .frame(maxWidth: .infinity, alignment: .leading)
             .font(.system(size: 13, weight: isSelected ? .semibold : .regular))
             .foregroundStyle(isSelected ? Color.accentColor : Color.primary)
             .padding(.horizontal, 10)
             .padding(.vertical, 8)
+            .contentShape(Rectangle())
             .background(
                 RoundedRectangle(cornerRadius: 8, style: .continuous)
                     .fill(isSelected ? Color.accentColor.opacity(0.14) : Color.clear)

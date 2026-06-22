@@ -874,6 +874,22 @@ final class UsageViewModelTests: XCTestCase {
         XCTAssertEqual(display?.tone, .danger)
     }
 
+    func testUsagePaceDisplayUsesDepletedTextForImmediateExhaustion() {
+        let display = UsagePaceDisplay(
+            percentWindow: RateLimitWindow(usedPercent: 100, windowDurationMins: 300, resetsAt: 4_000),
+            paceWindow: RateLimitWindow(
+                usedPercent: 100,
+                windowDurationMins: 100,
+                resetsAt: 4_000
+            ),
+            now: Date(timeIntervalSince1970: 1_000)
+        )
+
+        XCTAssertEqual(display?.valueText, "0% · +50%")
+        XCTAssertEqual(display?.detailText, "用得偏快 50% · 额度已耗尽")
+        XCTAssertEqual(display?.widgetProjectionText, "额度已耗尽")
+    }
+
     func testSettingsPreviewShowsRealMenuBarBackdrops() {
         XCTAssertEqual(MenuBarPreviewAppearance.allCases.map(\.title), ["浅色", "深色", "半透明"])
     }

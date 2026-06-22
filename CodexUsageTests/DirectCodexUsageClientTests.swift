@@ -95,8 +95,14 @@ final class DirectCodexUsageClientTests: XCTestCase {
             at: authFile.deletingLastPathComponent(),
             withIntermediateDirectories: true
         )
+        let idToken = Self.idToken(payload: [
+            "email": "User@Example.COM",
+            "https://api.openai.com/auth": [
+                "chatgpt_plan_type": "prolite"
+            ]
+        ])
         try """
-        {"tokens":{"access_token":"test-access-token"}}
+        {"tokens":{"access_token":"test-access-token","id_token":"\(idToken)"}}
         """.write(to: authFile, atomically: true, encoding: .utf8)
         let recorder = RequestRecorder(responseBodiesByPath: [
             "/backend-api/wham/usage": """
@@ -159,6 +165,9 @@ final class DirectCodexUsageClientTests: XCTestCase {
         let snapshot = try await client.fetchUsageSnapshot()
 
         XCTAssertEqual(snapshot.rateLimits.primary?.remainingPercent, 57)
+        XCTAssertEqual(snapshot.account?.email, "user@example.com")
+        XCTAssertEqual(snapshot.account?.planType, "prolite")
+        XCTAssertEqual(snapshot.accountPlanDisplayText, "Pro 5x")
         XCTAssertEqual(snapshot.rateLimits.primary?.paceDeltaPercent(now: Date(timeIntervalSince1970: 1_779_960_000)), -11)
         XCTAssertEqual(snapshot.profileStats?.lifetimeTokens, 2_018_581_714)
         XCTAssertEqual(snapshot.profileStats?.peakDailyTokens, 226_093_858)
@@ -170,6 +179,69 @@ final class DirectCodexUsageClientTests: XCTestCase {
             "/backend-api/wham/usage",
             "/backend-api/wham/profiles/me"
         ])
+    }
+
+    func testFetchRateLimitsTreatsZeroWindowUsageAsValidResponse() async throws {
+        let authFile = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString)
+            .appendingPathComponent("auth.json")
+        try FileManager.default.createDirectory(
+            at: authFile.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        try """
+        {"tokens":{"access_token":"test-access-token"}}
+        """.write(to: authFile, atomically: true, encoding: .utf8)
+        let recorder = RequestRecorder(responseBody: """
+        {
+          "plan_type": "prolite",
+          "rate_limit": {
+            "primary_window": {
+              "used_percent": null,
+              "limit_window_seconds": "18000",
+              "reset_after_seconds": "18000",
+              "reset_at": "1779967655"
+            },
+            "secondary_window": {
+              "used_percent": "77",
+              "limit_window_seconds": 604800,
+              "reset_after_seconds": 120960,
+              "reset_at": 1780392047
+            }
+          }
+        }
+        """)
+        let client = DirectCodexUsageClient(
+            authFileURL: authFile,
+            endpointURL: URL(string: "https://example.test/backend-api/wham/usage")!,
+            transport: recorder.transport
+        )
+
+        let snapshot = try await client.fetchRateLimits()
+
+        XCTAssertEqual(snapshot.primary?.remainingPercent, 100)
+        XCTAssertEqual(snapshot.primary?.windowDurationMins, 300)
+        XCTAssertEqual(snapshot.primary?.resetAfterSeconds, 18_000)
+        XCTAssertEqual(snapshot.primary?.resetsAt, 1_779_967_655)
+        XCTAssertEqual(snapshot.secondary?.remainingPercent, 23)
+    }
+
+    /// 构造测试用 unsigned JWT；生产代码只读取 payload 展示字段，不依赖签名。
+    private static func idToken(payload: [String: Any]) -> String {
+        let header = ["alg": "none", "typ": "JWT"]
+        return [
+            base64URL(try! JSONSerialization.data(withJSONObject: header)),
+            base64URL(try! JSONSerialization.data(withJSONObject: payload)),
+            ""
+        ].joined(separator: ".")
+    }
+
+    /// 将 JSON data 编码为 JWT 使用的 base64url，不带 padding。
+    private static func base64URL(_ data: Data) -> String {
+        data.base64EncodedString()
+            .replacingOccurrences(of: "+", with: "-")
+            .replacingOccurrences(of: "/", with: "_")
+            .replacingOccurrences(of: "=", with: "")
     }
 
     func testMissingAuthFileProducesDisplayableError() async {
