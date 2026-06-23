@@ -137,4 +137,91 @@ final class UsageModelsTests: XCTestCase {
         XCTAssertEqual(CodexPlanFormatter.displayName(for: "enterprise_workspace"), "Enterprise Workspace")
         XCTAssertNil(CodexPlanFormatter.displayName(for: "  "))
     }
+
+    func testCodexHookActivityDisplayHidesExpiredCompletedState() {
+        let now = Date(timeIntervalSince1970: 2_000)
+        let freshSnapshot = CodexHookActivitySnapshot(
+            state: .completed,
+            sessionID: "session-1",
+            turnID: "turn-1",
+            eventName: "Stop",
+            toolName: nil,
+            message: "回合完成",
+            updatedAt: now.timeIntervalSince1970 - 2
+        )
+        let expiredSnapshot = CodexHookActivitySnapshot(
+            state: .completed,
+            sessionID: "session-1",
+            turnID: "turn-1",
+            eventName: "Stop",
+            toolName: nil,
+            message: "回合完成",
+            updatedAt: now.timeIntervalSince1970 - 20
+        )
+
+        XCTAssertTrue(CodexHookActivityDisplay(snapshot: freshSnapshot, now: now).isVisible)
+        XCTAssertFalse(CodexHookActivityDisplay(snapshot: expiredSnapshot, now: now).isVisible)
+        XCTAssertTrue(CodexHookActivityDisplay(snapshot: expiredSnapshot, now: now, showsIdleState: true).isVisible)
+        XCTAssertFalse(CodexHookActivityDisplay(snapshot: expiredSnapshot, now: now, showsIdleState: true).isActive)
+    }
+
+    func testCodexHookActivityDisplayUsesToolNameAsDetail() {
+        let snapshot = CodexHookActivitySnapshot(
+            state: .running,
+            sessionID: "session-1",
+            turnID: "turn-1",
+            eventName: "PreToolUse",
+            toolName: "Bash",
+            message: "准备运行 Bash",
+            updatedAt: 2_000
+        )
+        let display = CodexHookActivityDisplay(
+            snapshot: snapshot,
+            now: Date(timeIntervalSince1970: 2_001)
+        )
+
+        XCTAssertEqual(display.title, "运行中")
+        XCTAssertEqual(display.detailText, "PreToolUse · Bash")
+        XCTAssertGreaterThan(display.statusItemWidth, 0)
+    }
+
+    func testCodexHookActivityDisplayAggregatesMultipleActiveSessions() {
+        let now = Date(timeIntervalSince1970: 2_500)
+        let runningSnapshot = CodexHookActivitySnapshot(
+            state: .running,
+            sessionID: "session-1",
+            turnID: "turn-1",
+            eventName: "PreToolUse",
+            toolName: "Bash",
+            message: "准备运行 Bash",
+            updatedAt: now.timeIntervalSince1970 - 1
+        )
+        let approvalSnapshot = CodexHookActivitySnapshot(
+            state: .waitingApproval,
+            sessionID: "session-2",
+            turnID: "turn-2",
+            eventName: "PermissionRequest",
+            toolName: nil,
+            message: "等待权限确认",
+            updatedAt: now.timeIntervalSince1970 - 3
+        )
+        let expiredSnapshot = CodexHookActivitySnapshot(
+            state: .completed,
+            sessionID: "session-3",
+            turnID: "turn-3",
+            eventName: "Stop",
+            toolName: nil,
+            message: "回合完成",
+            updatedAt: now.timeIntervalSince1970 - 20
+        )
+
+        let display = CodexHookActivityDisplay(
+            snapshots: [runningSnapshot, approvalSnapshot, expiredSnapshot],
+            now: now
+        )
+
+        XCTAssertEqual(display.state, .waitingApproval)
+        XCTAssertEqual(display.activeSessionCount, 2)
+        XCTAssertTrue(display.accessibilityText.contains("活跃会话 2 个"))
+    }
 }

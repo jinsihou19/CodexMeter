@@ -71,6 +71,8 @@ struct SettingsView: View {
     @AppStorage(MenuBarPreferenceKeys.showsSecondaryWindow, store: MenuBarDisplaySettings.sharedDefaults) private var showsSecondaryWindow = MenuBarDisplaySettings.defaultShowsSecondaryWindow
     @AppStorage(MenuBarPreferenceKeys.showsPercentSymbol, store: MenuBarDisplaySettings.sharedDefaults) private var showsPercentSymbol = MenuBarDisplaySettings.defaultShowsPercentSymbol
     @AppStorage(MenuBarPreferenceKeys.showsMenuBarIcon, store: MenuBarDisplaySettings.sharedDefaults) private var showsMenuBarIcon = MenuBarDisplaySettings.defaultShowsMenuBarIcon
+    @AppStorage(MenuBarPreferenceKeys.showsHookActivityLight, store: MenuBarDisplaySettings.sharedDefaults) private var showsHookActivityLight = MenuBarDisplaySettings.defaultShowsHookActivityLight
+    @AppStorage(MenuBarPreferenceKeys.hookActivityIndicatorStyle, store: MenuBarDisplaySettings.sharedDefaults) private var hookActivityIndicatorStyle = MenuBarDisplaySettings.defaultHookActivityIndicatorStyle.rawValue
     @AppStorage(MenuBarPreferenceKeys.weeklyProgressWorkDays, store: MenuBarDisplaySettings.sharedDefaults) private var weeklyProgressWorkDays = MenuBarDisplaySettings.defaultWeeklyProgressWorkDays
 
     @AppStorage(WidgetDisplayPreferenceKeys.contentMode, store: MenuBarDisplaySettings.sharedDefaults) private var widgetContentMode = WidgetDisplaySettings.defaultContentMode.rawValue
@@ -94,6 +96,7 @@ struct SettingsView: View {
     @State private var launchAtLoginEnabled = false
     @State private var launchAtLoginError: String?
     @State private var cacheActionMessage: String?
+    private let hookActivityURL = CodexHookActivityLocation.activityURL()
 
     private static let expectedUsageComparisonHelp = """
     预期对比会用「已过窗口时间 / 总窗口时间」算出理论已用比例，再和实际已用比例比较：
@@ -363,6 +366,17 @@ struct SettingsView: View {
                     subtitle: "在数字左侧显示 Codex 图标，便于和其他菜单栏项目区分。",
                     isOn: $showsMenuBarIcon
                 )
+                SettingsToggleRow(
+                    title: "显示活动指示",
+                    subtitle: "Codex 运行、思考、需确认或刚完成时，在额度数字旁显示小型符号动效；空闲时自动隐藏。",
+                    isOn: $showsHookActivityLight
+                )
+                SettingsPickerRow(
+                    title: "活动样式",
+                    subtitle: "自动会按状态切换；固定样式会一直使用选中的系统符号，颜色跟随状态。",
+                    selection: $hookActivityIndicatorStyle,
+                    options: HookActivityIndicatorStyle.allCases.map { ($0.rawValue, $0.title) }
+                )
                 SettingsPreferenceRow(
                     title: "工作日刻度线",
                     subtitle: "设置用于每周用量条刻度和进度计算的工作日。"
@@ -525,6 +539,16 @@ struct SettingsView: View {
                 SettingsInfoRow(title: "小组件", value: "保存成功后自动刷新时间线")
             }
 
+            SettingsSection(title: "Hook 活动指示", subtitle: "Codex 生命周期事件会驱动菜单栏符号动效") {
+                SettingsInfoRow(title: "状态文件", value: hookActivityURL.path)
+                SettingsInfoRow(title: "Hook 配置", value: ".codex/hooks.json")
+                SettingsInfoRow(title: "Hook 脚本", value: ".codex/hooks/codex_activity.py")
+                Text("在 Codex CLI 中通过 /hooks 信任该项目 hook 后，UserPromptSubmit、PreToolUse、PermissionRequest、PostToolUse 和 Stop 会实时更新状态。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
             SettingsSection(title: "操作", subtitle: "快速定位配置和缓存") {
                 HStack(spacing: 10) {
                     Button {
@@ -543,6 +567,12 @@ struct SettingsView: View {
                         openCacheDirectory()
                     } label: {
                         Label("打开缓存目录", systemImage: "externaldrive")
+                    }
+
+                    Button {
+                        openActivityDirectory()
+                    } label: {
+                        Label("打开状态目录", systemImage: "point.3.connected.trianglepath.dotted")
                     }
                 }
             }
@@ -618,6 +648,9 @@ struct SettingsView: View {
             showsPercentSymbol: showsPercentSymbol,
             showsAdditionalLimits: MenuBarDisplaySettings.defaultShowsAdditionalLimits,
             showsMenuBarIcon: showsMenuBarIcon,
+            showsHookActivityLight: showsHookActivityLight,
+            hookActivityIndicatorStyle: HookActivityIndicatorStyle(rawValue: hookActivityIndicatorStyle)
+                ?? MenuBarDisplaySettings.defaultHookActivityIndicatorStyle,
             weeklyProgressWorkDays: weeklyProgressWorkDays
         )
     }
@@ -731,6 +764,8 @@ struct SettingsView: View {
         showsSecondaryWindow = MenuBarDisplaySettings.defaultShowsSecondaryWindow
         showsPercentSymbol = MenuBarDisplaySettings.defaultShowsPercentSymbol
         showsMenuBarIcon = MenuBarDisplaySettings.defaultShowsMenuBarIcon
+        showsHookActivityLight = MenuBarDisplaySettings.defaultShowsHookActivityLight
+        hookActivityIndicatorStyle = MenuBarDisplaySettings.defaultHookActivityIndicatorStyle.rawValue
         weeklyProgressWorkDays = MenuBarDisplaySettings.defaultWeeklyProgressWorkDays
     }
 
@@ -785,6 +820,8 @@ struct SettingsView: View {
         showsSecondaryWindow = settings.showsSecondaryWindow
         showsPercentSymbol = settings.showsPercentSymbol
         showsMenuBarIcon = settings.showsMenuBarIcon
+        showsHookActivityLight = settings.showsHookActivityLight
+        hookActivityIndicatorStyle = settings.hookActivityIndicatorStyle.rawValue
         weeklyProgressWorkDays = settings.weeklyProgressWorkDays
 
         let widgetSettings = currentWidgetSettings
@@ -818,6 +855,11 @@ struct SettingsView: View {
     /// 在 Finder 中打开快照缓存目录，便于用户定位 widget 读取的最新数据。
     private func openCacheDirectory() {
         openDirectory(UsageSnapshotStore().snapshotURL().deletingLastPathComponent())
+    }
+
+    /// 在 Finder 中打开 hook 活动状态目录，便于确认脚本是否正在写入 JSON。
+    private func openActivityDirectory() {
+        openDirectory(hookActivityURL.deletingLastPathComponent())
     }
 
     /// 删除最近同步快照并刷新小组件，让“暂无数据”状态立即可见。

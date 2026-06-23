@@ -17,6 +17,8 @@ public enum MenuBarPreferenceKeys {
     public static let showsPercentSymbol = "menuBar.showsPercentSymbol"
     public static let showsAdditionalLimits = "menuBar.showsAdditionalLimits"
     public static let showsMenuBarIcon = "menuBar.showsMenuBarIcon"
+    public static let showsHookActivityLight = "menuBar.showsHookActivityLight"
+    public static let hookActivityIndicatorStyle = "menuBar.hookActivityIndicatorStyle"
     public static let weeklyProgressWorkDays = "menuBar.weeklyProgressWorkDays"
 
     public static let allKeys = [
@@ -34,6 +36,8 @@ public enum MenuBarPreferenceKeys {
         showsPercentSymbol,
         showsAdditionalLimits,
         showsMenuBarIcon,
+        showsHookActivityLight,
+        hookActivityIndicatorStyle,
         weeklyProgressWorkDays
     ]
 }
@@ -528,6 +532,31 @@ public enum MenuBarNumberFontWeight: String, CaseIterable, Identifiable, Sendabl
     }
 }
 
+/// 控制菜单栏 hook 活动指示的视觉语言；旧 rawValue 保留用于兼容已保存设置，实际显示改为系统 SF Symbol。
+public enum HookActivityIndicatorStyle: String, CaseIterable, Identifiable, Sendable {
+    case automatic
+    case variableDots
+    case fanHead
+    case signature
+
+    public var id: String {
+        rawValue
+    }
+
+    public var title: String {
+        switch self {
+        case .automatic:
+            return "自动"
+        case .variableDots:
+            return "竖向省略号"
+        case .fanHead:
+            return "target"
+        case .signature:
+            return "aqi.medium"
+        }
+    }
+}
+
 public enum MenuBarLayoutDensity: String, CaseIterable, Identifiable, Sendable {
     case compact
     case normal
@@ -571,6 +600,8 @@ public struct MenuBarDisplaySettings: Equatable, Sendable {
     public static let defaultShowsPercentSymbol = true
     public static let defaultShowsAdditionalLimits = false
     public static let defaultShowsMenuBarIcon = false
+    public static let defaultShowsHookActivityLight = true
+    public static let defaultHookActivityIndicatorStyle = HookActivityIndicatorStyle.automatic
     public static let defaultWeeklyProgressWorkDays = 5
     public static let menuBarIconWidth: CGFloat = 15
     public static let menuBarIconTextSpacing: CGFloat = 2
@@ -595,6 +626,8 @@ public struct MenuBarDisplaySettings: Equatable, Sendable {
     public let showsPercentSymbol: Bool
     public let showsAdditionalLimits: Bool
     public let showsMenuBarIcon: Bool
+    public let showsHookActivityLight: Bool
+    public let hookActivityIndicatorStyle: HookActivityIndicatorStyle
     public let weeklyProgressWorkDays: Int
 
     public init(
@@ -612,6 +645,8 @@ public struct MenuBarDisplaySettings: Equatable, Sendable {
         showsPercentSymbol: Bool = Self.defaultShowsPercentSymbol,
         showsAdditionalLimits: Bool = Self.defaultShowsAdditionalLimits,
         showsMenuBarIcon: Bool = Self.defaultShowsMenuBarIcon,
+        showsHookActivityLight: Bool = Self.defaultShowsHookActivityLight,
+        hookActivityIndicatorStyle: HookActivityIndicatorStyle = Self.defaultHookActivityIndicatorStyle,
         weeklyProgressWorkDays: Int = Self.defaultWeeklyProgressWorkDays
     ) {
         self.contentMode = contentMode
@@ -628,6 +663,8 @@ public struct MenuBarDisplaySettings: Equatable, Sendable {
         self.showsPercentSymbol = showsPercentSymbol
         self.showsAdditionalLimits = showsAdditionalLimits
         self.showsMenuBarIcon = showsMenuBarIcon
+        self.showsHookActivityLight = showsHookActivityLight
+        self.hookActivityIndicatorStyle = hookActivityIndicatorStyle
         self.weeklyProgressWorkDays = Swift.max(2, Swift.min(7, weeklyProgressWorkDays))
     }
 
@@ -664,6 +701,11 @@ public struct MenuBarDisplaySettings: Equatable, Sendable {
                 ?? Self.defaultShowsAdditionalLimits,
             showsMenuBarIcon: defaults.object(forKey: MenuBarPreferenceKeys.showsMenuBarIcon) as? Bool
                 ?? Self.defaultShowsMenuBarIcon,
+            showsHookActivityLight: defaults.object(forKey: MenuBarPreferenceKeys.showsHookActivityLight) as? Bool
+                ?? Self.defaultShowsHookActivityLight,
+            hookActivityIndicatorStyle: HookActivityIndicatorStyle(
+                rawValue: defaults.string(forKey: MenuBarPreferenceKeys.hookActivityIndicatorStyle) ?? ""
+            ) ?? Self.defaultHookActivityIndicatorStyle,
             weeklyProgressWorkDays: defaults.object(forKey: MenuBarPreferenceKeys.weeklyProgressWorkDays) as? Int
                 ?? Self.defaultWeeklyProgressWorkDays
         )

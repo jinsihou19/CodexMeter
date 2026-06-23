@@ -48,6 +48,8 @@
 		100000000000000000000D0A /* SettingsControls.swift in Sources */ = {isa = PBXBuildFile; fileRef = 100000000000000000000D03 /* SettingsControls.swift */; };
 		100000000000000000000D0B /* SettingsPreview.swift in Sources */ = {isa = PBXBuildFile; fileRef = 100000000000000000000D04 /* SettingsPreview.swift */; };
 		100000000000000000000D0C /* SettingsPreview.swift in Sources */ = {isa = PBXBuildFile; fileRef = 100000000000000000000D04 /* SettingsPreview.swift */; };
+		100000000000000000000F01 /* CodexHookActivity.swift in Sources */ = {isa = PBXBuildFile; fileRef = 100000000000000000000F02 /* CodexHookActivity.swift */; };
+		100000000000000000000F03 /* CodexHookActivityStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 100000000000000000000F04 /* CodexHookActivityStore.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -152,6 +154,8 @@
 		100000000000000000000D02 /* SettingsSections.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsSections.swift; sourceTree = "<group>"; };
 		100000000000000000000D03 /* SettingsControls.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsControls.swift; sourceTree = "<group>"; };
 		100000000000000000000D04 /* SettingsPreview.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsPreview.swift; sourceTree = "<group>"; };
+		100000000000000000000F02 /* CodexHookActivity.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CodexHookActivity.swift; sourceTree = "<group>"; };
+		100000000000000000000F04 /* CodexHookActivityStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CodexHookActivityStore.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -207,6 +211,7 @@
 				100000000000000000000016 /* UsageModels.swift */,
 				100000000000000000000017 /* UsageFormatter.swift */,
 				100000000000000000000018 /* UsageSnapshotStore.swift */,
+				100000000000000000000F02 /* CodexHookActivity.swift */,
 				100000000000000000000E02 /* MenuBarDisplaySettings.swift */,
 			);
 			path = CodexUsageShared;
@@ -242,6 +247,7 @@
 				10000000000000000000001A /* CodexUsageApp.swift */,
 				100000000000000000000C03 /* SettingsWindowOpener.swift */,
 				100000000000000000000C06 /* SettingsWindowPresenter.swift */,
+				100000000000000000000F04 /* CodexHookActivityStore.swift */,
 				10000000000000000000001B /* UsageViewModel.swift */,
 				10000000000000000000001C /* MenuBarView.swift */,
 				100000000000000000000B04 /* MenuBarDisplaySettings.swift */,
@@ -419,6 +425,7 @@
 				100000000000000000000007 /* UsageModels.swift in Sources */,
 				100000000000000000000008 /* UsageFormatter.swift in Sources */,
 				100000000000000000000009 /* UsageSnapshotStore.swift in Sources */,
+				100000000000000000000F01 /* CodexHookActivity.swift in Sources */,
 				100000000000000000000E01 /* MenuBarDisplaySettings.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -453,6 +460,7 @@
 				10000000000000000000000C /* UsageViewModel.swift in Sources */,
 				10000000000000000000000D /* MenuBarView.swift in Sources */,
 				10000000000000000000000E /* DirectCodexUsageClient.swift in Sources */,
+				100000000000000000000F03 /* CodexHookActivityStore.swift in Sources */,
 				100000000000000000000B01 /* MenuBarDisplaySettings.swift in Sources */,
 				100000000000000000000B03 /* SettingsView.swift in Sources */,
 				100000000000000000000D05 /* SettingsPanelLayout.swift in Sources */,
@@ -551,7 +559,7 @@
 				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
-				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				MACOSX_DEPLOYMENT_TARGET = 26.0;
 				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
 				MTL_FAST_MATH = YES;
 				ONLY_ACTIVE_ARCH = YES;
@@ -607,7 +615,7 @@
 				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
-				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				MACOSX_DEPLOYMENT_TARGET = 26.0;
 				MTL_ENABLE_DEBUG_INFO = NO;
 				MTL_FAST_MATH = YES;
 				SDKROOT = macosx;

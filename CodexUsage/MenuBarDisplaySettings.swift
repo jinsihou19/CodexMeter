@@ -350,18 +350,23 @@ struct StatusLineDisplay: Identifiable, Equatable {
 
 enum StatusBarDisplayMetrics {
     /// 按当前两行文字真实宽度计算菜单栏项目宽度，避免 Pace 和剩余额度共用同一块空白。
-    static func statusItemWidth(for lines: [StatusLineDisplay], settings: MenuBarDisplaySettings) -> CGFloat {
+    static func statusItemWidth(
+        for lines: [StatusLineDisplay],
+        settings: MenuBarDisplaySettings,
+        activityDisplay: CodexHookActivityDisplay = CodexHookActivityDisplay(snapshot: nil)
+    ) -> CGFloat {
         let textWidth = lines
             .map { lineWidth(for: $0, settings: settings) }
             .max() ?? minimumTextWidth(settings: settings)
         let iconWidth = settings.showsMenuBarIcon
             ? MenuBarDisplaySettings.menuBarIconWidth + MenuBarDisplaySettings.menuBarIconTextSpacing
             : 0
+        let activityWidth = settings.showsHookActivityLight ? activityDisplay.statusItemWidth : 0
         let densityPadding: CGFloat = settings.layoutDensity == .normal ? 2 : 0
 
         return max(
-            ceil(iconWidth + textWidth + densityPadding),
-            minimumStatusItemWidth(settings: settings)
+            ceil(activityWidth + iconWidth + textWidth + densityPadding),
+            minimumStatusItemWidth(settings: settings, activityDisplay: activityDisplay)
         )
     }
 
@@ -383,11 +388,15 @@ enum StatusBarDisplayMetrics {
         settings.contentMode == .paceComparison ? 18 : 24
     }
 
-    private static func minimumStatusItemWidth(settings: MenuBarDisplaySettings) -> CGFloat {
+    private static func minimumStatusItemWidth(
+        settings: MenuBarDisplaySettings,
+        activityDisplay: CodexHookActivityDisplay
+    ) -> CGFloat {
         let iconWidth = settings.showsMenuBarIcon
             ? MenuBarDisplaySettings.menuBarIconWidth + MenuBarDisplaySettings.menuBarIconTextSpacing
             : 0
-        return iconWidth + minimumTextWidth(settings: settings)
+        let activityWidth = settings.showsHookActivityLight ? activityDisplay.statusItemWidth : 0
+        return activityWidth + iconWidth + minimumTextWidth(settings: settings)
     }
 }
 

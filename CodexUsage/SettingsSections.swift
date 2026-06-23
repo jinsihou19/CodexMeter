@@ -10,7 +10,7 @@ struct SettingsResetActionState: Equatable {
         self.isEnabled = !Self.usesMenuBarDefaultValues(settings)
     }
 
-    /// 菜单栏重置只判断菜单栏专属项；颜色已提升为全局外观，不再影响该按钮状态。
+    /// 菜单栏重置只判断菜单栏专属项；活动颜色由状态决定，不参与用户设置。
     private static func usesMenuBarDefaultValues(_ settings: MenuBarDisplaySettings) -> Bool {
         let defaults = MenuBarDisplaySettings()
         return settings.contentMode == defaults.contentMode
@@ -24,6 +24,9 @@ struct SettingsResetActionState: Equatable {
             && settings.showsPercentSymbol == defaults.showsPercentSymbol
             && settings.showsAdditionalLimits == defaults.showsAdditionalLimits
             && settings.showsMenuBarIcon == defaults.showsMenuBarIcon
+            && settings.showsHookActivityLight == defaults.showsHookActivityLight
+            && settings.hookActivityIndicatorStyle == defaults.hookActivityIndicatorStyle
+            && settings.weeklyProgressWorkDays == defaults.weeklyProgressWorkDays
     }
 }
 

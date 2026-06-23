@@ -67,7 +67,10 @@ struct MenuBarView: View {
         SurfaceAppearanceSettings(defaults: MenuBarDisplaySettings.sharedDefaults)
     }
 
-    init(viewModel: UsageViewModel, onSizeChange: ((CGSize) -> Void)? = nil) {
+    init(
+        viewModel: UsageViewModel,
+        onSizeChange: ((CGSize) -> Void)? = nil
+    ) {
         self.viewModel = viewModel
         self.onSizeChange = onSizeChange
     }

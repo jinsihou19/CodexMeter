@@ -202,6 +202,8 @@ final class UsageViewModelTests: XCTestCase {
         XCTAssertEqual(settings.dangerColorHex, "#F23838")
         XCTAssertFalse(settings.showsAdditionalLimits)
         XCTAssertFalse(settings.showsMenuBarIcon)
+        XCTAssertTrue(settings.showsHookActivityLight)
+        XCTAssertEqual(settings.hookActivityIndicatorStyle, .automatic)
         XCTAssertEqual(settings.statusItemWidth, 42)
         XCTAssertEqual(MenuBarDisplayPreset.matchingPreset(for: settings), .balanced)
     }
@@ -249,6 +251,8 @@ final class UsageViewModelTests: XCTestCase {
         defaults.set(false, forKey: MenuBarPreferenceKeys.showsPercentSymbol)
         defaults.set(true, forKey: MenuBarPreferenceKeys.showsAdditionalLimits)
         defaults.set(true, forKey: MenuBarPreferenceKeys.showsMenuBarIcon)
+        defaults.set(false, forKey: MenuBarPreferenceKeys.showsHookActivityLight)
+        defaults.set(HookActivityIndicatorStyle.signature.rawValue, forKey: MenuBarPreferenceKeys.hookActivityIndicatorStyle)
 
         let settings = MenuBarDisplaySettings(defaults: defaults)
 
@@ -266,6 +270,8 @@ final class UsageViewModelTests: XCTestCase {
         XCTAssertFalse(settings.showsPercentSymbol)
         XCTAssertTrue(settings.showsAdditionalLimits)
         XCTAssertTrue(settings.showsMenuBarIcon)
+        XCTAssertFalse(settings.showsHookActivityLight)
+        XCTAssertEqual(settings.hookActivityIndicatorStyle, .signature)
     }
 
     func testStatusBarWidthUsesPaceContentInsteadOfRemainingFallbackWhenIconShown() {
@@ -315,6 +321,41 @@ final class UsageViewModelTests: XCTestCase {
         let remainingWidth = StatusBarDisplayMetrics.statusItemWidth(for: remainingLines, settings: remainingSettings)
 
         XCTAssertGreaterThan(remainingWidth, paceWidth)
+    }
+
+    func testStatusBarWidthIncludesHookActivityIndicatorOnlyWhenVisible() {
+        let settings = MenuBarDisplaySettings()
+        let lines = [
+            StatusLineDisplay(id: "primary", label: "5h", value: "49%", tone: .warning),
+            StatusLineDisplay(id: "secondary", label: "7d", value: "51%", tone: .warning)
+        ]
+        let snapshot = CodexHookActivitySnapshot(
+            state: .running,
+            sessionID: "session-1",
+            turnID: "turn-1",
+            eventName: "PreToolUse",
+            toolName: "Bash",
+            message: "准备运行 Bash",
+            updatedAt: Date().timeIntervalSince1970
+        )
+        let activeDisplay = CodexHookActivityDisplay(snapshot: snapshot)
+        let hiddenSettings = MenuBarDisplaySettings(showsHookActivityLight: false)
+
+        let idleWidth = StatusBarDisplayMetrics.statusItemWidth(for: lines, settings: settings)
+        let activeWidth = StatusBarDisplayMetrics.statusItemWidth(
+            for: lines,
+            settings: settings,
+            activityDisplay: activeDisplay
+        )
+        let hiddenWidth = StatusBarDisplayMetrics.statusItemWidth(
+            for: lines,
+            settings: hiddenSettings,
+            activityDisplay: activeDisplay
+        )
+
+        XCTAssertEqual(activeDisplay.statusItemWidth, 19)
+        XCTAssertGreaterThan(activeWidth, idleWidth)
+        XCTAssertEqual(hiddenWidth, idleWidth)
     }
 
     func testMenuBarDisplaySettingsDefaultInitializerIgnoresSharedDefaults() {
@@ -381,6 +422,8 @@ final class UsageViewModelTests: XCTestCase {
         XCTAssertEqual(settings.numberFontSize, 9.5)
         XCTAssertEqual(settings.numberFontWeight, .medium)
         XCTAssertFalse(settings.showsMenuBarIcon)
+        XCTAssertTrue(settings.showsHookActivityLight)
+        XCTAssertEqual(settings.hookActivityIndicatorStyle, .automatic)
         XCTAssertEqual(
             defaults.integer(forKey: MenuBarPreferenceKeys.displayDefaultsVersion),
             MenuBarDisplaySettings.currentDisplayDefaultsVersion
@@ -413,11 +456,17 @@ final class UsageViewModelTests: XCTestCase {
     func testSettingsResetActionRemainsVisibleAtDefaults() {
         let defaultState = SettingsResetActionState(settings: MenuBarDisplaySettings())
         let customState = SettingsResetActionState(settings: MenuBarDisplaySettings(numberFontSize: 11))
+        let customLightState = SettingsResetActionState(settings: MenuBarDisplaySettings(showsHookActivityLight: false))
+        let customStyleState = SettingsResetActionState(settings: MenuBarDisplaySettings(
+            hookActivityIndicatorStyle: .fanHead
+        ))
 
         XCTAssertTrue(defaultState.isVisible)
         XCTAssertFalse(defaultState.isEnabled)
         XCTAssertTrue(customState.isVisible)
         XCTAssertTrue(customState.isEnabled)
+        XCTAssertTrue(customLightState.isEnabled)
+        XCTAssertTrue(customStyleState.isEnabled)
     }
 
     func testWidgetDisplayUsesMenuBarDisplaySettings() {
@@ -574,7 +623,9 @@ final class UsageViewModelTests: XCTestCase {
                 itemSpacing: MenuBarDisplaySettings.defaultItemSpacing,
                 rowSpacing: MenuBarDisplaySettings.defaultRowSpacing,
                 numberFontSize: MenuBarDisplaySettings.defaultNumberFontSize,
-                numberFontWeight: MenuBarDisplaySettings.defaultNumberFontWeight
+                numberFontWeight: MenuBarDisplaySettings.defaultNumberFontWeight,
+                showsHookActivityLight: false,
+                hookActivityIndicatorStyle: .signature
             ).usesDefaultValues
         )
     }
