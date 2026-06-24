@@ -10,39 +10,35 @@ struct SettingsPresetCard: View {
 
     var body: some View {
         Button(action: action) {
-            VStack(spacing: 6) {
-                ZStack(alignment: .topTrailing) {
-                    Image(systemName: systemImage)
-                        .font(.system(size: 17, weight: .medium))
-                        .foregroundStyle(.tint)
-                        .frame(maxWidth: .infinity)
+            HStack(spacing: 10) {
+                Image(systemName: systemImage)
+                    .font(.system(size: 14, weight: .medium))
+                    .foregroundStyle(.tint)
+                    .frame(width: 20)
 
-                    if isSelected {
-                        Image(systemName: "checkmark.circle.fill")
-                            .font(.system(size: 13, weight: .semibold))
-                            .foregroundStyle(Color.accentColor)
-                    }
-                }
+                Text(title)
+                    .font(.callout.weight(.medium))
+                    .foregroundStyle(.primary)
+                    .lineLimit(1)
 
-                VStack(spacing: 2) {
-                    Text(title)
-                        .font(.subheadline.weight(.semibold))
-                        .foregroundStyle(.primary)
-                        .lineLimit(1)
-                    Text(subtitle)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .multilineTextAlignment(.center)
-                        .lineLimit(2)
-                        .minimumScaleFactor(0.9)
+                SettingsHelpButton(text: subtitle, accessibilityLabel: "\(title)说明")
+
+                Spacer(minLength: 8)
+
+                if isSelected {
+                    Image(systemName: "checkmark.circle.fill")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(Color.accentColor)
                 }
             }
             .frame(maxWidth: .infinity, minHeight: SettingsPanelLayout.presetCardMinimumHeight)
-            .padding(.horizontal, 8)
+            .padding(.horizontal, 10)
             .padding(.vertical, SettingsPanelLayout.presetCardVerticalPadding)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .help(subtitle)
+        .frame(maxWidth: .infinity)
         .background(
             Color.accentColor.opacity(isSelected ? 0.10 : 0)
                 .overlay(Color(nsColor: .windowBackgroundColor).opacity(isSelected ? 0.58 : 0.72))
@@ -62,8 +58,7 @@ struct DensitySettingRow: View {
 
     var body: some View {
         HStack(spacing: 12) {
-            Text("显示密度")
-                .frame(width: 74, alignment: .leading)
+            SettingsInlineTitle(title: "显示密度", detail: "切换菜单栏项目在紧凑和常规布局之间的显示节奏。")
             Picker("", selection: $layoutDensity) {
                 ForEach(MenuBarLayoutDensity.allCases) { density in
                     Text(density.title).tag(density.rawValue)
@@ -87,11 +82,10 @@ struct SliderSettingRow: View {
 
     var body: some View {
         HStack(spacing: 12) {
-            Text(title)
-                .frame(width: 74, alignment: .leading)
+            SettingsInlineTitle(title: title, detail: "\(title)的可调范围是 \(rangeText)，每次调整 \(stepText)。")
             Slider(value: clampedValue, in: range, step: step)
             Text(valueText)
-                .font(.caption.monospacedDigit())
+                .font(.callout.monospacedDigit())
                 .foregroundStyle(.secondary)
                 .frame(width: 48, alignment: .trailing)
         }
@@ -121,8 +115,7 @@ struct ColorHexPicker: View {
 
     var body: some View {
         ColorPicker(selection: colorBinding, supportsOpacity: false) {
-            Text(title)
-                .frame(width: 74, alignment: .leading)
+            SettingsInlineTitle(title: title, detail: "\(title)状态使用的强调色。")
         }
     }
 
@@ -135,6 +128,37 @@ struct ColorHexPicker: View {
                 hex = newValue.hexRGB ?? hex
             }
         )
+    }
+}
+
+/// 自定义设置控件左侧标题，保证滑杆、分段选择和颜色选择也有统一说明入口。
+private struct SettingsInlineTitle: View {
+    let title: String
+    let detail: String
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Text(title)
+                .font(.callout.weight(.medium))
+                .lineLimit(1)
+
+            SettingsHelpButton(text: detail, accessibilityLabel: "\(title)说明")
+        }
+        .frame(width: 118, alignment: .leading)
+    }
+}
+
+private extension SliderSettingRow {
+    var rangeText: String {
+        "\(formatted(range.lowerBound))\(suffix) 到 \(formatted(range.upperBound))\(suffix)"
+    }
+
+    var stepText: String {
+        "\(formatted(step))\(suffix)"
+    }
+
+    func formatted(_ value: Double) -> String {
+        value.formatted(.number.precision(.fractionLength(value.truncatingRemainder(dividingBy: 1) == 0 ? 0 : 1)))
     }
 }
 

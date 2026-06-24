@@ -174,10 +174,7 @@ struct SettingsView: View {
 
             VStack(alignment: .leading, spacing: 2) {
                 Text("Codex 用量")
-                    .font(.title3.weight(.semibold))
-                Text("启动、显示、下拉面板、小组件与读取状态")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .font(.headline.weight(.semibold))
             }
 
             Spacer()
@@ -239,7 +236,7 @@ struct SettingsView: View {
 
                 if let launchAtLoginError {
                     Label(launchAtLoginError, systemImage: "exclamationmark.triangle")
-                        .font(.caption)
+                        .font(.callout)
                         .foregroundStyle(.orange)
                 }
 
@@ -270,15 +267,16 @@ struct SettingsView: View {
                     title: "卡片不透明度",
                     subtitle: "限制在 20% 到 90%，保留背景通透感但不让内容失去对比。"
                 ) {
-                    VStack(alignment: .trailing, spacing: 4) {
+                    HStack(spacing: 10) {
                         Slider(
                             value: $surfaceCardOpacity,
                             in: SurfaceAppearanceSettings.cardOpacityRange,
                             step: 0.05
                         )
                         Text("\(Int((surfaceCardOpacity * 100).rounded()))%")
-                            .font(.caption.monospacedDigit())
+                            .font(.callout.monospacedDigit())
                             .foregroundStyle(.secondary)
+                            .frame(width: 42, alignment: .trailing)
                     }
                     .frame(width: 180)
                 }
@@ -337,18 +335,15 @@ struct SettingsView: View {
             SettingsSection(title: "显示内容", subtitle: "控制菜单栏里出现的读数") {
                 SettingsPreferenceRow(
                     title: "菜单栏内容",
-                    subtitle: "决定两行读数显示剩余额度，还是显示预期消耗偏差。"
+                    subtitle: Self.expectedUsageComparisonHelp
                 ) {
-                    HStack(spacing: 6) {
-                        QuickHelpIcon(text: Self.expectedUsageComparisonHelp)
-                        Picker("", selection: $contentMode) {
-                            ForEach(MenuBarContentMode.allCases) { mode in
-                                Text(mode.title).tag(mode.rawValue)
-                            }
+                    Picker("", selection: $contentMode) {
+                        ForEach(MenuBarContentMode.allCases) { mode in
+                            Text(mode.title).tag(mode.rawValue)
                         }
-                        .labelsHidden()
-                        .pickerStyle(.segmented)
                     }
+                    .labelsHidden()
+                    .pickerStyle(.segmented)
                 }
 
                 SettingsToggleRow(
@@ -473,50 +468,59 @@ struct SettingsView: View {
 
     private var popoverPane: some View {
         VStack(alignment: .leading, spacing: SettingsPanelLayout.sectionSpacing) {
-            SettingsSection(title: "下拉面板内容", subtitle: "控制点击菜单栏项目后看到的模块") {
-                SettingsToggleRow(
+            SettingsSection(title: "下拉面板内容", subtitle: "选择点击菜单栏项目后出现的模块") {
+                SettingsCompactToggleRow(
                     title: "显示用量速度",
-                    subtitle: "展示当前用量相对预期节奏是偏快还是有余量。",
+                    detail: "展示当前用量相对预期节奏是偏快还是有余量。",
+                    systemImage: "speedometer",
                     isOn: $popoverShowsPaceComparison
                 )
-                SettingsToggleRow(
+                SettingsCompactToggleRow(
                     title: "显示额外额度",
-                    subtitle: "显示 Codex Spark 等接口返回的额外 rate limit。",
+                    detail: "显示 Codex Spark 等接口返回的额外 rate limit。",
+                    systemImage: "plus.circle",
                     isOn: $popoverShowsAdditionalLimits
                 )
-                SettingsToggleRow(
+                SettingsCompactToggleRow(
                     title: "显示 Profile 概览",
-                    subtitle: "展示累计 Token、峰值、最长任务和连续天数。",
+                    detail: "展示累计 Token、峰值、最长任务和连续天数。",
+                    systemImage: "person.text.rectangle",
                     isOn: $popoverShowsProfileOverview
                 )
-                SettingsToggleRow(
+                SettingsCompactToggleRow(
                     title: "显示 Token 活动",
-                    subtitle: "展示每日、每周和累计 Token 活动柱状图。",
+                    detail: "展示每日、每周和累计 Token 活动柱状图。",
+                    systemImage: "chart.bar",
                     isOn: $popoverShowsTokenActivity
                 )
-                SettingsToggleRow(
+                SettingsCompactToggleRow(
                     title: "显示额度重置卡",
-                    subtitle: "在 Token 活动下方显示可用重置卡数量和到期时间。",
+                    detail: "在 Token 活动下方显示可用重置卡数量和到期时间。",
+                    systemImage: "creditcard",
                     isOn: $popoverShowsResetCredits
                 )
-                SettingsToggleRow(
+                SettingsCompactToggleRow(
                     title: "显示活动洞察",
-                    subtitle: "展示快速模式、推理强度、技能和会话统计。",
+                    detail: "展示快速模式、推理强度、技能和会话统计。",
+                    systemImage: "lightbulb",
                     isOn: $popoverShowsActivityInsights
                 )
-                SettingsToggleRow(
+                SettingsCompactToggleRow(
                     title: "显示最常用插件",
-                    subtitle: "展示最近统计里最常用的插件或技能。",
+                    detail: "展示最近统计里最常用的插件或技能。",
+                    systemImage: "puzzlepiece",
                     isOn: $popoverShowsTopInvocations
                 )
-                SettingsToggleRow(
+                SettingsCompactToggleRow(
                     title: "显示同步详情",
-                    subtitle: "展示限制状态和最近同步时间。",
+                    detail: "展示限制状态和最近同步时间。",
+                    systemImage: "arrow.triangle.2.circlepath",
                     isOn: $popoverShowsSyncDetails
                 )
-                SettingsToggleRow(
+                SettingsCompactToggleRow(
                     title: "开启降智雷达",
-                    subtitle: "读取 codexradar.com/current.json 并在下拉面板绘制 IQ 曲线；工作日 09:00-18:00 每小时拉取一次，其余时间每 4 小时一次。",
+                    detail: "读取 codexradar.com/current.json 并在下拉面板绘制 IQ 曲线；工作日 09:00-18:00 每小时拉取一次，其余时间每 4 小时一次。",
+                    systemImage: "waveform.path.ecg",
                     isOn: $codexRadarEnabled
                 )
             }
@@ -557,36 +561,40 @@ struct SettingsView: View {
                 SettingsInfoRow(title: "状态文件", value: hookActivityURL.path)
                 SettingsInfoRow(title: "Hook 配置", value: ".codex/hooks.json")
                 SettingsInfoRow(title: "Hook 脚本", value: ".codex/hooks/codex_activity.py")
-                Text("在 Codex CLI 中通过 /hooks 信任该项目 hook 后，UserPromptSubmit、PreToolUse、PermissionRequest、PostToolUse 和 Stop 会实时更新状态。")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
             }
 
-            SettingsSection(title: "操作", subtitle: "快速定位配置和缓存") {
-                HStack(spacing: 10) {
-                    Button {
+            SettingsSection(title: "操作", subtitle: "快速定位配置和缓存", isContentFramed: false) {
+                HStack(spacing: SettingsPanelLayout.cardSpacing) {
+                    SettingsCompactActionButton(
+                        title: "重新读取",
+                        subtitle: "重新读取本机 Codex 配置状态。",
+                        systemImage: "arrow.clockwise"
+                    ) {
                         configurationInfo = CodexConfigurationInfo.current()
-                    } label: {
-                        Label("重新读取", systemImage: "arrow.clockwise")
                     }
 
-                    Button {
+                    SettingsCompactActionButton(
+                        title: "打开 Codex 目录",
+                        subtitle: "在 Finder 中打开 Codex 配置目录。",
+                        systemImage: "folder"
+                    ) {
                         openCodexDirectory()
-                    } label: {
-                        Label("打开 Codex 目录", systemImage: "folder")
                     }
 
-                    Button {
+                    SettingsCompactActionButton(
+                        title: "打开缓存目录",
+                        subtitle: "在 Finder 中打开快照缓存目录。",
+                        systemImage: "externaldrive"
+                    ) {
                         openCacheDirectory()
-                    } label: {
-                        Label("打开缓存目录", systemImage: "externaldrive")
                     }
 
-                    Button {
+                    SettingsCompactActionButton(
+                        title: "打开状态目录",
+                        subtitle: "在 Finder 中打开 hook 活动状态目录。",
+                        systemImage: "point.3.connected.trianglepath.dotted"
+                    ) {
                         openActivityDirectory()
-                    } label: {
-                        Label("打开状态目录", systemImage: "point.3.connected.trianglepath.dotted")
                     }
                 }
             }
@@ -596,35 +604,37 @@ struct SettingsView: View {
 
     private var advancedPane: some View {
         VStack(alignment: .leading, spacing: SettingsPanelLayout.sectionSpacing) {
-            SettingsSection(title: "维护", subtitle: "清理本地快照或恢复显示偏好") {
-                SettingsActionRow(
-                    title: "清除最近同步缓存",
-                    subtitle: "删除小组件和菜单栏启动时读取的最新快照，下次刷新会重新保存。",
-                    systemImage: "trash"
-                ) {
-                    clearSnapshotCache()
+            SettingsSection(title: "维护", subtitle: "清理本地快照或恢复显示偏好", isContentFramed: false) {
+                HStack(spacing: SettingsPanelLayout.cardSpacing) {
+                    SettingsCompactActionButton(
+                        title: "清除最近同步缓存",
+                        subtitle: "删除小组件和菜单栏启动时读取的最新快照，下次刷新会重新保存。",
+                        systemImage: "trash"
+                    ) {
+                        clearSnapshotCache()
+                    }
+
+                    SettingsCompactActionButton(
+                        title: "恢复小组件默认",
+                        subtitle: "还原小组件显示内容、同步时间和套餐标签。",
+                        systemImage: "rectangle.grid.2x2"
+                    ) {
+                        resetWidgetSettings()
+                    }
+
+                    SettingsCompactActionButton(
+                        title: "恢复下拉面板默认",
+                        subtitle: "还原下拉面板模块开关和重置时间样式。",
+                        systemImage: "macwindow.on.rectangle"
+                    ) {
+                        resetPopoverSettings()
+                    }
                 }
 
                 if let cacheActionMessage {
                     Text(cacheActionMessage)
-                        .font(.caption)
+                        .font(.callout)
                         .foregroundStyle(.secondary)
-                }
-
-                SettingsActionRow(
-                    title: "恢复小组件默认",
-                    subtitle: "还原小组件显示内容、同步时间和套餐标签。",
-                    systemImage: "rectangle.grid.2x2"
-                ) {
-                    resetWidgetSettings()
-                }
-
-                SettingsActionRow(
-                    title: "恢复下拉面板默认",
-                    subtitle: "还原下拉面板模块开关和重置时间样式。",
-                    systemImage: "macwindow.on.rectangle"
-                ) {
-                    resetPopoverSettings()
                 }
             }
         }
@@ -921,7 +931,7 @@ private struct SettingsAccountSummary: View {
 
                 if let plan = snapshot.accountPlanDisplayText {
                     Text(plan)
-                        .font(.caption.weight(.semibold))
+                        .font(.callout.weight(.semibold))
                 }
             }
             .foregroundStyle(.secondary)
@@ -931,31 +941,6 @@ private struct SettingsAccountSummary: View {
             .accessibilityElement(children: .combine)
             .accessibilityLabel("账户信息")
         }
-    }
-}
-
-/// 轻量悬停帮助图标，用自定义 popover 替代系统 tooltip，避免系统延迟影响设置说明的可读性。
-private struct QuickHelpIcon: View {
-    let text: String
-    @State private var isShowing = false
-
-    var body: some View {
-        Image(systemName: "questionmark.circle")
-            .font(.caption)
-            .foregroundStyle(.secondary)
-            .contentShape(Rectangle())
-            .onHover { hovering in
-                isShowing = hovering
-            }
-            .popover(isPresented: $isShowing, arrowEdge: .bottom) {
-                Text(text)
-                    .font(.caption)
-                    .foregroundStyle(.primary)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .frame(width: 360, alignment: .leading)
-                    .padding(10)
-            }
-            .accessibilityLabel("预期消耗对比说明")
     }
 }
 

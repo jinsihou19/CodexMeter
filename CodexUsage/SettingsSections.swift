@@ -50,15 +50,9 @@ struct SettingsSection<Content: View>: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: SettingsPanelLayout.sectionHeaderSpacing) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text(title)
-                    .font(.headline)
-                if let subtitle {
-                    Text(subtitle)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-            }
+            Text(title)
+                .font(.subheadline.weight(.semibold))
+                .help(subtitle ?? "")
             contentContainer
         }
     }
@@ -108,18 +102,16 @@ struct SettingsActionRow: View {
         Button(action: action) {
             HStack(spacing: 12) {
                 Image(systemName: systemImage)
-                    .font(.system(size: 16, weight: .medium))
-                    .frame(width: 22)
+                    .font(.system(size: 14, weight: .medium))
+                    .frame(width: 20)
                     .foregroundStyle(.tint)
 
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(title)
-                        .font(.subheadline.weight(.semibold))
-                        .foregroundStyle(.primary)
-                    Text(subtitle)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
+                Text(title)
+                    .font(.callout.weight(.medium))
+                    .foregroundStyle(.primary)
+                    .lineLimit(1)
+
+                SettingsHelpButton(text: subtitle, accessibilityLabel: "\(title)说明")
 
                 Spacer()
             }
@@ -128,13 +120,66 @@ struct SettingsActionRow: View {
         .buttonStyle(.plain)
         .disabled(!isEnabled)
         .opacity(isEnabled ? 1 : 0.48)
-        .padding(SettingsPanelLayout.sectionContentSpacing)
+        .help(subtitle)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 7)
+        .frame(maxWidth: .infinity)
         .background(Color(nsColor: .windowBackgroundColor).opacity(0.72))
         .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
         .overlay(
             RoundedRectangle(cornerRadius: 8, style: .continuous)
                 .stroke(Color.primary.opacity(0.08), lineWidth: 1)
         )
+    }
+}
+
+/// 横向操作组使用的紧凑按钮，只保留图标和动作名称，说明文案通过悬停提示提供。
+struct SettingsCompactActionButton: View {
+    let title: String
+    let subtitle: String
+    let systemImage: String
+    let isEnabled: Bool
+    let action: () -> Void
+
+    init(
+        title: String,
+        subtitle: String,
+        systemImage: String,
+        isEnabled: Bool = true,
+        action: @escaping () -> Void
+    ) {
+        self.title = title
+        self.subtitle = subtitle
+        self.systemImage = systemImage
+        self.isEnabled = isEnabled
+        self.action = action
+    }
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 8) {
+                Image(systemName: systemImage)
+                    .font(.system(size: 15, weight: .medium))
+                    .frame(width: 18)
+
+                Text(title)
+                    .font(.callout.weight(.medium))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.86)
+                    .allowsTightening(true)
+            }
+            .foregroundStyle(.primary)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .disabled(!isEnabled)
+        .opacity(isEnabled ? 1 : 0.48)
+        .help(subtitle)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 7)
+        .frame(minHeight: 34)
+        .background(Color.primary.opacity(0.07))
+        .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
     }
 }
 
@@ -145,18 +190,20 @@ struct SettingsInfoRow: View {
     var body: some View {
         HStack(alignment: .firstTextBaseline, spacing: 14) {
             Text(title)
+                .font(.callout.weight(.medium))
                 .foregroundStyle(.secondary)
                 .frame(width: 92, alignment: .leading)
             Text(value)
-                .font(.caption.monospaced())
+                .font(.callout.monospaced())
                 .textSelection(.enabled)
-                .lineLimit(2)
+                .lineLimit(1)
+                .truncationMode(.middle)
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
 }
 
-/// 设置页通用偏好行，左侧解释业务含义，右侧承载开关、菜单或按钮等控件。
+/// 设置页通用偏好行，左侧显示单行标题，右侧承载开关、菜单或按钮等控件。
 struct SettingsPreferenceRow<Control: View>: View {
     let title: String
     let subtitle: String
@@ -173,14 +220,14 @@ struct SettingsPreferenceRow<Control: View>: View {
     }
 
     var body: some View {
-        HStack(alignment: .top, spacing: 14) {
-            VStack(alignment: .leading, spacing: 3) {
+        HStack(alignment: .center, spacing: 14) {
+            HStack(spacing: 8) {
                 Text(title)
-                    .font(.subheadline.weight(.semibold))
-                Text(subtitle)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
+                    .font(.callout.weight(.medium))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.86)
+
+                SettingsHelpButton(text: subtitle, accessibilityLabel: "\(title)说明")
             }
 
             Spacer(minLength: 12)
@@ -191,6 +238,8 @@ struct SettingsPreferenceRow<Control: View>: View {
             }
             .frame(width: SettingsPanelLayout.preferenceControlWidth)
         }
+        .help(subtitle)
+        .frame(minHeight: 28)
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
@@ -206,7 +255,70 @@ struct SettingsToggleRow: View {
             Toggle("", isOn: $isOn)
                 .labelsHidden()
                 .toggleStyle(.switch)
+                .controlSize(.small)
         }
+    }
+}
+
+/// 设置页通用说明按钮，把长业务说明收进弹层，避免偏好列表正文被辅助文案淹没。
+struct SettingsHelpButton: View {
+    let text: String
+    let accessibilityLabel: String
+
+    @State private var isShowing = false
+
+    var body: some View {
+        Image(systemName: "info.circle")
+            .font(.callout)
+            .foregroundStyle(.secondary)
+            .contentShape(Rectangle())
+            .onTapGesture {
+                isShowing.toggle()
+            }
+            .help(accessibilityLabel)
+            .popover(isPresented: $isShowing, arrowEdge: .bottom) {
+                Text(text)
+                    .font(.callout)
+                    .foregroundStyle(.primary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(width: 340, alignment: .leading)
+                    .padding(10)
+            }
+            .accessibilityLabel(accessibilityLabel)
+            .accessibilityAddTraits(.isButton)
+    }
+}
+
+/// 紧凑模块开关行，把解释收进说明按钮，并沿用普通偏好行的行高节奏。
+struct SettingsCompactToggleRow: View {
+    let title: String
+    let detail: String
+    let systemImage: String
+    @Binding var isOn: Bool
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(systemName: systemImage)
+                .font(.system(size: 13, weight: .medium))
+                .foregroundStyle(.secondary)
+                .frame(width: 18)
+
+            Text(title)
+                .font(.callout.weight(.medium))
+                .lineLimit(1)
+                .minimumScaleFactor(0.82)
+
+            SettingsHelpButton(text: detail, accessibilityLabel: "\(title)说明")
+
+            Spacer(minLength: 8)
+
+            Toggle(title, isOn: $isOn)
+                .labelsHidden()
+                .toggleStyle(.switch)
+                .controlSize(.small)
+        }
+        .frame(minHeight: 28)
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 
