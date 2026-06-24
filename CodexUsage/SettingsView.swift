@@ -55,6 +55,7 @@ struct SettingsView: View {
 
     @AppStorage(AppBehaviorPreferenceKeys.opensSettingsAtLaunch, store: MenuBarDisplaySettings.sharedDefaults) private var opensSettingsAtLaunch = AppBehaviorSettings.defaultOpensSettingsAtLaunch
     @AppStorage(AppBehaviorPreferenceKeys.refreshCadence, store: MenuBarDisplaySettings.sharedDefaults) private var refreshCadence = AppBehaviorSettings.defaultRefreshCadence.rawValue
+    @AppStorage(CodexRadarPreferenceKeys.isEnabled, store: MenuBarDisplaySettings.sharedDefaults) private var codexRadarEnabled = CodexRadarSettings.defaultIsEnabled
     @AppStorage(SurfaceAppearancePreferenceKeys.appearanceMode, store: MenuBarDisplaySettings.sharedDefaults) private var surfaceAppearanceMode = SurfaceAppearanceSettings.defaultAppearanceMode.rawValue
     @AppStorage(SurfaceAppearancePreferenceKeys.cardOpacity, store: MenuBarDisplaySettings.sharedDefaults) private var surfaceCardOpacity = SurfaceAppearanceSettings.defaultCardOpacity
 
@@ -88,6 +89,7 @@ struct SettingsView: View {
     @AppStorage(PopoverPreferenceKeys.showsTopInvocations, store: MenuBarDisplaySettings.sharedDefaults) private var popoverShowsTopInvocations = PopoverDisplaySettings.defaultShowsTopInvocations
     @AppStorage(PopoverPreferenceKeys.showsSyncDetails, store: MenuBarDisplaySettings.sharedDefaults) private var popoverShowsSyncDetails = PopoverDisplaySettings.defaultShowsSyncDetails
     @AppStorage(PopoverPreferenceKeys.showsAdditionalLimits, store: MenuBarDisplaySettings.sharedDefaults) private var popoverShowsAdditionalLimits = PopoverDisplaySettings.defaultShowsAdditionalLimits
+    @AppStorage(PopoverPreferenceKeys.showsResetCredits, store: MenuBarDisplaySettings.sharedDefaults) private var popoverShowsResetCredits = PopoverDisplaySettings.defaultShowsResetCredits
     @AppStorage(PopoverPreferenceKeys.resetTimeDisplayStyle, store: MenuBarDisplaySettings.sharedDefaults) private var popoverResetTimeDisplayStyle = PopoverDisplaySettings.defaultResetTimeDisplayStyle.rawValue
 
     @State private var selectedPane = Pane.general
@@ -146,6 +148,9 @@ struct SettingsView: View {
         }
         .onChange(of: currentAppBehaviorSettings) { _, _ in
             AppBehaviorSettings.notifyDidChange()
+        }
+        .onChange(of: currentCodexRadarSettings) { _, _ in
+            CodexRadarSettings.notifyDidChange()
         }
         .onChange(of: currentSurfaceAppearanceSettings) { _, _ in
             SurfaceAppearanceSettings.notifyDidChange()
@@ -388,7 +393,6 @@ struct SettingsView: View {
                     }
                     .labelsHidden()
                     .pickerStyle(.menu)
-                    .frame(width: 92)
                 }
             }
 
@@ -491,6 +495,11 @@ struct SettingsView: View {
                     isOn: $popoverShowsTokenActivity
                 )
                 SettingsToggleRow(
+                    title: "显示额度重置卡",
+                    subtitle: "在 Token 活动下方显示可用重置卡数量和到期时间。",
+                    isOn: $popoverShowsResetCredits
+                )
+                SettingsToggleRow(
                     title: "显示活动洞察",
                     subtitle: "展示快速模式、推理强度、技能和会话统计。",
                     isOn: $popoverShowsActivityInsights
@@ -504,6 +513,11 @@ struct SettingsView: View {
                     title: "显示同步详情",
                     subtitle: "展示限制状态和最近同步时间。",
                     isOn: $popoverShowsSyncDetails
+                )
+                SettingsToggleRow(
+                    title: "开启降智雷达",
+                    subtitle: "读取 codexradar.com/current.json 并在下拉面板绘制 IQ 曲线；工作日 09:00-18:00 每小时拉取一次，其余时间每 4 小时一次。",
+                    isOn: $codexRadarEnabled
                 )
             }
 
@@ -632,6 +646,10 @@ struct SettingsView: View {
         )
     }
 
+    private var currentCodexRadarSettings: CodexRadarSettings {
+        CodexRadarSettings(isEnabled: codexRadarEnabled)
+    }
+
     private var currentSettings: MenuBarDisplaySettings {
         MenuBarDisplaySettings(
             contentMode: MenuBarContentMode(rawValue: contentMode) ?? MenuBarDisplaySettings.defaultContentMode,
@@ -674,6 +692,7 @@ struct SettingsView: View {
             showsTopInvocations: popoverShowsTopInvocations,
             showsSyncDetails: popoverShowsSyncDetails,
             showsAdditionalLimits: popoverShowsAdditionalLimits,
+            showsResetCredits: popoverShowsResetCredits,
             resetTimeDisplayStyle: ResetTimeDisplayStyle(rawValue: popoverResetTimeDisplayStyle) ?? .countdown
         )
     }
@@ -788,6 +807,7 @@ struct SettingsView: View {
         popoverShowsTopInvocations = PopoverDisplaySettings.defaultShowsTopInvocations
         popoverShowsSyncDetails = PopoverDisplaySettings.defaultShowsSyncDetails
         popoverShowsAdditionalLimits = PopoverDisplaySettings.defaultShowsAdditionalLimits
+        popoverShowsResetCredits = PopoverDisplaySettings.defaultShowsResetCredits
         popoverResetTimeDisplayStyle = PopoverDisplaySettings.defaultResetTimeDisplayStyle.rawValue
     }
 
@@ -801,6 +821,7 @@ struct SettingsView: View {
         let appBehavior = currentAppBehaviorSettings
         opensSettingsAtLaunch = appBehavior.opensSettingsAtLaunch
         refreshCadence = appBehavior.refreshCadence.rawValue
+        codexRadarEnabled = CodexRadarSettings(defaults: MenuBarDisplaySettings.sharedDefaults).isEnabled
 
         let surfaceAppearance = SurfaceAppearanceSettings(defaults: MenuBarDisplaySettings.sharedDefaults)
         surfaceAppearanceMode = surfaceAppearance.appearanceMode.rawValue
@@ -839,6 +860,7 @@ struct SettingsView: View {
         popoverShowsTopInvocations = popoverSettings.showsTopInvocations
         popoverShowsSyncDetails = popoverSettings.showsSyncDetails
         popoverShowsAdditionalLimits = popoverSettings.showsAdditionalLimits
+        popoverShowsResetCredits = popoverSettings.showsResetCredits
         popoverResetTimeDisplayStyle = popoverSettings.resetTimeDisplayStyle.rawValue
     }
 

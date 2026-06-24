@@ -7,7 +7,7 @@ Requires macOS 26.0 or newer because the menu bar activity glyph can use the lat
 ## What It Shows
 
 - Menu bar item: 5 hour and 7 day quota digits, with an optional selectable Codex lifecycle activity glyph while Codex is active
-- Popover: plan type, 5 hour remaining quota, 7 day remaining quota, extra Codex Spark limits, reset times, credits status, token activity, profile stats, common plugins, and last sync time
+- Popover: plan type, 5 hour remaining quota, 7 day remaining quota, reset credit cards, extra Codex Spark limits, reset times, credits status, token activity, profile stats, common plugins, and last sync time
 - Desktop widget: latest cached 5 hour and 7 day quota snapshot
 
 ## Data Source
@@ -16,6 +16,7 @@ The app reads the local Codex auth token from `CODEX_HOME/auth.json` or `~/.code
 
 1. `GET https://chatgpt.com/backend-api/wham/usage`
 2. `GET https://chatgpt.com/backend-api/wham/profiles/me`
+3. `GET https://chatgpt.com/backend-api/wham/rate-limit-reset-credits`
 
 The token is used only in memory for the request. There is no local Codex log scanner or process-based fallback client.
 

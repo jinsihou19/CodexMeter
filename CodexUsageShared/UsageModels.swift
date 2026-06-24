@@ -355,17 +355,20 @@ public struct UsageSnapshot: Codable, Equatable, Sendable {
     public let rateLimits: RateLimitSnapshot
     public let account: CodexAccountSnapshot?
     public let profileStats: CodexProfileStats?
+    public let resetCredits: ResetCreditsSnapshot?
 
     public init(
         fetchedAt: Date,
         rateLimits: RateLimitSnapshot,
         account: CodexAccountSnapshot? = nil,
-        profileStats: CodexProfileStats? = nil
+        profileStats: CodexProfileStats? = nil,
+        resetCredits: ResetCreditsSnapshot? = nil
     ) {
         self.fetchedAt = fetchedAt
         self.rateLimits = rateLimits
         self.account = account
         self.profileStats = profileStats
+        self.resetCredits = resetCredits
     }
 
     public var accountEmail: String? {
@@ -378,6 +381,69 @@ public struct UsageSnapshot: Codable, Equatable, Sendable {
 
     public var accountPlanDisplayText: String? {
         CodexPlanFormatter.displayName(for: accountPlanType)
+    }
+}
+
+/// 保存额度重置卡接口的展示快照；只记录数量、状态和时间，不保存任何认证材料。
+public struct ResetCreditsSnapshot: Codable, Equatable, Sendable {
+    public let availableCount: Int
+    public let credits: [ResetCreditSnapshot]
+
+    public init(availableCount: Int, credits: [ResetCreditSnapshot] = []) {
+        self.availableCount = max(0, availableCount)
+        self.credits = credits
+    }
+
+    public var hasDisplayableContent: Bool {
+        availableCount > 0 || !credits.isEmpty
+    }
+
+    /// 按到期时间升序排列，未知到期时间放在最后，方便优先看到最需要关注的卡。
+    public var creditsSortedByExpiration: [ResetCreditSnapshot] {
+        credits.sorted { lhs, rhs in
+            switch (lhs.expiresAt, rhs.expiresAt) {
+            case let (left?, right?):
+                return left < right
+            case (.some, nil):
+                return true
+            case (nil, .some):
+                return false
+            case (nil, nil):
+                return lhs.status < rhs.status
+            }
+        }
+    }
+}
+
+/// 描述单张额度重置卡的生命周期；状态字段保持接口原文，展示层再做本地化。
+public struct ResetCreditSnapshot: Codable, Equatable, Sendable {
+    public let grantedAt: Date?
+    public let expiresAt: Date?
+    public let status: String
+
+    public init(grantedAt: Date?, expiresAt: Date?, status: String) {
+        self.grantedAt = grantedAt
+        self.expiresAt = expiresAt
+        self.status = Self.normalizedStatus(status)
+    }
+
+    public var localizedStatus: String {
+        switch status.lowercased() {
+        case "available", "active":
+            return "可用"
+        case "used", "consumed":
+            return "已使用"
+        case "expired":
+            return "已过期"
+        default:
+            return status.isEmpty ? "未知" : status
+        }
+    }
+
+    /// 归一化状态字段；空值保留为未知，避免 UI 展示空白标签。
+    private static func normalizedStatus(_ value: String) -> String {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? "unknown" : trimmed
     }
 }
 

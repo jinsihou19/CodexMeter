@@ -102,7 +102,7 @@ final class DirectCodexUsageClientTests: XCTestCase {
             ]
         ])
         try """
-        {"tokens":{"access_token":"test-access-token","id_token":"\(idToken)"}}
+        {"tokens":{"access_token":"test-access-token","account_id":"account-123","id_token":"\(idToken)"}}
         """.write(to: authFile, atomically: true, encoding: .utf8)
         let recorder = RequestRecorder(responseBodiesByPath: [
             "/backend-api/wham/usage": """
@@ -153,12 +153,30 @@ final class DirectCodexUsageClientTests: XCTestCase {
                 ]
               }
             }
+            """,
+            "/backend-api/wham/rate-limit-reset-credits": """
+            {
+              "available_count": 2,
+              "credits": [
+                {
+                  "granted_at": "2026-06-20T10:00:00Z",
+                  "expires_at": "2026-06-27T10:00:00Z",
+                  "status": "available"
+                },
+                {
+                  "granted_at": 1782381600,
+                  "expires_at": 1782986400,
+                  "status": "available"
+                }
+              ]
+            }
             """
         ])
         let client = DirectCodexUsageClient(
             authFileURL: authFile,
             endpointURL: URL(string: "https://example.test/backend-api/wham/usage")!,
             profileEndpointURL: URL(string: "https://example.test/backend-api/wham/profiles/me")!,
+            resetCreditsEndpointURL: URL(string: "https://example.test/backend-api/wham/rate-limit-reset-credits")!,
             transport: recorder.transport
         )
 
@@ -175,10 +193,18 @@ final class DirectCodexUsageClientTests: XCTestCase {
         XCTAssertEqual(snapshot.profileStats?.latestDailyTokens, 2_000)
         XCTAssertEqual(snapshot.profileStats?.recentDailyTokens, 3_000)
         XCTAssertEqual(snapshot.profileStats?.topInvocations.first?.displayName, "superpowers")
+        XCTAssertEqual(snapshot.resetCredits?.availableCount, 2)
+        XCTAssertEqual(snapshot.resetCredits?.credits.count, 2)
+        XCTAssertEqual(snapshot.resetCredits?.credits.first?.localizedStatus, "可用")
+        XCTAssertEqual(snapshot.resetCredits?.credits.first?.expiresAt, Date(timeIntervalSince1970: 1_782_554_400))
         XCTAssertEqual(Set(recorder.requestURLs.map(\.path)), [
             "/backend-api/wham/usage",
-            "/backend-api/wham/profiles/me"
+            "/backend-api/wham/profiles/me",
+            "/backend-api/wham/rate-limit-reset-credits"
         ])
+        XCTAssertEqual(recorder.headerValue("OpenAI-Beta", forPath: "/backend-api/wham/rate-limit-reset-credits"), "codex-1")
+        XCTAssertEqual(recorder.headerValue("originator", forPath: "/backend-api/wham/rate-limit-reset-credits"), "Codex Desktop")
+        XCTAssertEqual(recorder.headerValue("ChatGPT-Account-ID", forPath: "/backend-api/wham/rate-limit-reset-credits"), "account-123")
     }
 
     func testFetchRateLimitsTreatsZeroWindowUsageAsValidResponse() async throws {
@@ -290,6 +316,7 @@ private final class RequestRecorder: @unchecked Sendable {
     private var recordedPragmaHeader: String?
     private var recordedRequestURL: URL?
     private var recordedRequestURLs: [URL] = []
+    private var recordedHeadersByPath: [String: [String: String]] = [:]
 
     init(responseBody: String) {
         self.responseBodiesByPath = ["*": responseBody]
@@ -323,6 +350,11 @@ private final class RequestRecorder: @unchecked Sendable {
         queue.sync { recordedRequestURLs }
     }
 
+    /// 读取指定路径的请求头，供并发请求测试验证特定接口的认证上下文。
+    func headerValue(_ field: String, forPath path: String) -> String? {
+        queue.sync { recordedHeadersByPath[path]?[field] }
+    }
+
     func transport(_ request: URLRequest) async throws -> (Data, HTTPURLResponse) {
         let responseBody = responseBodiesByPath[request.url?.path ?? ""] ?? responseBodiesByPath["*"] ?? "{}"
         queue.sync {
@@ -333,6 +365,11 @@ private final class RequestRecorder: @unchecked Sendable {
             recordedRequestURL = request.url
             if let url = request.url {
                 recordedRequestURLs.append(url)
+                var headers: [String: String] = [:]
+                for field in ["Authorization", "Cache-Control", "Pragma", "OpenAI-Beta", "originator", "ChatGPT-Account-ID"] {
+                    headers[field] = request.value(forHTTPHeaderField: field)
+                }
+                recordedHeadersByPath[url.path] = headers
             }
         }
         let response = HTTPURLResponse(

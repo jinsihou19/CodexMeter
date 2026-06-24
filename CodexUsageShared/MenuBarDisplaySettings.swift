@@ -90,6 +90,7 @@ public enum PopoverPreferenceKeys {
     public static let showsTopInvocations = "popover.showsTopInvocations"
     public static let showsSyncDetails = "popover.showsSyncDetails"
     public static let showsAdditionalLimits = "popover.showsAdditionalLimits"
+    public static let showsResetCredits = "popover.showsResetCredits"
     public static let resetTimeDisplayStyle = "popover.resetTimeDisplayStyle"
 
     public static let allKeys = [
@@ -100,6 +101,7 @@ public enum PopoverPreferenceKeys {
         showsTopInvocations,
         showsSyncDetails,
         showsAdditionalLimits,
+        showsResetCredits,
         resetTimeDisplayStyle
     ]
 }
@@ -433,6 +435,7 @@ public struct PopoverDisplaySettings: Equatable, Sendable {
     public static let defaultShowsTopInvocations = true
     public static let defaultShowsSyncDetails = true
     public static let defaultShowsAdditionalLimits = false
+    public static let defaultShowsResetCredits = true
     public static let defaultResetTimeDisplayStyle = ResetTimeDisplayStyle.countdown
 
     public let showsPaceComparison: Bool
@@ -442,6 +445,7 @@ public struct PopoverDisplaySettings: Equatable, Sendable {
     public let showsTopInvocations: Bool
     public let showsSyncDetails: Bool
     public let showsAdditionalLimits: Bool
+    public let showsResetCredits: Bool
     public let resetTimeDisplayStyle: ResetTimeDisplayStyle
 
     public init(
@@ -452,6 +456,7 @@ public struct PopoverDisplaySettings: Equatable, Sendable {
         showsTopInvocations: Bool = Self.defaultShowsTopInvocations,
         showsSyncDetails: Bool = Self.defaultShowsSyncDetails,
         showsAdditionalLimits: Bool = Self.defaultShowsAdditionalLimits,
+        showsResetCredits: Bool = Self.defaultShowsResetCredits,
         resetTimeDisplayStyle: ResetTimeDisplayStyle = Self.defaultResetTimeDisplayStyle
     ) {
         self.showsPaceComparison = showsPaceComparison
@@ -461,6 +466,7 @@ public struct PopoverDisplaySettings: Equatable, Sendable {
         self.showsTopInvocations = showsTopInvocations
         self.showsSyncDetails = showsSyncDetails
         self.showsAdditionalLimits = showsAdditionalLimits
+        self.showsResetCredits = showsResetCredits
         self.resetTimeDisplayStyle = resetTimeDisplayStyle
     }
 
@@ -482,6 +488,8 @@ public struct PopoverDisplaySettings: Equatable, Sendable {
             showsSyncDetails: defaults.object(forKey: PopoverPreferenceKeys.showsSyncDetails) as? Bool
                 ?? Self.defaultShowsSyncDetails,
             showsAdditionalLimits: additionalLimits,
+            showsResetCredits: defaults.object(forKey: PopoverPreferenceKeys.showsResetCredits) as? Bool
+                ?? Self.defaultShowsResetCredits,
             resetTimeDisplayStyle: ResetTimeDisplayStyle(
                 rawValue: defaults.string(forKey: PopoverPreferenceKeys.resetTimeDisplayStyle) ?? ""
             ) ?? Self.defaultResetTimeDisplayStyle
@@ -550,9 +558,9 @@ public enum HookActivityIndicatorStyle: String, CaseIterable, Identifiable, Send
         case .variableDots:
             return "竖向省略号"
         case .fanHead:
-            return "target"
+            return "目标指针"
         case .signature:
-            return "aqi.medium"
+            return "空气波纹"
         }
     }
 }
@@ -879,6 +887,7 @@ public extension Notification.Name {
     static let surfaceAppearanceSettingsDidChange = Notification.Name("CodexUsage.surfaceAppearanceSettingsDidChange")
     static let widgetDisplaySettingsDidChange = Notification.Name("CodexUsage.widgetDisplaySettingsDidChange")
     static let popoverDisplaySettingsDidChange = Notification.Name("CodexUsage.popoverDisplaySettingsDidChange")
+    static let codexRadarSettingsDidChange = Notification.Name("CodexUsage.codexRadarSettingsDidChange")
 }
 
 /// 统一封装预期消耗速度的展示模型，供菜单栏、弹窗和小组件共享同一套 Pace 判断。

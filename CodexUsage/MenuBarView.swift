@@ -5,12 +5,14 @@ import SwiftUI
 enum MenuBarPopoverLayout {
     static let width: CGFloat = 380
     static let horizontalPadding: CGFloat = 12
+    static let topPadding: CGFloat = 4
+    static let bottomPadding: CGFloat = 8
     static let minimumHeight: CGFloat = 220
-    static let maximumHeight: CGFloat = 660
-    static let maximumScrollableContentHeight: CGFloat = 520
+    static let maximumHeight: CGFloat = 820
+    static let maximumScrollableContentHeight: CGFloat = 720
     static let paceMarkerTooltipTopOffset: CGFloat = 112
     static let scrollOverflowHysteresis: CGFloat = 28
-    static let initialSize = NSSize(width: width, height: 560)
+    static let initialSize = NSSize(width: width, height: 680)
 
     static var contentWidth: CGFloat {
         width - horizontalPadding * 2
@@ -51,6 +53,7 @@ private enum TokenActivityMode: String, CaseIterable, Identifiable {
 
 struct MenuBarView: View {
     @ObservedObject var viewModel: UsageViewModel
+    @ObservedObject var radarStore: CodexRadarStore
     let onSizeChange: ((CGSize) -> Void)?
     @State private var activityMode = TokenActivityMode.daily
     @State private var measuredScrollContentHeight: CGFloat = 0
@@ -69,9 +72,11 @@ struct MenuBarView: View {
 
     init(
         viewModel: UsageViewModel,
+        radarStore: CodexRadarStore,
         onSizeChange: ((CGSize) -> Void)? = nil
     ) {
         self.viewModel = viewModel
+        self.radarStore = radarStore
         self.onSizeChange = onSizeChange
     }
 
@@ -97,7 +102,7 @@ struct MenuBarView: View {
     }
 
     private var contentBody: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 6) {
             header
 
             Divider()
@@ -139,8 +144,12 @@ struct MenuBarView: View {
                 }
             }
         }
-        .padding(MenuBarPopoverLayout.horizontalPadding)
-        .frame(width: MenuBarPopoverLayout.width)
+        .padding(.horizontal, MenuBarPopoverLayout.horizontalPadding)
+        .padding(.top, MenuBarPopoverLayout.topPadding)
+        .padding(.bottom, MenuBarPopoverLayout.bottomPadding)
+        .frame(width: MenuBarPopoverLayout.width, alignment: .topLeading)
+        // 让 AppKit 宿主按真实内容高度收缩，避免较高的初始 popover 把内容向下居中。
+        .fixedSize(horizontal: false, vertical: true)
         .overlay(alignment: .topLeading) {
             if let activePaceHelpText {
                 PaceMarkerHelpBubble(text: activePaceHelpText)
@@ -256,22 +265,20 @@ struct MenuBarView: View {
 
     private func usageContent(_ snapshot: UsageSnapshot) -> some View {
         let activePopoverSettings = popoverSettings
-        return VStack(alignment: .leading, spacing: 8) {
+        return VStack(alignment: .leading, spacing: 6) {
             QuotaSummaryGrid(
                 snapshot: snapshot.rateLimits,
                 formatter: formatter,
                 settings: settings,
+                showsPaceComparison: activePopoverSettings.showsPaceComparison,
                 resetTimeDisplayStyle: activePopoverSettings.resetTimeDisplayStyle,
                 onPaceMarkerHoverChange: updateActivePaceHelpText
             )
 
-            let paceDisplays = UsageWindowPaceDisplay.displays(
-                rateLimits: snapshot.rateLimits,
-                weeklyProgressWorkDays: settings.weeklyProgressWorkDays
+            CodexRadarSection(
+                store: radarStore,
+                settings: CodexRadarSettings(defaults: MenuBarDisplaySettings.sharedDefaults)
             )
-            if activePopoverSettings.showsPaceComparison, !paceDisplays.isEmpty {
-                PaceComparisonSection(displays: paceDisplays)
-            }
 
             if activePopoverSettings.showsAdditionalLimits, !snapshot.rateLimits.additionalLimits.isEmpty {
                 VStack(alignment: .leading, spacing: 10) {
@@ -291,6 +298,7 @@ struct MenuBarView: View {
             if let profileStats = snapshot.profileStats, activePopoverSettings.showsAnyProfileSection {
                 ProfileStatsSection(
                     stats: profileStats,
+                    resetCredits: snapshot.resetCredits,
                     activityMode: $activityMode,
                     formatter: formatter,
                     popoverSettings: activePopoverSettings
@@ -304,12 +312,21 @@ struct MenuBarView: View {
     }
 
     @ViewBuilder private var scrollContent: some View {
-        if let snapshot = viewModel.snapshot {
-            usageContent(snapshot)
-        } else {
-            ContentUnavailableView("暂无用量数据", systemImage: "clock")
-                .frame(width: 320)
-                .padding(.vertical, 24)
+        VStack(alignment: .leading, spacing: 6) {
+            if let snapshot = viewModel.snapshot {
+                usageContent(snapshot)
+            } else {
+                ContentUnavailableView("暂无用量数据", systemImage: "clock")
+                    .frame(width: 320)
+                    .padding(.vertical, 24)
+            }
+
+            if viewModel.snapshot == nil {
+                CodexRadarSection(
+                    store: radarStore,
+                    settings: CodexRadarSettings(defaults: MenuBarDisplaySettings.sharedDefaults)
+                )
+            }
         }
     }
 
@@ -375,17 +392,21 @@ private struct QuotaSummaryGrid: View {
     let snapshot: RateLimitSnapshot
     let formatter: UsageFormatter
     let settings: MenuBarDisplaySettings
+    let showsPaceComparison: Bool
     let resetTimeDisplayStyle: ResetTimeDisplayStyle
     let onPaceMarkerHoverChange: (String?, Bool) -> Void
 
     var body: some View {
         let primaryPaceMarker = paceMarker(for: snapshot.primary)
         let secondaryPaceMarker = paceMarker(for: snapshot.secondary)
+        let primaryPaceDisplay = paceDisplay(id: "primary", title: "5 小时", window: snapshot.primary)
+        let secondaryPaceDisplay = paceDisplay(id: "secondary", title: "7 天", window: snapshot.secondary)
         HStack(spacing: 8) {
             QuotaSummaryCard(
                 title: "5 小时",
                 display: UsageMetricDisplay(title: "5 小时", window: snapshot.primary),
                 resetText: resetText(for: snapshot.primary),
+                paceDisplay: primaryPaceDisplay,
                 tone: UsageRemainingTone(remainingPercent: snapshot.primary?.remainingPercent),
                 settings: settings,
                 workdayMarkers: [],
@@ -396,6 +417,7 @@ private struct QuotaSummaryGrid: View {
                 title: "7 天",
                 display: UsageMetricDisplay(title: "7 天", window: snapshot.secondary),
                 resetText: resetText(for: snapshot.secondary),
+                paceDisplay: secondaryPaceDisplay,
                 tone: UsageRemainingTone(remainingPercent: snapshot.secondary?.remainingPercent),
                 settings: settings,
                 workdayMarkers: weeklyWorkdayMarkerPercents(
@@ -406,6 +428,19 @@ private struct QuotaSummaryGrid: View {
                 onPaceMarkerHoverChange: updateActivePaceHelpText
             )
         }
+    }
+
+    /// 为额度卡片生成内嵌 Pace 文案；关闭用量速度时只保留基础余量信息。
+    private func paceDisplay(id: String, title: String, window: RateLimitWindow?) -> UsagePaceDisplay? {
+        guard showsPaceComparison else {
+            return nil
+        }
+        return UsageWindowPaceDisplay(
+            id: id,
+            title: title,
+            window: window,
+            weeklyProgressWorkDays: settings.weeklyProgressWorkDays
+        )?.display
     }
 
     /// 根据弹窗时间样式格式化窗口重置文案。
@@ -452,6 +487,7 @@ private struct QuotaSummaryCard: View {
     let title: String
     let display: UsageMetricDisplay
     let resetText: String
+    let paceDisplay: UsagePaceDisplay?
     let tone: UsageRemainingTone
     let settings: MenuBarDisplaySettings
     let workdayMarkers: [Double]
@@ -472,6 +508,8 @@ private struct QuotaSummaryCard: View {
                     .monospacedDigit()
                     .foregroundStyle(tone.statusBarColor(settings: settings))
             }
+
+            paceDetailRow
 
             WorkdayMarkedProgressView(
                 value: display.progressValue,
@@ -500,6 +538,19 @@ private struct QuotaSummaryCard: View {
         .frame(maxWidth: .infinity, alignment: .topLeading)
         .background(Color(nsColor: .controlBackgroundColor).opacity(0.55))
         .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+    }
+
+    /// 在剩余额度下方展示完整 Pace 说明，让“有余量/偏快”和持续时间保持在同一行可读。
+    @ViewBuilder private var paceDetailRow: some View {
+        if let paceDisplay {
+            Text(paceDisplay.detailText)
+                .font(.caption2.weight(.semibold))
+                .foregroundStyle(paceDisplay.tone.statusBarColor(settings: settings))
+                .lineLimit(1)
+                .minimumScaleFactor(0.68)
+                .frame(maxWidth: .infinity, alignment: .trailing)
+                .help(paceDisplay.detailText)
+        }
     }
 }
 
@@ -746,6 +797,7 @@ private struct AdditionalRateLimitView: View {
                 title: "\(displayName) 5 小时",
                 display: UsageMetricDisplay(title: "\(displayName) 5 小时", window: limit.primary),
                 resetText: resetText(for: limit.primary),
+                paceDisplay: nil,
                 tone: UsageRemainingTone(remainingPercent: limit.primary?.remainingPercent),
                 settings: settings,
                 workdayMarkers: [],
@@ -756,6 +808,7 @@ private struct AdditionalRateLimitView: View {
                 title: "\(displayName) 7 天",
                 display: UsageMetricDisplay(title: "\(displayName) 7 天", window: limit.secondary),
                 resetText: resetText(for: limit.secondary),
+                paceDisplay: nil,
                 tone: UsageRemainingTone(remainingPercent: limit.secondary?.remainingPercent),
                 settings: settings,
                 workdayMarkers: weeklyWorkdayMarkerPercents(
@@ -807,8 +860,81 @@ private struct AdditionalRateLimitView: View {
     }
 }
 
+/// 额度重置卡模块只展示接口返回的可用张数和到期时间，避免和常规用量窗口语义混淆。
+private struct ResetCreditsSection: View {
+    let snapshot: ResetCreditsSnapshot
+    let formatter: UsageFormatter
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 6) {
+                Label("额度重置卡", systemImage: "creditcard")
+                    .foregroundStyle(.secondary)
+                Spacer()
+                Text("\(snapshot.availableCount) 张可用")
+                    .font(.caption.monospacedDigit().weight(.semibold))
+            }
+            .font(.caption2)
+
+            if snapshot.creditsSortedByExpiration.isEmpty {
+                Text("暂无到期明细")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            } else {
+                ForEach(Array(snapshot.creditsSortedByExpiration.enumerated()), id: \.offset) { index, credit in
+                    ResetCreditRow(index: index + 1, credit: credit, formatter: formatter)
+                }
+            }
+        }
+        .menuSectionCard(padding: 8)
+    }
+}
+
+/// 单张重置卡的到期行；同时展示绝对时间和相对剩余时间，方便快速判断哪张先过期。
+private struct ResetCreditRow: View {
+    let index: Int
+    let credit: ResetCreditSnapshot
+    let formatter: UsageFormatter
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            Text("#\(index)")
+                .font(.caption2.monospacedDigit().weight(.semibold))
+                .foregroundStyle(.secondary)
+                .frame(width: 24, alignment: .leading)
+            Text(credit.localizedStatus)
+                .font(.caption2.weight(.medium))
+                .foregroundStyle(statusColor)
+                .frame(width: 42, alignment: .leading)
+            Text(formatter.resetCreditExpiration(credit.expiresAt))
+                .font(.caption2.monospacedDigit().weight(.semibold))
+                .lineLimit(1)
+            Spacer(minLength: 4)
+            Text(formatter.resetCreditExpirationRemaining(credit.expiresAt))
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+                .minimumScaleFactor(0.78)
+        }
+    }
+
+    private var statusColor: Color {
+        switch credit.status.lowercased() {
+        case "available", "active":
+            return .green
+        case "expired":
+            return .secondary
+        case "used", "consumed":
+            return .orange
+        default:
+            return .secondary
+        }
+    }
+}
+
 private struct ProfileStatsSection: View {
     let stats: CodexProfileStats
+    let resetCredits: ResetCreditsSnapshot?
     @Binding var activityMode: TokenActivityMode
     let formatter: UsageFormatter
     let popoverSettings: PopoverDisplaySettings
@@ -833,6 +959,10 @@ private struct ProfileStatsSection: View {
                     activityMode: $activityMode,
                     formatter: formatter
                 )
+            }
+
+            if popoverSettings.showsResetCredits, let resetCredits, resetCredits.hasDisplayableContent {
+                ResetCreditsSection(snapshot: resetCredits, formatter: formatter)
             }
 
             if popoverSettings.showsActivityInsights {
@@ -887,7 +1017,7 @@ private struct TokenActivitySection: View {
     let formatter: UsageFormatter
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: 4) {
             HStack {
                 Text("Token 活动")
                     .font(.caption.weight(.semibold))
@@ -910,7 +1040,7 @@ private struct TokenActivitySection: View {
 
             TokenActivityChart(buckets: activityMode.buckets(from: stats), formatter: formatter)
         }
-        .padding(6)
+        .padding(5)
         .background(Color(nsColor: .controlBackgroundColor).opacity(0.52))
         .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
     }
@@ -942,7 +1072,7 @@ private struct TokenActivityChart: View {
         let maximumTokens = max(visibleBuckets.map(\.tokens).max() ?? 0, 1)
         let activeBucket = visibleBuckets.first { $0.id == hoveredBucketID } ?? visibleBuckets.last
 
-        VStack(alignment: .leading, spacing: 4) {
+        VStack(alignment: .leading, spacing: 3) {
             if let activeBucket {
                 HStack(spacing: 6) {
                     Text(activeBucket.startDate)
@@ -966,7 +1096,7 @@ private struct TokenActivityChart: View {
                             }
                         }
                         .frame(maxWidth: .infinity)
-                    .frame(height: max(3, CGFloat(ratio) * 42))
+                    .frame(height: max(3, CGFloat(ratio) * 32))
                         .contentShape(Rectangle())
                         .onHover { isInside in
                             hoveredBucketID = isInside ? bucket.id : nil
@@ -974,9 +1104,9 @@ private struct TokenActivityChart: View {
                         .accessibilityLabel("\(bucket.startDate) \(bucket.tokens) tokens")
                 }
             }
-            .frame(height: 44, alignment: .bottom)
+            .frame(height: 34, alignment: .bottom)
         }
-        .frame(height: 60, alignment: .bottom)
+        .frame(height: 48, alignment: .bottom)
     }
 }
 
@@ -1129,6 +1259,6 @@ private extension View {
 private extension PopoverDisplaySettings {
     /// Profile 数据分成多个模块显示；全部关闭时整块 Profile 区域都隐藏。
     var showsAnyProfileSection: Bool {
-        showsProfileOverview || showsTokenActivity || showsActivityInsights || showsTopInvocations
+        showsProfileOverview || showsTokenActivity || showsResetCredits || showsActivityInsights || showsTopInvocations
     }
 }

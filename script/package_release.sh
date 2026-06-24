@@ -9,6 +9,9 @@ DIST_DIR="$ROOT_DIR/dist"
 APP_PATH="$BUILD_DIR/Release/$APP_NAME.app"
 INSTALLED_APP_PATH="/Applications/$APP_NAME.app"
 DMG_ROOT="$BUILD_DIR/dmg-root"
+# Release 需要保留 App Group entitlement，必须走开发者签名，不能用 ad-hoc 签名剥掉能力。
+TEAM_ID="${DEVELOPMENT_TEAM:-Q53B3XSA9F}"
+SIGN_IDENTITY="${CODE_SIGN_IDENTITY:-Apple Development}"
 REVISION="$(git -C "$ROOT_DIR" rev-parse --short HEAD 2>/dev/null || date +%Y%m%d%H%M%S)"
 if [ -n "$(git -C "$ROOT_DIR" status --porcelain 2>/dev/null || true)" ]; then
   REVISION="$REVISION-dirty"
@@ -23,15 +26,17 @@ xcodebuild \
   -configuration Release \
   -destination "platform=macOS" \
   SYMROOT="$BUILD_DIR" \
-  CODE_SIGN_STYLE=Manual \
-  CODE_SIGN_IDENTITY=- \
-  DEVELOPMENT_TEAM= \
+  CODE_SIGN_STYLE=Automatic \
+  CODE_SIGN_IDENTITY="$SIGN_IDENTITY" \
+  DEVELOPMENT_TEAM="$TEAM_ID" \
+  -allowProvisioningUpdates \
   build
 
 codesign --verify --deep --strict --verbose=2 "$APP_PATH"
 
 pkill -x "$APP_NAME" 2>/dev/null || true
-rsync -a --delete "$APP_PATH/" "$INSTALLED_APP_PATH/"
+rm -rf "$INSTALLED_APP_PATH"
+ditto "$APP_PATH" "$INSTALLED_APP_PATH"
 open -n "$INSTALLED_APP_PATH"
 
 rm -rf "$DMG_ROOT"

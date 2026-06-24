@@ -358,7 +358,7 @@ enum StatusBarDisplayMetrics {
         let textWidth = lines
             .map { lineWidth(for: $0, settings: settings) }
             .max() ?? minimumTextWidth(settings: settings)
-        let iconWidth = settings.showsMenuBarIcon
+        let iconWidth = showsCodexIcon(settings: settings, activityDisplay: activityDisplay)
             ? MenuBarDisplaySettings.menuBarIconWidth + MenuBarDisplaySettings.menuBarIconTextSpacing
             : 0
         let activityWidth = settings.showsHookActivityLight ? activityDisplay.statusItemWidth : 0
@@ -392,11 +392,19 @@ enum StatusBarDisplayMetrics {
         settings: MenuBarDisplaySettings,
         activityDisplay: CodexHookActivityDisplay
     ) -> CGFloat {
-        let iconWidth = settings.showsMenuBarIcon
+        let iconWidth = showsCodexIcon(settings: settings, activityDisplay: activityDisplay)
             ? MenuBarDisplaySettings.menuBarIconWidth + MenuBarDisplaySettings.menuBarIconTextSpacing
             : 0
         let activityWidth = settings.showsHookActivityLight ? activityDisplay.statusItemWidth : 0
         return activityWidth + iconWidth + minimumTextWidth(settings: settings)
+    }
+
+    /// 活动符号显示时替代 Codex 图标；宽度计算和实际 SwiftUI 渲染保持同一套互斥规则。
+    private static func showsCodexIcon(
+        settings: MenuBarDisplaySettings,
+        activityDisplay: CodexHookActivityDisplay
+    ) -> Bool {
+        settings.showsMenuBarIcon && !activityDisplay.isVisible
     }
 }
 

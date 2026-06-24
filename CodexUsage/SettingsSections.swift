@@ -185,8 +185,11 @@ struct SettingsPreferenceRow<Control: View>: View {
 
             Spacer(minLength: 12)
 
-            control
-                .frame(maxWidth: 240, alignment: .trailing)
+            HStack(spacing: 0) {
+                Spacer(minLength: 0)
+                control
+            }
+            .frame(width: SettingsPanelLayout.preferenceControlWidth)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }
@@ -223,7 +226,6 @@ struct SettingsPickerRow: View {
             }
             .labelsHidden()
             .pickerStyle(.menu)
-            .frame(width: 180)
         }
     }
 }

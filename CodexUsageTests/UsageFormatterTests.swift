@@ -51,4 +51,18 @@ final class UsageFormatterTests: XCTestCase {
         XCTAssertEqual(formatter.creditsStatus(CreditsSnapshot(hasCredits: false, unlimited: false, balance: "0")), "无 credits")
         XCTAssertEqual(formatter.creditsStatus(nil), "无 credits 信息")
     }
+
+    func testResetCreditExpirationFormatsAbsoluteAndRelativeTime() {
+        let formatter = UsageFormatter(
+            locale: Locale(identifier: "zh_CN"),
+            timeZone: TimeZone(secondsFromGMT: 8 * 60 * 60)!
+        )
+        let now = Date(timeIntervalSince1970: 0)
+        let expiresAt = Date(timeIntervalSince1970: 93_600)
+
+        XCTAssertEqual(formatter.resetCreditExpiration(expiresAt), "1970-01-02 10:00")
+        XCTAssertEqual(formatter.resetCreditExpirationRemaining(expiresAt, now: now), "1 天 2 小时后")
+        XCTAssertEqual(formatter.resetCreditExpirationRemaining(now, now: expiresAt), "已过期")
+        XCTAssertEqual(formatter.resetCreditExpiration(nil), "--")
+    }
 }

@@ -33,6 +33,33 @@ final class UsageSnapshotStoreTests: XCTestCase {
         XCTAssertEqual(store.snapshotURL().lastPathComponent, "latest-snapshot-v3.json")
     }
 
+    /// 验证 App Group 在测试或异常签名环境不可用时，仍会落回显式缓存目录完成保存。
+    func testUnavailableAppGroupFallsBackToProvidedDirectory() throws {
+        let directory = URL(fileURLWithPath: "/tmp", isDirectory: true)
+            .appendingPathComponent("CodexUsageTests-\(UUID().uuidString)", isDirectory: true)
+        let store = UsageSnapshotStore(
+            appGroupIdentifier: "group.invalid.CodexUsageTests",
+            fallbackDirectory: directory
+        )
+        let snapshot = UsageSnapshot(
+            fetchedAt: Date(timeIntervalSince1970: 1_779_940_000),
+            rateLimits: RateLimitSnapshot(
+                limitId: "codex",
+                limitName: nil,
+                primary: RateLimitWindow(usedPercent: 17, windowDurationMins: 300, resetsAt: 1_779_949_290),
+                secondary: RateLimitWindow(usedPercent: 11, windowDurationMins: 10_080, resetsAt: 1_780_392_047),
+                credits: nil,
+                planType: nil,
+                rateLimitReachedType: nil
+            )
+        )
+
+        try store.save(snapshot)
+
+        XCTAssertTrue(FileManager.default.fileExists(atPath: store.snapshotURL().path))
+        XCTAssertEqual(try store.load(), snapshot)
+    }
+
     func testDeleteSnapshotRemovesCachedSnapshotAndIgnoresMissingFile() throws {
         let directory = URL(fileURLWithPath: "/tmp", isDirectory: true)
             .appendingPathComponent("CodexUsageTests-\(UUID().uuidString)", isDirectory: true)

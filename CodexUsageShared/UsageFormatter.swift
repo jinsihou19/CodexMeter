@@ -97,6 +97,26 @@ public struct UsageFormatter: Sendable {
         return "无 credits"
     }
 
+    /// 将重置卡到期时间格式化为本地绝对时间；缺失时间用占位符，避免误报到期点。
+    public func resetCreditExpiration(_ date: Date?) -> String {
+        guard let date else {
+            return "--"
+        }
+        return format(date: date, dateFormat: "yyyy-MM-dd HH:mm")
+    }
+
+    /// 把重置卡过期时间转成相对文案；过期卡直接提示已过期，避免显示负倒计时。
+    public func resetCreditExpirationRemaining(_ date: Date?, now: Date = Date()) -> String {
+        guard let date else {
+            return "--"
+        }
+        let seconds = Int(date.timeIntervalSince(now).rounded())
+        guard seconds > 0 else {
+            return "已过期"
+        }
+        return "\(compactDuration(seconds: seconds))后"
+    }
+
     public func tokenCount(_ tokens: Int64?) -> String {
         guard let tokens else {
             return "--"
@@ -160,5 +180,14 @@ public struct UsageFormatter: Sendable {
     private func decimal(_ value: Double) -> String {
         String(format: "%.1f", locale: Locale(identifier: localeIdentifier), arguments: [value])
             .replacingOccurrences(of: ".0", with: "")
+    }
+
+    /// 使用构造时捕获的地区和时区格式化日期，避免自动时区变化让同一快照前后显示不一致。
+    private func format(date: Date, dateFormat: String) -> String {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: localeIdentifier)
+        formatter.timeZone = TimeZone(secondsFromGMT: secondsFromGMT)
+        formatter.dateFormat = dateFormat
+        return formatter.string(from: date)
     }
 }

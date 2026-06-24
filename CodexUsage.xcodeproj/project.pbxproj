@@ -50,6 +50,12 @@
 		100000000000000000000D0C /* SettingsPreview.swift in Sources */ = {isa = PBXBuildFile; fileRef = 100000000000000000000D04 /* SettingsPreview.swift */; };
 		100000000000000000000F01 /* CodexHookActivity.swift in Sources */ = {isa = PBXBuildFile; fileRef = 100000000000000000000F02 /* CodexHookActivity.swift */; };
 		100000000000000000000F03 /* CodexHookActivityStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 100000000000000000000F04 /* CodexHookActivityStore.swift */; };
+		100000000000000000001011 /* CodexRadarModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 100000000000000000001001 /* CodexRadarModels.swift */; };
+		100000000000000000001012 /* CodexRadarSnapshotStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 100000000000000000001002 /* CodexRadarSnapshotStore.swift */; };
+		100000000000000000001013 /* CodexRadarClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 100000000000000000001003 /* CodexRadarClient.swift */; };
+		100000000000000000001014 /* CodexRadarStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 100000000000000000001004 /* CodexRadarStore.swift */; };
+		100000000000000000001015 /* CodexRadarView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 100000000000000000001005 /* CodexRadarView.swift */; };
+		100000000000000000001016 /* CodexRadarTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 100000000000000000001006 /* CodexRadarTests.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -156,6 +162,12 @@
 		100000000000000000000D04 /* SettingsPreview.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsPreview.swift; sourceTree = "<group>"; };
 		100000000000000000000F02 /* CodexHookActivity.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CodexHookActivity.swift; sourceTree = "<group>"; };
 		100000000000000000000F04 /* CodexHookActivityStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CodexHookActivityStore.swift; sourceTree = "<group>"; };
+		100000000000000000001001 /* CodexRadarModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CodexRadarModels.swift; sourceTree = "<group>"; };
+		100000000000000000001002 /* CodexRadarSnapshotStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CodexRadarSnapshotStore.swift; sourceTree = "<group>"; };
+		100000000000000000001003 /* CodexRadarClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CodexRadarClient.swift; sourceTree = "<group>"; };
+		100000000000000000001004 /* CodexRadarStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CodexRadarStore.swift; sourceTree = "<group>"; };
+		100000000000000000001005 /* CodexRadarView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CodexRadarView.swift; sourceTree = "<group>"; };
+		100000000000000000001006 /* CodexRadarTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CodexRadarTests.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -213,6 +225,8 @@
 				100000000000000000000018 /* UsageSnapshotStore.swift */,
 				100000000000000000000F02 /* CodexHookActivity.swift */,
 				100000000000000000000E02 /* MenuBarDisplaySettings.swift */,
+				100000000000000000001001 /* CodexRadarModels.swift */,
+				100000000000000000001002 /* CodexRadarSnapshotStore.swift */,
 			);
 			path = CodexUsageShared;
 			sourceTree = "<group>";
@@ -225,6 +239,7 @@
 				100000000000000000000014 /* UsageSnapshotStoreTests.swift */,
 				100000000000000000000015 /* DirectCodexUsageClientTests.swift */,
 				100000000000000000000A03 /* UsageViewModelTests.swift */,
+				100000000000000000001006 /* CodexRadarTests.swift */,
 				10000000000000000000002E /* Info.plist */,
 			);
 			path = CodexUsageTests;
@@ -249,7 +264,9 @@
 				100000000000000000000C06 /* SettingsWindowPresenter.swift */,
 				100000000000000000000F04 /* CodexHookActivityStore.swift */,
 				10000000000000000000001B /* UsageViewModel.swift */,
+				100000000000000000001004 /* CodexRadarStore.swift */,
 				10000000000000000000001C /* MenuBarView.swift */,
+				100000000000000000001005 /* CodexRadarView.swift */,
 				100000000000000000000B04 /* MenuBarDisplaySettings.swift */,
 				100000000000000000000B05 /* SettingsView.swift */,
 				100000000000000000000D01 /* SettingsPanelLayout.swift */,
@@ -257,6 +274,7 @@
 				100000000000000000000D03 /* SettingsControls.swift */,
 				100000000000000000000D04 /* SettingsPreview.swift */,
 				100000000000000000000019 /* DirectCodexUsageClient.swift */,
+				100000000000000000001003 /* CodexRadarClient.swift */,
 				100000000000000000000B07 /* Assets.xcassets */,
 				10000000000000000000001D /* Info.plist */,
 				10000000000000000000001E /* CodexUsage.entitlements */,
@@ -427,6 +445,8 @@
 				100000000000000000000009 /* UsageSnapshotStore.swift in Sources */,
 				100000000000000000000F01 /* CodexHookActivity.swift in Sources */,
 				100000000000000000000E01 /* MenuBarDisplaySettings.swift in Sources */,
+				100000000000000000001011 /* CodexRadarModels.swift in Sources */,
+				100000000000000000001012 /* CodexRadarSnapshotStore.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -449,6 +469,7 @@
 				100000000000000000000D08 /* SettingsSections.swift in Sources */,
 				100000000000000000000D0A /* SettingsControls.swift in Sources */,
 				100000000000000000000D0C /* SettingsPreview.swift in Sources */,
+				100000000000000000001016 /* CodexRadarTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -458,8 +479,11 @@
 			files = (
 				10000000000000000000000B /* CodexUsageApp.swift in Sources */,
 				10000000000000000000000C /* UsageViewModel.swift in Sources */,
+				100000000000000000001014 /* CodexRadarStore.swift in Sources */,
 				10000000000000000000000D /* MenuBarView.swift in Sources */,
+				100000000000000000001015 /* CodexRadarView.swift in Sources */,
 				10000000000000000000000E /* DirectCodexUsageClient.swift in Sources */,
+				100000000000000000001013 /* CodexRadarClient.swift in Sources */,
 				100000000000000000000F03 /* CodexHookActivityStore.swift in Sources */,
 				100000000000000000000B01 /* MenuBarDisplaySettings.swift in Sources */,
 				100000000000000000000B03 /* SettingsView.swift in Sources */,
@@ -649,10 +673,10 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				APPLICATION_EXTENSION_API_ONLY = YES;
-				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "-";
-				CODE_SIGN_STYLE = Manual;
+				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "Apple Development";
+				CODE_SIGN_STYLE = Automatic;
 				DEFINES_MODULE = YES;
-				DEVELOPMENT_TEAM = "";
+				DEVELOPMENT_TEAM = Q53B3XSA9F;
 				DYLIB_COMPATIBILITY_VERSION = 1;
 				DYLIB_CURRENT_VERSION = 1;
 				GENERATE_INFOPLIST_FILE = YES;
@@ -738,14 +762,14 @@
 		100000000000000000000132 /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
-				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
-				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
-				CODE_SIGN_ENTITLEMENTS = "";
-				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "-";
-				CODE_SIGN_STYLE = Manual;
-				CURRENT_PROJECT_VERSION = 1;
-				DEVELOPMENT_TEAM = "";
-				ENABLE_HARDENED_RUNTIME = NO;
+					ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+					ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+					CODE_SIGN_ENTITLEMENTS = CodexUsage/CodexUsage.entitlements;
+					"CODE_SIGN_IDENTITY[sdk=macosx*]" = "Apple Development";
+					CODE_SIGN_STYLE = Automatic;
+					CURRENT_PROJECT_VERSION = 1;
+					DEVELOPMENT_TEAM = Q53B3XSA9F;
+					ENABLE_HARDENED_RUNTIME = NO;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = CodexUsage/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = (
@@ -789,12 +813,12 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				APPLICATION_EXTENSION_API_ONLY = YES;
-				CODE_SIGN_ENTITLEMENTS = "";
-				CODE_SIGN_IDENTITY = "-";
-				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "-";
-				CODE_SIGN_STYLE = Manual;
+				CODE_SIGN_ENTITLEMENTS = CodexUsageWidget/CodexUsageWidget.entitlements;
+				CODE_SIGN_IDENTITY = "Apple Development";
+				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "Apple Development";
+				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
-				DEVELOPMENT_TEAM = "";
+				DEVELOPMENT_TEAM = Q53B3XSA9F;
 				ENABLE_APP_SANDBOX = YES;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = CodexUsageWidget/Info.plist;

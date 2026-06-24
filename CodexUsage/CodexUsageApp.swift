@@ -20,6 +20,7 @@ enum CodexUsageMain {
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private var viewModel: UsageViewModel?
+    private var radarStore: CodexRadarStore?
     private var statusBarController: StatusBarController?
     private let settingsWindowOpener = SettingsWindowOpener()
 
@@ -27,9 +28,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         MenuBarDisplaySettings.migrateStandardDefaultsToSharedDefaults()
         MenuBarDisplaySettings.migrateLegacyDisplayDefaults()
         let viewModel = UsageViewModel()
+        let radarStore = CodexRadarStore()
         self.viewModel = viewModel
-        statusBarController = StatusBarController(viewModel: viewModel)
+        self.radarStore = radarStore
+        statusBarController = StatusBarController(viewModel: viewModel, radarStore: radarStore)
         viewModel.start()
+        radarStore.start()
         if AppBehaviorSettings(defaults: MenuBarDisplaySettings.sharedDefaults).opensSettingsAtLaunch {
             settingsWindowOpener.open()
         }
@@ -44,6 +48,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 @MainActor
 final class StatusBarController: NSObject {
     private let viewModel: UsageViewModel
+    private let radarStore: CodexRadarStore
     private let activityStore = CodexHookActivityStore()
     private let statusItem: NSStatusItem
     private let popover = NSPopover()
@@ -56,8 +61,9 @@ final class StatusBarController: NSObject {
     private var pendingPopoverSizeWorkItem: DispatchWorkItem?
     private static let popoverResizeDebounceDelay = DispatchTimeInterval.milliseconds(80)
 
-    init(viewModel: UsageViewModel) {
+    init(viewModel: UsageViewModel, radarStore: CodexRadarStore) {
         self.viewModel = viewModel
+        self.radarStore = radarStore
         let settings = MenuBarDisplaySettings(defaults: MenuBarDisplaySettings.sharedDefaults)
         let lines = StatusLineDisplay.lines(viewModel: viewModel, settings: settings)
         let statusWidth = StatusBarDisplayMetrics.statusItemWidth(for: lines, settings: settings)
@@ -114,6 +120,7 @@ final class StatusBarController: NSObject {
         observeSettingsNotification(.popoverDisplaySettingsDidChange)
         observeSettingsNotification(.widgetDisplaySettingsDidChange)
         observeSettingsNotification(.surfaceAppearanceSettingsDidChange)
+        observeSettingsNotification(.codexRadarSettingsDidChange)
         applySettings()
     }
 
@@ -150,12 +157,19 @@ final class StatusBarController: NSObject {
     private func applySettings() {
         let settings = MenuBarDisplaySettings(defaults: MenuBarDisplaySettings.sharedDefaults)
         applyStatusDisplay(settings: settings)
+        resetPopoverSizeAfterContentChange()
+        popover.contentViewController = makePopoverContentController()
+        popover.contentSize = preferredPopoverSize
+        refreshPopoverSizeFromFittingContent(realign: popover.isShown)
+        configurePopoverWindowAppearance()
+    }
+
+    /// 设置项会增减下拉内容模块；丢弃上一版高度，避免首次打开沿用旧布局留下大块空白。
+    private func resetPopoverSizeAfterContentChange() {
         pendingPopoverSizeWorkItem?.cancel()
         pendingPopoverSizeWorkItem = nil
         pendingPopoverSize = nil
-        popover.contentViewController = makePopoverContentController()
-        popover.contentSize = preferredPopoverSize
-        configurePopoverWindowAppearance()
+        preferredPopoverSize = MenuBarPopoverLayout.initialSize
     }
 
     private func applyStatusDisplay(settings: MenuBarDisplaySettings? = nil) {
@@ -178,7 +192,7 @@ final class StatusBarController: NSObject {
 
     private func makePopoverContentController() -> NSViewController {
         let controller = NSHostingController(
-            rootView: MenuBarView(viewModel: viewModel) { [weak self] size in
+            rootView: MenuBarView(viewModel: viewModel, radarStore: radarStore) { [weak self] size in
                 self?.updatePopoverSize(for: size)
             }
         )
@@ -201,15 +215,16 @@ final class StatusBarController: NSObject {
 
     /// 接收 SwiftUI 内容实测尺寸，先裁剪到屏幕可用范围，再合并连续变化以避免弹窗抖动。
     private func updatePopoverSize(for contentSize: CGSize) {
-        let height = min(
-            max(ceil(contentSize.height), MenuBarPopoverLayout.minimumHeight),
-            maximumPopoverHeight
-        )
-        let newSize = NSSize(width: MenuBarPopoverLayout.width, height: height)
+        let newSize = clampedPopoverSize(for: contentSize)
         let referenceSize = pendingPopoverSize ?? preferredPopoverSize
         guard abs(referenceSize.width - newSize.width) > 1
             || abs(referenceSize.height - newSize.height) > 1
         else {
+            return
+        }
+
+        if !popover.isShown {
+            applyPopoverSize(newSize, realign: false)
             return
         }
 
@@ -237,6 +252,43 @@ final class StatusBarController: NSObject {
             return
         }
 
+        applyPopoverSize(newSize, realign: true)
+    }
+
+    /// 从 NSHostingController 的当前适配尺寸主动同步高度，补上 SwiftUI Preference 首帧可能延后的空窗。
+    private func refreshPopoverSizeFromFittingContent(realign: Bool) {
+        guard let contentView = popover.contentViewController?.view else {
+            return
+        }
+        contentView.needsLayout = true
+        contentView.layoutSubtreeIfNeeded()
+        let fittingSize = contentView.fittingSize
+        guard fittingSize.width > 0, fittingSize.height > 0 else {
+            return
+        }
+        let newSize = clampedPopoverSize(for: CGSize(
+            width: MenuBarPopoverLayout.width,
+            height: fittingSize.height
+        ))
+        guard abs(preferredPopoverSize.width - newSize.width) > 1
+            || abs(preferredPopoverSize.height - newSize.height) > 1
+        else {
+            return
+        }
+        applyPopoverSize(newSize, realign: realign)
+    }
+
+    /// 统一裁剪弹窗尺寸，保证所有测量入口都遵守同一最小值和屏幕最大高度。
+    private func clampedPopoverSize(for contentSize: CGSize) -> NSSize {
+        let height = min(
+            max(ceil(contentSize.height), MenuBarPopoverLayout.minimumHeight),
+            maximumPopoverHeight
+        )
+        return NSSize(width: MenuBarPopoverLayout.width, height: height)
+    }
+
+    /// 立即应用弹窗尺寸；打开状态下按菜单栏按钮重新对齐，隐藏状态下只更新下一次打开的缓存。
+    private func applyPopoverSize(_ newSize: NSSize, realign: Bool) {
         preferredPopoverSize = newSize
         NSAnimationContext.runAnimationGroup { context in
             context.duration = 0
@@ -244,7 +296,7 @@ final class StatusBarController: NSObject {
             popover.contentSize = newSize
             popover.contentViewController?.preferredContentSize = newSize
             configurePopoverWindowAppearance()
-            if popover.isShown, let button = statusItem.button {
+            if realign, popover.isShown, let button = statusItem.button {
                 alignPopoverWindow(to: button)
             }
         }
@@ -252,7 +304,7 @@ final class StatusBarController: NSObject {
 
     private var maximumPopoverHeight: CGFloat {
         let screenFrame = statusItem.button?.window?.screen?.visibleFrame ?? NSScreen.main?.visibleFrame
-        let availableHeight = (screenFrame?.height ?? MenuBarPopoverLayout.maximumHeight) - 64
+        let availableHeight = (screenFrame?.height ?? MenuBarPopoverLayout.maximumHeight) - 24
         return max(MenuBarPopoverLayout.minimumHeight, min(MenuBarPopoverLayout.maximumHeight, availableHeight))
     }
 
@@ -261,6 +313,7 @@ final class StatusBarController: NSObject {
             popover.performClose(sender)
         } else {
             NSApp.activate(ignoringOtherApps: true)
+            refreshPopoverSizeFromFittingContent(realign: false)
             popover.show(relativeTo: sender.bounds, of: sender, preferredEdge: .minY)
             configurePopoverWindowAppearance()
             alignPopoverWindow(to: sender)
@@ -335,7 +388,7 @@ private struct StatusBarLabel: View {
                     .frame(width: CodexHookActivityDisplay.menuBarIndicatorSpacing)
             }
 
-            if settings.showsMenuBarIcon {
+            if showsCodexIcon(activityDisplay: activityDisplay) {
                 CodexMenuBarIcon()
                 Color.clear
                     .frame(width: MenuBarDisplaySettings.menuBarIconTextSpacing)
@@ -363,6 +416,11 @@ private struct StatusBarLabel: View {
             return CodexHookActivityDisplay(snapshot: nil)
         }
         return activityStore.display
+    }
+
+    /// 活动符号出现时复用 Codex 图标位置，避免菜单栏左侧同时展示两个识别图标。
+    private func showsCodexIcon(activityDisplay: CodexHookActivityDisplay) -> Bool {
+        settings.showsMenuBarIcon && !activityDisplay.isVisible
     }
 
     /// 所有两行菜单栏读数都使用同一行距设置，保证预设和滑块对 Pace 同样生效。

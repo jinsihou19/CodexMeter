@@ -17,10 +17,12 @@ struct DirectCodexUsageClient: UsageRateLimitFetching {
     typealias Transport = @Sendable (URLRequest) async throws -> (Data, HTTPURLResponse)
     static let defaultEndpointURL = URL(string: "https://chatgpt.com/backend-api/wham/usage")!
     static let defaultProfileEndpointURL = URL(string: "https://chatgpt.com/backend-api/wham/profiles/me")!
+    static let defaultResetCreditsEndpointURL = URL(string: "https://chatgpt.com/backend-api/wham/rate-limit-reset-credits")!
 
     private let authFileURL: URL
     private let endpointURL: URL
     private let profileEndpointURL: URL
+    private let resetCreditsEndpointURL: URL
     private let timeoutSeconds: TimeInterval
     private let transport: Transport
 
@@ -28,12 +30,14 @@ struct DirectCodexUsageClient: UsageRateLimitFetching {
         authFileURL: URL = Self.defaultAuthFileURL(),
         endpointURL: URL = Self.defaultEndpointURL,
         profileEndpointURL: URL = Self.defaultProfileEndpointURL,
+        resetCreditsEndpointURL: URL = Self.defaultResetCreditsEndpointURL,
         timeoutSeconds: TimeInterval = 45,
         transport: @escaping Transport = Self.urlSessionTransport
     ) {
         self.authFileURL = authFileURL
         self.endpointURL = endpointURL
         self.profileEndpointURL = profileEndpointURL
+        self.resetCreditsEndpointURL = resetCreditsEndpointURL
         self.timeoutSeconds = timeoutSeconds
         self.transport = transport
     }
@@ -47,6 +51,10 @@ struct DirectCodexUsageClient: UsageRateLimitFetching {
         let authContext = try loadAuthContext()
         async let rateLimits = fetchRateLimits(accessToken: authContext.accessToken)
         async let profileStats = fetchProfileStatsIfAvailable(accessToken: authContext.accessToken)
+        async let resetCredits = fetchResetCreditsIfAvailable(
+            accessToken: authContext.accessToken,
+            accountID: authContext.accountID
+        )
         let fetchedRateLimits = try await rateLimits
         let account = CodexAccountSnapshot(
             email: authContext.accountEmail,
@@ -57,7 +65,8 @@ struct DirectCodexUsageClient: UsageRateLimitFetching {
             fetchedAt: Date(),
             rateLimits: fetchedRateLimits,
             account: account.isEmpty ? nil : account,
-            profileStats: await profileStats
+            profileStats: await profileStats,
+            resetCredits: await resetCredits
         )
     }
 
@@ -89,6 +98,15 @@ struct DirectCodexUsageClient: UsageRateLimitFetching {
         }
     }
 
+    /// 尝试读取额度重置卡；该接口只影响附加展示，失败时不阻断基础额度刷新。
+    private func fetchResetCreditsIfAvailable(accessToken: String, accountID: String?) async -> ResetCreditsSnapshot? {
+        do {
+            return try await fetchResetCredits(accessToken: accessToken, accountID: accountID)
+        } catch {
+            return nil
+        }
+    }
+
     private func fetchProfileStats(accessToken: String) async throws -> CodexProfileStats? {
         let request = authenticatedRequest(url: profileEndpointURL, accessToken: accessToken)
 
@@ -100,6 +118,31 @@ struct DirectCodexUsageClient: UsageRateLimitFetching {
                 throw DirectCodexUsageClientError.httpStatus(response.statusCode, message)
             }
             return try JSONDecoder().decode(WhamProfileResponse.self, from: data).stats?.codexProfileStats
+        } catch let error as DirectCodexUsageClientError {
+            throw error
+        } catch let error as DecodingError {
+            throw DirectCodexUsageClientError.invalidResponse(error.localizedDescription)
+        } catch {
+            throw DirectCodexUsageClientError.network(error.localizedDescription)
+        }
+    }
+
+    /// 请求额度重置卡接口，并把接口返回的可用数量和每张卡生命周期转成共享快照。
+    private func fetchResetCredits(accessToken: String, accountID: String?) async throws -> ResetCreditsSnapshot {
+        let request = resetCreditsRequest(
+            url: resetCreditsEndpointURL,
+            accessToken: accessToken,
+            accountID: accountID
+        )
+
+        do {
+            let (data, response) = try await transport(request)
+            guard (200..<300).contains(response.statusCode) else {
+                let message = String(data: data, encoding: .utf8)?
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                throw DirectCodexUsageClientError.httpStatus(response.statusCode, message)
+            }
+            return try JSONDecoder().decode(WhamResetCreditsResponse.self, from: data).resetCreditsSnapshot
         } catch let error as DirectCodexUsageClientError {
             throw error
         } catch let error as DecodingError {
@@ -125,6 +168,17 @@ struct DirectCodexUsageClient: UsageRateLimitFetching {
         return request
     }
 
+    /// 构造额度重置卡请求；该接口需要 Codex beta 和账户头，账户缺失时仍保留 token 请求以兼容接口兜底。
+    private func resetCreditsRequest(url: URL, accessToken: String, accountID: String?) -> URLRequest {
+        var request = authenticatedRequest(url: url, accessToken: accessToken)
+        request.setValue("codex-1", forHTTPHeaderField: "OpenAI-Beta")
+        request.setValue("Codex Desktop", forHTTPHeaderField: "originator")
+        if let accountID, !accountID.isEmpty {
+            request.setValue(accountID, forHTTPHeaderField: "ChatGPT-Account-ID")
+        }
+        return request
+    }
+
     /// 从本机 Codex auth.json 读取 API token 和可展示账户摘要；不会把 token 写入快照。
     private func loadAuthContext() throws -> CodexAuthContext {
         guard FileManager.default.fileExists(atPath: authFileURL.path) else {
@@ -137,6 +191,7 @@ struct DirectCodexUsageClient: UsageRateLimitFetching {
         }
         return CodexAuthContext(
             accessToken: token,
+            accountID: auth.tokens?.accountID,
             accountEmail: Self.accountEmail(fromIDToken: auth.tokens?.idToken),
             planType: Self.planType(fromIDToken: auth.tokens?.idToken)
         )
@@ -235,10 +290,12 @@ private struct CodexAuthFile: Decodable {
 
     struct Tokens: Decodable {
         let accessToken: String?
+        let accountID: String?
         let idToken: String?
 
         enum CodingKeys: String, CodingKey {
             case accessToken = "access_token"
+            case accountID = "account_id"
             case idToken = "id_token"
         }
     }
@@ -247,6 +304,7 @@ private struct CodexAuthFile: Decodable {
 /// auth.json 的安全读取结果；只把 access token 留在内存里，展示字段才会进入缓存。
 private struct CodexAuthContext {
     let accessToken: String
+    let accountID: String?
     let accountEmail: String?
     let planType: String?
 }
@@ -351,6 +409,36 @@ private extension KeyedDecodingContainer {
         }
         return nil
     }
+
+    /// 解码接口里可能用 ISO8601 字符串或 Unix 时间戳表示的时间字段。
+    func decodeFlexibleDateIfPresent(forKey key: Key) throws -> Date? {
+        if let intValue = try? decode(Int.self, forKey: key) {
+            return Date(timeIntervalSince1970: TimeInterval(intValue))
+        }
+        if let doubleValue = try? decode(Double.self, forKey: key) {
+            return Date(timeIntervalSince1970: doubleValue)
+        }
+        guard let stringValue = (try? decode(String.self, forKey: key))?
+            .trimmingCharacters(in: .whitespacesAndNewlines),
+              !stringValue.isEmpty
+        else {
+            return nil
+        }
+        if let doubleValue = Double(stringValue) {
+            return Date(timeIntervalSince1970: doubleValue)
+        }
+        return Self.codexISO8601DateFormatter(includesFractionalSeconds: true).date(from: stringValue)
+            ?? Self.codexISO8601DateFormatter(includesFractionalSeconds: false).date(from: stringValue)
+    }
+
+    /// Codex 后端时间字段使用 UTC ISO8601，带小数秒和不带小数秒都需要兼容。
+    private static func codexISO8601DateFormatter(includesFractionalSeconds: Bool) -> ISO8601DateFormatter {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = includesFractionalSeconds
+            ? [.withInternetDateTime, .withFractionalSeconds]
+            : [.withInternetDateTime]
+        return formatter
+    }
 }
 
 private struct WhamAdditionalRateLimit: Decodable {
@@ -387,6 +475,54 @@ private struct WhamCredits: Decodable {
 
     var creditsSnapshot: CreditsSnapshot {
         CreditsSnapshot(hasCredits: hasCredits, unlimited: unlimited, balance: balance)
+    }
+}
+
+private struct WhamResetCreditsResponse: Decodable {
+    let availableCount: Int
+    let credits: [WhamResetCredit]?
+
+    enum CodingKeys: String, CodingKey {
+        case availableCount = "available_count"
+        case credits
+    }
+
+    /// 宽容解析可用张数；如果接口临时省略数量，则用明细数量兜底。
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.credits = try container.decodeIfPresent([WhamResetCredit].self, forKey: .credits)
+        self.availableCount = try container.decodeFlexibleIntIfPresent(forKey: .availableCount) ?? credits?.count ?? 0
+    }
+
+    var resetCreditsSnapshot: ResetCreditsSnapshot {
+        ResetCreditsSnapshot(
+            availableCount: availableCount,
+            credits: credits?.map(\.resetCreditSnapshot) ?? []
+        )
+    }
+}
+
+private struct WhamResetCredit: Decodable {
+    let grantedAt: Date?
+    let expiresAt: Date?
+    let status: String
+
+    enum CodingKeys: String, CodingKey {
+        case grantedAt = "granted_at"
+        case expiresAt = "expires_at"
+        case status
+    }
+
+    /// 宽容解析单张重置卡；状态缺失时显示为未知，时间缺失时仍保留卡片行。
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.grantedAt = try container.decodeFlexibleDateIfPresent(forKey: .grantedAt)
+        self.expiresAt = try container.decodeFlexibleDateIfPresent(forKey: .expiresAt)
+        self.status = (try container.decodeIfPresent(String.self, forKey: .status)) ?? "unknown"
+    }
+
+    var resetCreditSnapshot: ResetCreditSnapshot {
+        ResetCreditSnapshot(grantedAt: grantedAt, expiresAt: expiresAt, status: status)
     }
 }
 

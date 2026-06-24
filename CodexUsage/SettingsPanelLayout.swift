@@ -12,6 +12,7 @@ enum SettingsPanelLayout {
     static let sectionHeaderSpacing: CGFloat = 7
     static let sectionContentSpacing: CGFloat = 8
     static let sectionContentPadding: CGFloat = 12
+    static let preferenceControlWidth: CGFloat = 260
     static let cardSpacing: CGFloat = 8
     static let previewUsesContentFrame = false
     static let previewChipSpacing: CGFloat = 6

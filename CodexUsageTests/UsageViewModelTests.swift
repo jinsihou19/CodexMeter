@@ -161,6 +161,7 @@ final class UsageViewModelTests: XCTestCase {
         defaults.set(false, forKey: WidgetDisplayPreferenceKeys.showsPlanLabel)
         defaults.set("not-a-style", forKey: PopoverPreferenceKeys.resetTimeDisplayStyle)
         defaults.set(true, forKey: MenuBarPreferenceKeys.showsAdditionalLimits)
+        defaults.set(false, forKey: PopoverPreferenceKeys.showsResetCredits)
 
         let widgetSettings = WidgetDisplaySettings(defaults: defaults)
         let surfaceSettings = SurfaceAppearanceSettings(defaults: defaults)
@@ -186,6 +187,8 @@ final class UsageViewModelTests: XCTestCase {
         XCTAssertTrue(WidgetDisplaySettings().showsPaceComparison)
         XCTAssertEqual(popoverSettings.resetTimeDisplayStyle, .countdown)
         XCTAssertTrue(popoverSettings.showsAdditionalLimits)
+        XCTAssertFalse(popoverSettings.showsResetCredits)
+        XCTAssertTrue(PopoverDisplaySettings().showsResetCredits)
     }
 
     func testMenuBarDisplaySettingsDefaultToCompactReadableValues() {
@@ -325,6 +328,7 @@ final class UsageViewModelTests: XCTestCase {
 
     func testStatusBarWidthIncludesHookActivityIndicatorOnlyWhenVisible() {
         let settings = MenuBarDisplaySettings()
+        let iconSettings = MenuBarDisplaySettings(showsMenuBarIcon: true)
         let lines = [
             StatusLineDisplay(id: "primary", label: "5h", value: "49%", tone: .warning),
             StatusLineDisplay(id: "secondary", label: "7d", value: "51%", tone: .warning)
@@ -347,6 +351,12 @@ final class UsageViewModelTests: XCTestCase {
             settings: settings,
             activityDisplay: activeDisplay
         )
+        let idleIconWidth = StatusBarDisplayMetrics.statusItemWidth(for: lines, settings: iconSettings)
+        let activeIconWidth = StatusBarDisplayMetrics.statusItemWidth(
+            for: lines,
+            settings: iconSettings,
+            activityDisplay: activeDisplay
+        )
         let hiddenWidth = StatusBarDisplayMetrics.statusItemWidth(
             for: lines,
             settings: hiddenSettings,
@@ -355,6 +365,11 @@ final class UsageViewModelTests: XCTestCase {
 
         XCTAssertEqual(activeDisplay.statusItemWidth, 19)
         XCTAssertGreaterThan(activeWidth, idleWidth)
+        XCTAssertEqual(
+            activeIconWidth - idleIconWidth,
+            activeDisplay.statusItemWidth - MenuBarDisplaySettings.menuBarIconStatusItemWidth,
+            accuracy: 0.001
+        )
         XCTAssertEqual(hiddenWidth, idleWidth)
     }
 
