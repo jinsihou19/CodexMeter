@@ -257,8 +257,7 @@ public enum CodexHookActivityLocation {
         appGroupIdentifier: String = UsageSnapshotStore.defaultAppGroupIdentifier,
         fallbackDirectory: URL? = nil
     ) -> URL {
-        if !appGroupIdentifier.isEmpty,
-           let appGroupURL = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: appGroupIdentifier) {
+        if let appGroupURL = AppGroupAccess.containerURL(for: appGroupIdentifier) {
             return appGroupURL.appendingPathComponent("CodexUsage", isDirectory: true)
         }
         return fallbackDirectory ?? externalWritableDirectory(appGroupIdentifier: appGroupIdentifier)

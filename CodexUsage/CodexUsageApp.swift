@@ -649,13 +649,22 @@ private struct CompletionCheckGlyph: View {
     let reduceMotion: Bool
 
     var body: some View {
-        Image(systemName: "checkmark.circle.fill")
+        symbol
+            .frame(width: size, height: size)
+            .shadow(color: Color.green.opacity(0.24), radius: 1.5, y: 0)
+    }
+
+    /// macOS 14 保留完成图标本体，macOS 15 起再启用 indefinite bounce 动效以满足旧系统编译。
+    @ViewBuilder private var symbol: some View {
+        let image = Image(systemName: "checkmark.circle.fill")
             .font(.system(size: size * 0.96, weight: .heavy, design: .rounded))
             .symbolRenderingMode(.monochrome)
             .foregroundStyle(Color.green)
-            .symbolEffect(.bounce, options: .speed(1.25), isActive: !reduceMotion)
-            .frame(width: size, height: size)
-            .shadow(color: Color.green.opacity(0.24), radius: 1.5, y: 0)
+        if #available(macOS 15.0, *) {
+            image.symbolEffect(.bounce, options: .speed(1.25), isActive: !reduceMotion)
+        } else {
+            image
+        }
     }
 }
 

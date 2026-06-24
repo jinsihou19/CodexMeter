@@ -2,7 +2,7 @@
 
 macOS menu bar app plus WidgetKit widget for showing Codex quota and profile usage.
 
-Requires macOS 26.0 or newer because the menu bar activity glyph can use the latest SF Symbols Draw effects.
+Requires macOS 14.0 or newer. Newer SF Symbols effects are enabled only on supported system versions.
 
 ## What It Shows
 
@@ -49,6 +49,8 @@ rtk xcodebuild -project CodexUsage.xcodeproj -scheme CodexUsage -destination 'pl
 ```
 
 ## Signing
+
+The app targets macOS 14.0 and newer.
 
 Debug uses automatic Apple Development signing with App Group `group.com.jinsihou.CodexUsage`.
 
