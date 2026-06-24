@@ -382,6 +382,10 @@ public struct UsageSnapshot: Codable, Equatable, Sendable {
     public var accountPlanDisplayText: String? {
         CodexPlanFormatter.displayName(for: accountPlanType)
     }
+
+    public var accountPlanCompactDisplayText: String? {
+        CodexPlanFormatter.compactDisplayName(for: accountPlanType)
+    }
 }
 
 /// 保存额度重置卡接口的展示快照；只记录数量、状态和时间，不保存任何认证材料。
@@ -503,11 +507,27 @@ public enum CodexPlanFormatter {
         }
     }
 
+    /// 返回适合狭窄界面的套餐短标签；已知 Pro 档位去掉重复品牌前缀，保留倍率信息。
+    public static func compactDisplayName(for rawPlanType: String?) -> String? {
+        guard let displayName = displayName(for: rawPlanType) else {
+            return nil
+        }
+        return compactDisplayName(from: displayName)
+    }
+
     /// 统一内部标识的大小写和分隔符，方便兼容 prolite / pro_lite / pro-lite。
     private static func normalizedKey(_ value: String) -> String {
         value
             .lowercased()
             .filter { $0.isLetter || $0.isNumber }
+    }
+
+    /// 压缩已经本地化过的套餐名称；未知套餐保持原文，避免误删用户需要识别的企业标签。
+    private static func compactDisplayName(from displayName: String) -> String {
+        if displayName.hasPrefix("Pro ") {
+            return String(displayName.dropFirst("Pro ".count))
+        }
+        return displayName
     }
 
     /// 将未知套餐标识拆词首字母大写，作为比原始字段更友好的兜底展示。

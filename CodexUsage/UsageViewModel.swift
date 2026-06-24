@@ -124,6 +124,10 @@ final class UsageViewModel: ObservableObject {
         hasStartedRefreshLoop = true
         observeAppBehaviorSettings()
         applyRefreshCadence()
+        // 本地已有缓存时也要唤醒 WidgetKit，避免上一次空时间线继续显示“暂无数据”。
+        if snapshot != nil {
+            reloadWidgetTimelines()
+        }
     }
 
     func refresh() async {
@@ -143,6 +147,10 @@ final class UsageViewModel: ObservableObject {
             logger.error("Refresh failed: \(self.errorMessage ?? "unknown", privacy: .public)")
             if snapshot == nil {
                 snapshot = try? store.load()
+                // 网络刷新失败但本地缓存可用时，同步恢复小组件显示。
+                if snapshot != nil {
+                    reloadWidgetTimelines()
+                }
             }
         }
     }

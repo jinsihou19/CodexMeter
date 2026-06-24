@@ -733,6 +733,46 @@ final class UsageViewModelTests: XCTestCase {
         XCTAssertEqual(client.fetchCount, 1)
     }
 
+    /// 验证手动刷新模式下启动只读取本地缓存，也会主动刷新小组件时间线。
+    func testStartReloadsWidgetTimelinesWhenCachedSnapshotExists() throws {
+        let storeDirectory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let store = UsageSnapshotStore(appGroupIdentifier: "", fallbackDirectory: storeDirectory)
+        try store.save(UsageSnapshot(
+            fetchedAt: Date(timeIntervalSince1970: 1_779_940_000),
+            rateLimits: RateLimitSnapshot(
+                limitId: "codex",
+                limitName: nil,
+                primary: RateLimitWindow(usedPercent: 4, windowDurationMins: 300, resetsAt: nil),
+                secondary: RateLimitWindow(usedPercent: 14, windowDurationMins: 10_080, resetsAt: nil),
+                credits: nil,
+                planType: nil,
+                rateLimitReachedType: nil
+            )
+        ))
+        var reloadCount = 0
+        let viewModel = UsageViewModel(
+            client: CountingRateLimitClient(snapshot: RateLimitSnapshot(
+                limitId: "codex",
+                limitName: nil,
+                primary: nil,
+                secondary: nil,
+                credits: nil,
+                planType: nil,
+                rateLimitReachedType: nil
+            )),
+            store: store,
+            reloadWidgetTimelines: {
+                reloadCount += 1
+            },
+            refreshCadenceProvider: { .manual }
+        )
+
+        viewModel.start()
+
+        XCTAssertEqual(reloadCount, 1)
+    }
+
     func testRefreshReloadsWidgetTimelinesAfterSavingSnapshot() async throws {
         let storeDirectory = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString, isDirectory: true)

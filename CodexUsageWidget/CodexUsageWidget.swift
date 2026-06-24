@@ -1,4 +1,5 @@
 import CodexUsageShared
+import OSLog
 import SwiftUI
 import WidgetKit
 
@@ -22,6 +23,7 @@ struct CodexUsageEntry: TimelineEntry {
 
 struct CodexUsageTimelineProvider: TimelineProvider {
     private let store = UsageSnapshotStore()
+    private let logger = Logger(subsystem: "com.jinsihou.CodexUsage", category: "Widget")
 
     func placeholder(in context: Context) -> CodexUsageEntry {
         CodexUsageEntry(date: Date(), snapshot: UsageSnapshot(
@@ -35,17 +37,34 @@ struct CodexUsageTimelineProvider: TimelineProvider {
                 planType: "prolite",
                 rateLimitReachedType: nil
             ),
-            account: CodexAccountSnapshot(email: "codex@example.com", planType: "prolite")
+            account: CodexAccountSnapshot(email: "codex@example.com", planType: "prolite"),
+            resetCredits: ResetCreditsSnapshot(availableCount: 2)
         ))
     }
 
     func getSnapshot(in context: Context, completion: @escaping (CodexUsageEntry) -> Void) {
-        completion(CodexUsageEntry(date: Date(), snapshot: try? store.load()))
+        completion(CodexUsageEntry(date: Date(), snapshot: loadSnapshot()))
     }
 
     func getTimeline(in context: Context, completion: @escaping (Timeline<CodexUsageEntry>) -> Void) {
-        let entry = CodexUsageEntry(date: Date(), snapshot: try? store.load())
-        completion(Timeline(entries: [entry], policy: .after(Date().addingTimeInterval(15 * 60))))
+        let snapshot = loadSnapshot()
+        let entry = CodexUsageEntry(date: Date(), snapshot: snapshot)
+        let retrySeconds: TimeInterval = snapshot == nil ? 60 : 15 * 60
+        completion(Timeline(entries: [entry], policy: .after(Date().addingTimeInterval(retrySeconds))))
+    }
+
+    /// 读取共享快照并记录失败原因；WidgetKit 的空时间线会缓存，日志能帮助区分无文件、解码失败和沙箱问题。
+    private func loadSnapshot() -> UsageSnapshot? {
+        do {
+            let snapshot = try store.load()
+            if snapshot == nil {
+                logger.info("Widget snapshot missing")
+            }
+            return snapshot
+        } catch {
+            logger.error("Widget snapshot load failed: \(error.localizedDescription, privacy: .public)")
+            return nil
+        }
     }
 }
 
@@ -206,26 +225,40 @@ private struct WidgetCardBackground: View {
     }
 }
 
-/// 小组件头部右侧的账户摘要，受“显示套餐标签”设置控制，避免额外增加配置复杂度。
+/// 小组件头部右侧的套餐摘要，受“显示套餐标签”设置控制，避免额外增加配置复杂度。
 private struct WidgetAccountSummary: View {
     let snapshot: UsageSnapshot
     let family: WidgetFamily
 
     var body: some View {
-        VStack(alignment: .trailing, spacing: 1) {
-            if family != .systemSmall, let email = snapshot.accountEmail {
-                Text(email)
-                    .font(.caption.weight(.medium))
-            }
-            if let plan = snapshot.accountPlanDisplayText {
-                Text(plan)
-                    .font(.caption2.weight(.semibold))
-            }
+        if let summaryText {
+            Text(summaryText)
+                .font((family == .systemSmall ? Font.caption2 : Font.caption).weight(.semibold))
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+                .minimumScaleFactor(family == .systemSmall ? 0.72 : 0.82)
+                .frame(maxWidth: family == .systemSmall ? 78 : 150, alignment: .trailing)
         }
-        .foregroundStyle(.secondary)
-        .lineLimit(1)
-        .minimumScaleFactor(0.68)
-        .frame(maxWidth: family == .systemSmall ? 58 : 190, alignment: .trailing)
+    }
+
+    /// 合并套餐倍率和可用重置次数，避免在小组件右上角展示邮箱造成视觉拥挤。
+    private var summaryText: String? {
+        let parts = [
+            snapshot.accountPlanCompactDisplayText,
+            resetCreditsText
+        ].compactMap { $0 }
+        guard !parts.isEmpty else {
+            return nil
+        }
+        return parts.joined(separator: "·")
+    }
+
+    /// 使用重置卡接口返回的可用数量；接口不可用时不显示，避免把未知状态误报为 0 次。
+    private var resetCreditsText: String? {
+        guard let resetCredits = snapshot.resetCredits else {
+            return nil
+        }
+        return "\(resetCredits.availableCount)次重置"
     }
 }
 

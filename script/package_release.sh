@@ -3,6 +3,7 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 APP_NAME="CodexUsage"
+WIDGET_PROCESS_NAME="CodexUsageWidgetExtension"
 PROJECT_PATH="$ROOT_DIR/CodexUsage.xcodeproj"
 BUILD_DIR="$ROOT_DIR/build"
 DIST_DIR="$ROOT_DIR/dist"
@@ -34,6 +35,8 @@ xcodebuild \
 
 codesign --verify --deep --strict --verbose=2 "$APP_PATH"
 
+# WidgetKit 会保留 extension 进程；安装新版前一并结束，避免桌面继续使用旧时间线代码。
+pkill -x "$WIDGET_PROCESS_NAME" 2>/dev/null || true
 pkill -x "$APP_NAME" 2>/dev/null || true
 rm -rf "$INSTALLED_APP_PATH"
 ditto "$APP_PATH" "$INSTALLED_APP_PATH"

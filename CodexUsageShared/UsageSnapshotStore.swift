@@ -19,27 +19,40 @@ public struct UsageSnapshotStore: Sendable {
     }
 
     public func save(_ snapshot: UsageSnapshot) throws {
-        let url = snapshotURL()
-        try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
         let data = try encoder.encode(snapshot)
-        try data.write(to: url, options: [.atomic, .noFileProtection])
+        var errors: [Error] = []
+        var savedCount = 0
+        for url in uniqueSnapshotURLs() {
+            do {
+                try write(data, to: url)
+                savedCount += 1
+            } catch {
+                errors.append(error)
+            }
+        }
+        if savedCount == 0, let error = errors.first {
+            throw error
+        }
     }
 
     public func load() throws -> UsageSnapshot? {
-        let url = snapshotURL()
-        if FileManager.default.fileExists(atPath: url.path) {
-            let data = try Data(contentsOf: url)
-            return try JSONDecoder().decode(UsageSnapshot.self, from: data)
+        var firstError: Error?
+        for url in uniqueSnapshotURLs() where FileManager.default.fileExists(atPath: url.path) {
+            do {
+                let data = try Data(contentsOf: url)
+                return try JSONDecoder().decode(UsageSnapshot.self, from: data)
+            } catch {
+                if firstError == nil {
+                    firstError = error
+                }
+            }
         }
-
-        let fallbackURL = fallbackSnapshotURL()
-        guard fallbackURL != url, FileManager.default.fileExists(atPath: fallbackURL.path) else {
-            return nil
+        if let firstError {
+            throw firstError
         }
-        let data = try Data(contentsOf: fallbackURL)
-        return try JSONDecoder().decode(UsageSnapshot.self, from: data)
+        return nil
     }
 
     /// 删除最近一次成功同步的快照；文件不存在时视为已经清理完成，方便设置页重复触发。
@@ -57,6 +70,27 @@ public struct UsageSnapshotStore: Sendable {
     /// 返回兼容缓存文件位置；App Group 新路径无数据时会读取这里，保证旧版本升级后首屏仍有缓存。
     private func fallbackSnapshotURL() -> URL {
         fallbackDirectory.appendingPathComponent(fileName, isDirectory: false)
+    }
+
+    /// 返回去重后的主缓存和兼容缓存路径；Widget 沙箱无法读取 App Group 时会继续使用兼容路径。
+    private func uniqueSnapshotURLs() -> [URL] {
+        var urls: [URL] = []
+        let orderedURLs = Self.prefersFallbackDirectoryFirst() ? [fallbackSnapshotURL(), snapshotURL()] : [snapshotURL(), fallbackSnapshotURL()]
+        for url in orderedURLs where !urls.contains(url) {
+            urls.append(url)
+        }
+        return urls
+    }
+
+    /// Widget extension 在 ad-hoc 或本地 profile 缺少 App Group 时只能稳定读取自己的容器，优先走兼容目录。
+    private static func prefersFallbackDirectoryFirst() -> Bool {
+        Bundle.main.bundleIdentifier == widgetExtensionBundleIdentifier
+    }
+
+    /// 以原子方式写入缓存，并确保 WidgetKit 可以读取生成后的文件。
+    private func write(_ data: Data, to url: URL) throws {
+        try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try data.write(to: url, options: [.atomic, .noFileProtection])
     }
 
     private func directoryURL() -> URL {

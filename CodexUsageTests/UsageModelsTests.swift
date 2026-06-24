@@ -161,6 +161,9 @@ final class UsageModelsTests: XCTestCase {
         XCTAssertEqual(CodexPlanFormatter.displayName(for: "pro"), "Pro 20x")
         XCTAssertEqual(CodexPlanFormatter.displayName(for: "enterprise_workspace"), "Enterprise Workspace")
         XCTAssertNil(CodexPlanFormatter.displayName(for: "  "))
+        XCTAssertEqual(CodexPlanFormatter.compactDisplayName(for: "prolite"), "5x")
+        XCTAssertEqual(CodexPlanFormatter.compactDisplayName(for: "pro"), "20x")
+        XCTAssertEqual(CodexPlanFormatter.compactDisplayName(for: "enterprise_workspace"), "Enterprise Workspace")
     }
 
     func testCodexHookActivityDisplayHidesExpiredCompletedState() {
