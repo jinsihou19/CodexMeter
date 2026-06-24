@@ -61,7 +61,7 @@ struct CodexRadarSection: View {
         }
     }
 
-    /// 生成底部同步文案；远端 monitored_at 优先，缺失时回退到本地抓取时间。
+    /// 生成底部同步文案；模型 IQ 更新时间优先，缺失时回退到本地抓取时间。
     private func footer(snapshot: CodexRadarSnapshot) -> some View {
         HStack(alignment: .firstTextBaseline, spacing: 8) {
             Text("常态 90-110")
@@ -77,8 +77,8 @@ struct CodexRadarSection: View {
 
     /// 格式化同步时间，避免把 ISO 字符串原样塞进紧凑弹窗。
     private func syncText(snapshot: CodexRadarSnapshot) -> String {
-        if let monitoredAt = snapshot.monitoredAt.flatMap(CodexRadarDateFormatter.shortDateTime) {
-            return "更新 \(monitoredAt)"
+        if let updatedAt = snapshot.modelIQ?.quotaRadarUpdatedAt.flatMap(CodexRadarDateFormatter.shortDateTime) {
+            return "模型IQ更新 \(updatedAt)"
         }
         return "抓取 \(CodexRadarDateFormatter.shortTime(snapshot.fetchedAt))"
     }

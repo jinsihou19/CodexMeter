@@ -56,6 +56,7 @@
 		100000000000000000001014 /* CodexRadarStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 100000000000000000001004 /* CodexRadarStore.swift */; };
 		100000000000000000001015 /* CodexRadarView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 100000000000000000001005 /* CodexRadarView.swift */; };
 		100000000000000000001016 /* CodexRadarTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 100000000000000000001006 /* CodexRadarTests.swift */; };
+		100000000000000000001017 /* CodexRadarClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 100000000000000000001003 /* CodexRadarClient.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -480,6 +481,7 @@
 				100000000000000000000D0A /* SettingsControls.swift in Sources */,
 				100000000000000000000D0C /* SettingsPreview.swift in Sources */,
 				100000000000000000001016 /* CodexRadarTests.swift in Sources */,
+				100000000000000000001017 /* CodexRadarClient.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

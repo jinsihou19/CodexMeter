@@ -5,6 +5,56 @@ import XCTest
 
 /// 降智雷达共享模型测试，覆盖开关默认值、缓存落盘和工作时间刷新节奏。
 final class CodexRadarTests: XCTestCase {
+    /// 验证 current.json 的模型 IQ 更新时间来自 model_iq.quota_radar.updated_at，而不是顶层 monitored_at。
+    func testDirectCodexRadarClientReadsModelIQQuotaRadarUpdatedAt() async throws {
+        let body = """
+        {
+          "monitored_at": "2026-06-24T04:52:00.084111+08:00",
+          "timezone": "Asia/Shanghai",
+          "model_iq": {
+            "quota_radar": {
+              "updated_at": "2026-06-24T04:55:00.084111+08:00"
+            },
+            "latest": {
+              "date": "2026-06-24",
+              "score": 125,
+              "status": "green",
+              "passed": 10,
+              "tasks": 12,
+              "model": "gpt-5.5",
+              "reasoning_effort": "xhigh"
+            },
+            "recent_days": [{
+              "date": "2026-06-24",
+              "score": 125,
+              "status": "green",
+              "passed": 10,
+              "tasks": 12,
+              "model": "gpt-5.5",
+              "reasoning_effort": "xhigh"
+            }],
+            "comparisons": {}
+          }
+        }
+        """
+        let client = DirectCodexRadarClient(
+            endpointURL: URL(string: "https://example.test/current.json")!
+        ) { request in
+            let response = try XCTUnwrap(HTTPURLResponse(
+                url: try XCTUnwrap(request.url),
+                statusCode: 200,
+                httpVersion: nil,
+                headerFields: nil
+            ))
+            return (Data(body.utf8), response)
+        }
+
+        let snapshot = try await client.fetchRadarSnapshot()
+
+        XCTAssertEqual(snapshot.monitoredAt, "2026-06-24T04:52:00.084111+08:00")
+        XCTAssertEqual(snapshot.modelIQ?.quotaRadarUpdatedAt, "2026-06-24T04:55:00.084111+08:00")
+    }
+
     /// 验证雷达设置默认关闭，并能从共享 defaults 读取显式开启状态。
     func testCodexRadarSettingsDefaultToDisabledAndReadStoredValue() {
         let suiteName = "CodexUsageTests.codexRadarSettings.\(UUID().uuidString)"
@@ -94,7 +144,8 @@ final class CodexRadarTests: XCTestCase {
                     ),
                     recentDays: []
                 ),
-                comparisons: []
+                comparisons: [],
+                quotaRadarUpdatedAt: "2026-06-23T14:55:28+08:00"
             )
         )
 

@@ -140,11 +140,13 @@ private struct CodexRadarResponse: Decodable {
         let latest: Run?
         let recentDays: [Run]?
         let comparisons: [String: Series]?
+        let quotaRadar: QuotaRadar?
 
         enum CodingKeys: String, CodingKey {
             case latest
             case recentDays = "recent_days"
             case comparisons
+            case quotaRadar = "quota_radar"
         }
 
         var model: CodexRadarModelIQ {
@@ -160,7 +162,11 @@ private struct CodexRadarResponse: Decodable {
             let comparisonModels = (comparisons ?? [:])
                 .map { key, series in series.model(id: key) }
                 .sorted { left, right in left.sortPriority < right.sortPriority }
-            return CodexRadarModelIQ(primary: primary, comparisons: comparisonModels)
+            return CodexRadarModelIQ(
+                primary: primary,
+                comparisons: comparisonModels,
+                quotaRadarUpdatedAt: quotaRadar?.updatedAt
+            )
         }
 
         /// 为主曲线生成和远端页面一致的短标签。
@@ -168,6 +174,15 @@ private struct CodexRadarResponse: Decodable {
             let model = latest?.model?.uppercased() ?? "GPT"
             let effort = latest?.reasoningEffort ?? "xhigh"
             return "\(model) \(effort)"
+        }
+
+        /// 模型 IQ 区域内的配额雷达元信息；更新时间用于 UI 底部展示数据源的新鲜度。
+        struct QuotaRadar: Decodable {
+            let updatedAt: String?
+
+            enum CodingKeys: String, CodingKey {
+                case updatedAt = "updated_at"
+            }
         }
     }
 

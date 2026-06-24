@@ -112,10 +112,16 @@ public struct CodexRadarPrediction: Codable, Equatable, Sendable {
 public struct CodexRadarModelIQ: Codable, Equatable, Sendable {
     public let primary: CodexRadarModelSeries
     public let comparisons: [CodexRadarModelSeries]
+    public let quotaRadarUpdatedAt: String?
 
-    public init(primary: CodexRadarModelSeries, comparisons: [CodexRadarModelSeries]) {
+    public init(
+        primary: CodexRadarModelSeries,
+        comparisons: [CodexRadarModelSeries],
+        quotaRadarUpdatedAt: String? = nil
+    ) {
         self.primary = primary
         self.comparisons = comparisons
+        self.quotaRadarUpdatedAt = quotaRadarUpdatedAt
     }
 
     public var allSeries: [CodexRadarModelSeries] {
