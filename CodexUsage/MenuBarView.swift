@@ -2,23 +2,6 @@ import AppKit
 import CodexUsageShared
 import SwiftUI
 
-enum MenuBarPopoverLayout {
-    static let width: CGFloat = 380
-    static let horizontalPadding: CGFloat = 12
-    static let topPadding: CGFloat = 4
-    static let bottomPadding: CGFloat = 8
-    static let minimumHeight: CGFloat = 220
-    static let maximumHeight: CGFloat = 820
-    static let maximumScrollableContentHeight: CGFloat = 720
-    static let paceMarkerTooltipTopOffset: CGFloat = 112
-    static let scrollOverflowHysteresis: CGFloat = 28
-    static let initialSize = NSSize(width: width, height: 680)
-
-    static var contentWidth: CGFloat {
-        width - horizontalPadding * 2
-    }
-}
-
 private enum TokenActivityMode: String, CaseIterable, Identifiable {
     case daily
     case weekly
@@ -111,13 +94,6 @@ struct MenuBarView: View {
                 .onPreferenceChange(MenuBarScrollContentHeightPreferenceKey.self) { height in
                     updateMeasuredScrollContentHeight(height)
                 }
-
-            if let errorMessage = viewModel.errorMessage {
-                Label(errorMessage, systemImage: "exclamationmark.triangle")
-                    .font(.caption)
-                    .foregroundStyle(.orange)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
 
             Divider()
 
@@ -326,6 +302,13 @@ struct MenuBarView: View {
                     store: radarStore,
                     settings: CodexRadarSettings(defaults: MenuBarDisplaySettings.sharedDefaults)
                 )
+            }
+
+            if let errorMessage = viewModel.errorMessage {
+                Label(errorMessage, systemImage: "exclamationmark.triangle")
+                    .font(.caption)
+                    .foregroundStyle(.orange)
+                    .fixedSize(horizontal: false, vertical: true)
             }
         }
     }

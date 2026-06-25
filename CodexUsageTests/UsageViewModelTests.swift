@@ -226,6 +226,10 @@ final class UsageViewModelTests: XCTestCase {
         XCTAssertEqual(alignedFrame.size, popoverFrame.size)
     }
 
+    func testPopoverErrorMessageBelongsToScrollableContent() {
+        XCTAssertEqual(MenuBarPopoverLayout.errorMessageRegion, .scrollContent)
+    }
+
     func testDefaultCompactWidthFitsHundredPercentMenuBarLine() {
         let settings = MenuBarDisplaySettings()
         let font = NSFont.systemFont(ofSize: settings.numberFontSize, weight: .medium)
@@ -580,13 +584,14 @@ final class UsageViewModelTests: XCTestCase {
         let display = CodexUsageWidgetDisplay(
             snapshot: snapshot,
             settings: MenuBarDisplaySettings(),
-            widgetSettings: WidgetDisplaySettings(contentMode: .bothWindows)
+            widgetSettings: WidgetDisplaySettings(contentMode: .bothWindows),
+            now: Date(timeIntervalSince1970: 1_779_940_000)
         )
 
         XCTAssertEqual(display.lines.map(\.title), ["5 小时", "7 天"])
         XCTAssertEqual(display.lines.map(\.value), ["82%", "89%"])
         XCTAssertEqual(display.lines.map(\.paceStatusText), ["节奏正常", "超额 5%"])
-        XCTAssertEqual(display.lines.map(\.paceProjectionText), ["持续到重置", "预计 2天6小时后耗尽"])
+        XCTAssertEqual(display.lines.map(\.paceProjectionText), ["持续到重置", "预计 4天6小时后耗尽"])
         XCTAssertEqual(display.lines.map(\.paceTone), [.good, .warning])
     }
 

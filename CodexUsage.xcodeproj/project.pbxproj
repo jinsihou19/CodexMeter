@@ -57,6 +57,9 @@
 		100000000000000000001015 /* CodexRadarView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 100000000000000000001005 /* CodexRadarView.swift */; };
 		100000000000000000001016 /* CodexRadarTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 100000000000000000001006 /* CodexRadarTests.swift */; };
 		100000000000000000001017 /* CodexRadarClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 100000000000000000001003 /* CodexRadarClient.swift */; };
+		100000000000000000001021 /* MenuBarPopoverLayout.swift in Sources */ = {isa = PBXBuildFile; fileRef = 100000000000000000001020 /* MenuBarPopoverLayout.swift */; };
+		100000000000000000001022 /* MenuBarPopoverLayout.swift in Sources */ = {isa = PBXBuildFile; fileRef = 100000000000000000001020 /* MenuBarPopoverLayout.swift */; };
+		100000000000000000001023 /* CodexRadarStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 100000000000000000001004 /* CodexRadarStore.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -169,6 +172,7 @@
 		100000000000000000001004 /* CodexRadarStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CodexRadarStore.swift; sourceTree = "<group>"; };
 		100000000000000000001005 /* CodexRadarView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CodexRadarView.swift; sourceTree = "<group>"; };
 		100000000000000000001006 /* CodexRadarTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CodexRadarTests.swift; sourceTree = "<group>"; };
+		100000000000000000001020 /* MenuBarPopoverLayout.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MenuBarPopoverLayout.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -266,6 +270,7 @@
 				100000000000000000000F04 /* CodexHookActivityStore.swift */,
 				10000000000000000000001B /* UsageViewModel.swift */,
 				100000000000000000001004 /* CodexRadarStore.swift */,
+				100000000000000000001020 /* MenuBarPopoverLayout.swift */,
 				10000000000000000000001C /* MenuBarView.swift */,
 				100000000000000000001005 /* CodexRadarView.swift */,
 				100000000000000000000B04 /* MenuBarDisplaySettings.swift */,
@@ -476,12 +481,14 @@
 				100000000000000000000C02 /* SettingsWindowOpener.swift in Sources */,
 				100000000000000000000C05 /* SettingsWindowPresenter.swift in Sources */,
 				100000000000000000000C07 /* SettingsView.swift in Sources */,
+				100000000000000000001022 /* MenuBarPopoverLayout.swift in Sources */,
 				100000000000000000000D06 /* SettingsPanelLayout.swift in Sources */,
 				100000000000000000000D08 /* SettingsSections.swift in Sources */,
 				100000000000000000000D0A /* SettingsControls.swift in Sources */,
 				100000000000000000000D0C /* SettingsPreview.swift in Sources */,
 				100000000000000000001016 /* CodexRadarTests.swift in Sources */,
 				100000000000000000001017 /* CodexRadarClient.swift in Sources */,
+				100000000000000000001023 /* CodexRadarStore.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -492,6 +499,7 @@
 				10000000000000000000000B /* CodexUsageApp.swift in Sources */,
 				10000000000000000000000C /* UsageViewModel.swift in Sources */,
 				100000000000000000001014 /* CodexRadarStore.swift in Sources */,
+				100000000000000000001021 /* MenuBarPopoverLayout.swift in Sources */,
 				10000000000000000000000D /* MenuBarView.swift in Sources */,
 				100000000000000000001015 /* CodexRadarView.swift in Sources */,
 				10000000000000000000000E /* DirectCodexUsageClient.swift in Sources */,

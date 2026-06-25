@@ -5,6 +5,25 @@ import XCTest
 
 /// 降智雷达共享模型测试，覆盖开关默认值、缓存落盘和工作时间刷新节奏。
 final class CodexRadarTests: XCTestCase {
+    /// 验证降智雷达模块关闭时，后台 Store 启动也不会访问外部雷达接口。
+    @MainActor
+    func testCodexRadarStoreDoesNotFetchWhenModuleHidden() async throws {
+        let directory = URL(fileURLWithPath: "/tmp", isDirectory: true)
+            .appendingPathComponent("CodexRadarTests-\(UUID().uuidString)", isDirectory: true)
+        let client = CountingCodexRadarClient()
+        let store = CodexRadarStore(
+            client: client,
+            store: CodexRadarSnapshotStore(appGroupIdentifier: "", fallbackDirectory: directory),
+            settingsProvider: { CodexRadarSettings(isEnabled: false) },
+            nowProvider: { Date(timeIntervalSince1970: 1_779_940_000) }
+        )
+
+        store.start()
+        try await Task.sleep(nanoseconds: 50_000_000)
+
+        XCTAssertEqual(client.fetchCount, 0)
+    }
+
     /// 验证 current.json 的模型 IQ 更新时间来自 model_iq.quota_radar.updated_at，而不是顶层 monitored_at。
     func testDirectCodexRadarClientReadsModelIQQuotaRadarUpdatedAt() async throws {
         let body = """
@@ -175,5 +194,28 @@ final class CodexRadarTests: XCTestCase {
 
         XCTAssertTrue(FileManager.default.fileExists(atPath: store.snapshotURL().path))
         XCTAssertEqual(try store.load(), snapshot)
+    }
+}
+
+private final class CountingCodexRadarClient: CodexRadarFetching, @unchecked Sendable {
+    private let queue = DispatchQueue(label: "CodexUsageTests.CountingCodexRadarClient")
+    private var storedFetchCount = 0
+
+    var fetchCount: Int {
+        queue.sync { storedFetchCount }
+    }
+
+    /// 记录雷达请求次数并返回最小可用快照；测试只关心是否触发网络抽象。
+    func fetchRadarSnapshot() async throws -> CodexRadarSnapshot {
+        queue.sync {
+            storedFetchCount += 1
+        }
+        return CodexRadarSnapshot(
+            fetchedAt: Date(timeIntervalSince1970: 1_779_940_000),
+            monitoredAt: nil,
+            timezone: nil,
+            prediction: nil,
+            modelIQ: nil
+        )
     }
 }

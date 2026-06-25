@@ -25,6 +25,9 @@ struct DirectCodexUsageClient: UsageRateLimitFetching {
     private let resetCreditsEndpointURL: URL
     private let timeoutSeconds: TimeInterval
     private let transport: Transport
+    private let resetCreditsCache: any ResetCreditsDailyCaching
+    private let currentDate: @Sendable () -> Date
+    private let showsResetCreditsProvider: @Sendable () -> Bool
 
     init(
         authFileURL: URL = Self.defaultAuthFileURL(),
@@ -32,7 +35,12 @@ struct DirectCodexUsageClient: UsageRateLimitFetching {
         profileEndpointURL: URL = Self.defaultProfileEndpointURL,
         resetCreditsEndpointURL: URL = Self.defaultResetCreditsEndpointURL,
         timeoutSeconds: TimeInterval = 45,
-        transport: @escaping Transport = Self.urlSessionTransport
+        transport: @escaping Transport = Self.urlSessionTransport,
+        resetCreditsCache: any ResetCreditsDailyCaching = UserDefaultsResetCreditsDailyCache(),
+        currentDate: @escaping @Sendable () -> Date = { Date() },
+        showsResetCreditsProvider: @escaping @Sendable () -> Bool = {
+            PopoverDisplaySettings(defaults: MenuBarDisplaySettings.sharedDefaults).showsResetCredits
+        }
     ) {
         self.authFileURL = authFileURL
         self.endpointURL = endpointURL
@@ -40,6 +48,9 @@ struct DirectCodexUsageClient: UsageRateLimitFetching {
         self.resetCreditsEndpointURL = resetCreditsEndpointURL
         self.timeoutSeconds = timeoutSeconds
         self.transport = transport
+        self.resetCreditsCache = resetCreditsCache
+        self.currentDate = currentDate
+        self.showsResetCreditsProvider = showsResetCreditsProvider
     }
 
     func fetchRateLimits() async throws -> RateLimitSnapshot {
@@ -100,9 +111,21 @@ struct DirectCodexUsageClient: UsageRateLimitFetching {
 
     /// 尝试读取额度重置卡；该接口只影响附加展示，失败时不阻断基础额度刷新。
     private func fetchResetCreditsIfAvailable(accessToken: String, accountID: String?) async -> ResetCreditsSnapshot? {
+        guard showsResetCreditsProvider() else {
+            return nil
+        }
+
+        let now = currentDate()
+        if let cachedAttempt = resetCreditsCache.loadAttempt(accountID: accountID, now: now) {
+            return cachedAttempt.snapshot
+        }
+
         do {
-            return try await fetchResetCredits(accessToken: accessToken, accountID: accountID)
+            let snapshot = try await fetchResetCredits(accessToken: accessToken, accountID: accountID)
+            resetCreditsCache.saveAttempt(.init(snapshot: snapshot), accountID: accountID, now: now)
+            return snapshot
         } catch {
+            resetCreditsCache.saveAttempt(.init(snapshot: nil), accountID: accountID, now: now)
             return nil
         }
     }
@@ -254,6 +277,92 @@ struct DirectCodexUsageClient: UsageRateLimitFetching {
         }
         return value
     }
+}
+
+/// 描述当天额度重置卡接口是否已经尝试过；snapshot 为空表示当天请求失败但仍需限频。
+struct ResetCreditsDailyAttempt: Sendable {
+    let snapshot: ResetCreditsSnapshot?
+}
+
+/// 管理额度重置卡接口的每日请求缓存；只负责节流和快照复用，不参与网络请求和展示格式化。
+protocol ResetCreditsDailyCaching: Sendable {
+    /// 读取指定账户当天的请求尝试；返回 nil 表示当天还没有请求过，非 nil 表示应跳过网络请求。
+    func loadAttempt(accountID: String?, now: Date) -> ResetCreditsDailyAttempt?
+
+    /// 保存指定账户当天的请求尝试；失败请求也会保存空快照，避免刷新循环反复打接口。
+    func saveAttempt(_ attempt: ResetCreditsDailyAttempt, accountID: String?, now: Date)
+}
+
+/// 使用共享 UserDefaults 持久化重置卡每日请求状态，保证应用重启后同一天也不会重复请求。
+final class UserDefaultsResetCreditsDailyCache: ResetCreditsDailyCaching, @unchecked Sendable {
+    private let defaults: UserDefaults
+    private let storageKey: String
+    private let lock = NSLock()
+
+    init(
+        defaults: UserDefaults = MenuBarDisplaySettings.sharedDefaults,
+        storageKey: String = "usage.resetCredits.dailyAttempt"
+    ) {
+        self.defaults = defaults
+        self.storageKey = storageKey
+    }
+
+    /// 读取当天缓存；账户或自然日不匹配时视为未请求，避免串用其他登录态的重置卡信息。
+    func loadAttempt(accountID: String?, now: Date) -> ResetCreditsDailyAttempt? {
+        lock.lock()
+        defer { lock.unlock() }
+
+        guard let data = defaults.data(forKey: storageKey),
+              let storedAttempt = try? JSONDecoder().decode(StoredResetCreditsDailyAttempt.self, from: data),
+              storedAttempt.accountID == normalizedAccountID(accountID),
+              storedAttempt.dayKey == dayKey(for: now)
+        else {
+            return nil
+        }
+        return ResetCreditsDailyAttempt(snapshot: storedAttempt.snapshot)
+    }
+
+    /// 写入当天缓存；编码失败时清理旧值，避免损坏数据让客户端长期误判为已请求。
+    func saveAttempt(_ attempt: ResetCreditsDailyAttempt, accountID: String?, now: Date) {
+        lock.lock()
+        defer { lock.unlock() }
+
+        let storedAttempt = StoredResetCreditsDailyAttempt(
+            accountID: normalizedAccountID(accountID),
+            dayKey: dayKey(for: now),
+            snapshot: attempt.snapshot
+        )
+        guard let data = try? JSONEncoder().encode(storedAttempt) else {
+            defaults.removeObject(forKey: storageKey)
+            return
+        }
+        defaults.set(data, forKey: storageKey)
+    }
+
+    /// 把账户标识中的空白值统一成 nil，保证未登录账户和空字符串使用同一缓存分支。
+    private func normalizedAccountID(_ accountID: String?) -> String? {
+        guard let accountID = accountID?.trimmingCharacters(in: .whitespacesAndNewlines), !accountID.isEmpty else {
+            return nil
+        }
+        return accountID
+    }
+
+    /// 按用户本地自然日生成缓存键；需求是每天请求一次，跨时区时跟随系统当前日历语义。
+    private func dayKey(for date: Date) -> String {
+        let components = Calendar.current.dateComponents([.year, .month, .day], from: date)
+        return [
+            components.year.map(String.init) ?? "0000",
+            String(format: "%02d", components.month ?? 0),
+            String(format: "%02d", components.day ?? 0)
+        ].joined(separator: "-")
+    }
+}
+
+/// UserDefaults 中保存的重置卡每日请求状态；和运行时协议拆开，便于后续迁移存储格式。
+private struct StoredResetCreditsDailyAttempt: Codable {
+    let accountID: String?
+    let dayKey: String
+    let snapshot: ResetCreditsSnapshot?
 }
 
 enum DirectCodexUsageClientError: LocalizedError, Equatable {
