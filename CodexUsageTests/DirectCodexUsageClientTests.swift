@@ -391,18 +391,18 @@ final class DirectCodexUsageClientTests: XCTestCase {
         {
           "plan_type": "prolite",
           "rate_limit": {
-            "primary_window": {
-              "used_percent": null,
-              "limit_window_seconds": "18000",
-              "reset_after_seconds": "18000",
-              "reset_at": "1779967655"
-            },
+            "primary_window": 0,
             "secondary_window": {
               "used_percent": "77",
               "limit_window_seconds": 604800,
               "reset_after_seconds": 120960,
               "reset_at": 1780392047
             }
+          },
+          "credits": {
+            "has_credits": false,
+            "unlimited": false,
+            "balance": 0
           }
         }
         """)
@@ -415,10 +415,11 @@ final class DirectCodexUsageClientTests: XCTestCase {
         let snapshot = try await client.fetchRateLimits()
 
         XCTAssertEqual(snapshot.primary?.remainingPercent, 100)
-        XCTAssertEqual(snapshot.primary?.windowDurationMins, 300)
-        XCTAssertEqual(snapshot.primary?.resetAfterSeconds, 18_000)
-        XCTAssertEqual(snapshot.primary?.resetsAt, 1_779_967_655)
+        XCTAssertNil(snapshot.primary?.windowDurationMins)
+        XCTAssertNil(snapshot.primary?.resetAfterSeconds)
+        XCTAssertNil(snapshot.primary?.resetsAt)
         XCTAssertEqual(snapshot.secondary?.remainingPercent, 23)
+        XCTAssertEqual(snapshot.credits?.balance, "0")
     }
 
     /// 构造测试用 unsigned JWT；生产代码只读取 payload 展示字段，不依赖签名。

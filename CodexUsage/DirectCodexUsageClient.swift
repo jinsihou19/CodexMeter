@@ -470,8 +470,24 @@ private struct WhamWindow: Decodable {
         case resetAt = "reset_at"
     }
 
-    /// 宽容解析 Codex 用量窗口；接口在归零边界可能省略或字符串化数值，展示层按 0% 继续处理。
+    /// 宽容解析 Codex 用量窗口；接口在归零边界可能省略、字符串化数值，或把整个窗口压成裸 0。
     init(from decoder: Decoder) throws {
+        if let singleValue = try? decoder.singleValueContainer().decode(Double.self) {
+            self.usedPercent = singleValue
+            self.limitWindowSeconds = nil
+            self.resetAfterSeconds = nil
+            self.resetAt = nil
+            return
+        }
+        if let singleValue = try? decoder.singleValueContainer().decode(String.self),
+           let usedPercent = Double(singleValue.trimmingCharacters(in: .whitespacesAndNewlines)) {
+            self.usedPercent = usedPercent
+            self.limitWindowSeconds = nil
+            self.resetAfterSeconds = nil
+            self.resetAt = nil
+            return
+        }
+
         let container = try decoder.container(keyedBy: CodingKeys.self)
         self.usedPercent = try container.decodeFlexibleDoubleIfPresent(forKey: .usedPercent) ?? 0
         self.limitWindowSeconds = try container.decodeFlexibleIntIfPresent(forKey: .limitWindowSeconds)
@@ -515,6 +531,20 @@ private extension KeyedDecodingContainer {
             .trimmingCharacters(in: .whitespacesAndNewlines),
            !stringValue.isEmpty {
             return Int(stringValue) ?? Double(stringValue).map(Int.init)
+        }
+        return nil
+    }
+
+    /// 解码可能由字符串或数字承载的展示字段；数字 0 保持为 "0"，避免归零响应打断整体解析。
+    func decodeFlexibleStringIfPresent(forKey key: Key) throws -> String? {
+        if let stringValue = try? decode(String.self, forKey: key) {
+            return stringValue
+        }
+        if let intValue = try? decode(Int.self, forKey: key) {
+            return String(intValue)
+        }
+        if let doubleValue = try? decode(Double.self, forKey: key) {
+            return doubleValue.rounded() == doubleValue ? String(Int(doubleValue)) : String(doubleValue)
         }
         return nil
     }
@@ -580,6 +610,14 @@ private struct WhamCredits: Decodable {
         case hasCredits = "has_credits"
         case unlimited
         case balance
+    }
+
+    /// 兼容余额为数字 0 的响应；展示层只需要原样字符串，不参与金额计算。
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.hasCredits = try container.decode(Bool.self, forKey: .hasCredits)
+        self.unlimited = try container.decode(Bool.self, forKey: .unlimited)
+        self.balance = try container.decodeFlexibleStringIfPresent(forKey: .balance)
     }
 
     var creditsSnapshot: CreditsSnapshot {
