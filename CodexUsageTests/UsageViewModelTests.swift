@@ -739,6 +739,87 @@ final class UsageViewModelTests: XCTestCase {
         XCTAssertEqual(client.fetchCount, 1)
     }
 
+    /// 验证重置卡开关快速关再开时，会按通知携带的状态触发一次强制刷新。
+    func testResetCreditsToggleOffThenOnTriggersForcedRefresh() async {
+        let visibility = LockedBoolean(true)
+        let client = RecordingUsageSnapshotClient(snapshot: UsageSnapshot(
+            fetchedAt: Date(timeIntervalSince1970: 1_779_940_000),
+            rateLimits: RateLimitSnapshot(
+                limitId: "codex",
+                limitName: nil,
+                primary: nil,
+                secondary: nil,
+                credits: nil,
+                planType: nil,
+                rateLimitReachedType: nil
+            )
+        ))
+        let viewModel = UsageViewModel(
+            client: client,
+            store: UsageSnapshotStore(
+                appGroupIdentifier: "",
+                fallbackDirectory: FileManager.default.temporaryDirectory
+                    .appendingPathComponent(UUID().uuidString, isDirectory: true)
+            ),
+            reloadWidgetTimelines: {},
+            refreshCadenceProvider: { .manual },
+            resetCreditsVisibilityProvider: { visibility.value }
+        )
+
+        viewModel.start()
+        NotificationCenter.default.post(
+            name: .popoverDisplaySettingsDidChange,
+            object: MenuBarDisplaySettings.sharedDefaults,
+            userInfo: [PopoverPreferenceKeys.showsResetCredits: false]
+        )
+        NotificationCenter.default.post(
+            name: .popoverDisplaySettingsDidChange,
+            object: MenuBarDisplaySettings.sharedDefaults,
+            userInfo: [PopoverPreferenceKeys.showsResetCredits: true]
+        )
+        for _ in 0..<10 where client.forceRefreshFlags.isEmpty {
+            await Task.yield()
+        }
+
+        XCTAssertEqual(client.forceRefreshFlags, [true])
+    }
+
+    /// 验证重置卡开关保持开启时，普通设置变更不会额外强制刷新。
+    func testResetCreditsToggleNotificationDoesNotRefreshWhenAlreadyOn() async {
+        let client = RecordingUsageSnapshotClient(snapshot: UsageSnapshot(
+            fetchedAt: Date(timeIntervalSince1970: 1_779_940_000),
+            rateLimits: RateLimitSnapshot(
+                limitId: "codex",
+                limitName: nil,
+                primary: nil,
+                secondary: nil,
+                credits: nil,
+                planType: nil,
+                rateLimitReachedType: nil
+            )
+        ))
+        let viewModel = UsageViewModel(
+            client: client,
+            store: UsageSnapshotStore(
+                appGroupIdentifier: "",
+                fallbackDirectory: FileManager.default.temporaryDirectory
+                    .appendingPathComponent(UUID().uuidString, isDirectory: true)
+            ),
+            reloadWidgetTimelines: {},
+            refreshCadenceProvider: { .manual },
+            resetCreditsVisibilityProvider: { true }
+        )
+
+        viewModel.start()
+        NotificationCenter.default.post(
+            name: .popoverDisplaySettingsDidChange,
+            object: MenuBarDisplaySettings.sharedDefaults
+        )
+        await Task.yield()
+
+        XCTAssertEqual(client.forceRefreshFlags, [])
+    }
+
     /// 验证手动刷新模式下启动只读取本地缓存，也会主动刷新小组件时间线。
     func testStartReloadsWidgetTimelinesWhenCachedSnapshotExists() throws {
         let storeDirectory = FileManager.default.temporaryDirectory
@@ -1044,6 +1125,28 @@ final class UsageViewModelTests: XCTestCase {
     }
 }
 
+private final class LockedBoolean: @unchecked Sendable {
+    private let lock = NSLock()
+    private var protectedValue: Bool
+
+    init(_ value: Bool) {
+        self.protectedValue = value
+    }
+
+    var value: Bool {
+        get {
+            lock.withLock {
+                protectedValue
+            }
+        }
+        set {
+            lock.withLock {
+                protectedValue = newValue
+            }
+        }
+    }
+}
+
 private func textWidth(_ text: String, font: NSFont) -> CGFloat {
     (text as NSString).size(withAttributes: [.font: font]).width
 }
@@ -1074,6 +1177,34 @@ private final class CountingRateLimitClient: UsageRateLimitFetching, @unchecked 
     func fetchRateLimits() async throws -> RateLimitSnapshot {
         lock.withLock {
             protectedFetchCount += 1
+        }
+        return snapshot
+    }
+}
+
+private final class RecordingUsageSnapshotClient: UsageRateLimitFetching, @unchecked Sendable {
+    private let snapshot: UsageSnapshot
+    private let lock = NSLock()
+    private var protectedForceRefreshFlags: [Bool] = []
+
+    init(snapshot: UsageSnapshot) {
+        self.snapshot = snapshot
+    }
+
+    var forceRefreshFlags: [Bool] {
+        lock.withLock {
+            protectedForceRefreshFlags
+        }
+    }
+
+    func fetchRateLimits() async throws -> RateLimitSnapshot {
+        snapshot.rateLimits
+    }
+
+    /// 记录调用方是否要求绕过重置卡每日缓存，避免测试依赖真实网络客户端。
+    func fetchUsageSnapshot(forceRefreshResetCredits: Bool) async throws -> UsageSnapshot {
+        lock.withLock {
+            protectedForceRefreshFlags.append(forceRefreshResetCredits)
         }
         return snapshot
     }

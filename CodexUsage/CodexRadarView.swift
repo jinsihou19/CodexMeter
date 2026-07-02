@@ -8,6 +8,9 @@ struct CodexRadarSection: View {
     @ObservedObject var store: CodexRadarStore
     let settings: CodexRadarSettings
 
+    /// 降智雷达详情页入口；弹窗里只放外链图标，完整说明交给网页承载。
+    private static let radarPageURL = URL(string: "https://codexradar.com/")!
+
     var body: some View {
         if settings.isEnabled {
             VStack(alignment: .leading, spacing: 4) {
@@ -49,6 +52,12 @@ struct CodexRadarSection: View {
                 ProgressView()
                     .controlSize(.mini)
             }
+            Link(destination: Self.radarPageURL) {
+                Image(systemName: "arrow.up.right")
+            }
+            .buttonStyle(.plain)
+            .imageScale(.small)
+            .help("打开 Codex Radar")
             Button {
                 Task { await store.refresh() }
             } label: {

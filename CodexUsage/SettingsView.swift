@@ -160,8 +160,8 @@ struct SettingsView: View {
             WidgetDisplaySettings.notifyDidChange()
             WidgetCenter.shared.reloadTimelines(ofKind: "CodexUsageWidget")
         }
-        .onChange(of: currentPopoverSettings) { _, _ in
-            PopoverDisplaySettings.notifyDidChange()
+        .onChange(of: currentPopoverSettings) { _, settings in
+            PopoverDisplaySettings.notifyDidChange(showsResetCredits: settings.showsResetCredits)
         }
     }
 

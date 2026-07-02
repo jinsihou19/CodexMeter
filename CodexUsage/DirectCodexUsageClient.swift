@@ -3,11 +3,16 @@ import Foundation
 
 protocol UsageRateLimitFetching: Sendable {
     func fetchRateLimits() async throws -> RateLimitSnapshot
-    func fetchUsageSnapshot() async throws -> UsageSnapshot
+    func fetchUsageSnapshot(forceRefreshResetCredits: Bool) async throws -> UsageSnapshot
 }
 
 extension UsageRateLimitFetching {
     func fetchUsageSnapshot() async throws -> UsageSnapshot {
+        try await fetchUsageSnapshot(forceRefreshResetCredits: false)
+    }
+
+    /// 默认快照实现只读取基础额度；不支持重置卡的测试桩可忽略强制刷新语义。
+    func fetchUsageSnapshot(forceRefreshResetCredits: Bool) async throws -> UsageSnapshot {
         let rateLimits = try await fetchRateLimits()
         return UsageSnapshot(fetchedAt: Date(), rateLimits: rateLimits)
     }
@@ -58,13 +63,14 @@ struct DirectCodexUsageClient: UsageRateLimitFetching {
         return try await fetchRateLimits(accessToken: authContext.accessToken)
     }
 
-    func fetchUsageSnapshot() async throws -> UsageSnapshot {
+    func fetchUsageSnapshot(forceRefreshResetCredits: Bool = false) async throws -> UsageSnapshot {
         let authContext = try loadAuthContext()
         async let rateLimits = fetchRateLimits(accessToken: authContext.accessToken)
         async let profileStats = fetchProfileStatsIfAvailable(accessToken: authContext.accessToken)
         async let resetCredits = fetchResetCreditsIfAvailable(
             accessToken: authContext.accessToken,
-            accountID: authContext.accountID
+            accountID: authContext.accountID,
+            forceRefresh: forceRefreshResetCredits
         )
         let fetchedRateLimits = try await rateLimits
         let account = CodexAccountSnapshot(
@@ -110,13 +116,17 @@ struct DirectCodexUsageClient: UsageRateLimitFetching {
     }
 
     /// 尝试读取额度重置卡；该接口只影响附加展示，失败时不阻断基础额度刷新。
-    private func fetchResetCreditsIfAvailable(accessToken: String, accountID: String?) async -> ResetCreditsSnapshot? {
+    private func fetchResetCreditsIfAvailable(
+        accessToken: String,
+        accountID: String?,
+        forceRefresh: Bool
+    ) async -> ResetCreditsSnapshot? {
         guard showsResetCreditsProvider() else {
             return nil
         }
 
         let now = currentDate()
-        if let cachedAttempt = resetCreditsCache.loadAttempt(accountID: accountID, now: now) {
+        if !forceRefresh, let cachedAttempt = resetCreditsCache.loadAttempt(accountID: accountID, now: now) {
             return cachedAttempt.snapshot
         }
 
@@ -455,6 +465,18 @@ private struct WhamRateLimit: Decodable {
         case primaryWindow = "primary_window"
         case secondaryWindow = "secondary_window"
     }
+
+    /// 兼容整个 rate_limit 被压成裸 0 的响应；此时两个窗口均视为缺失。
+    init(from decoder: Decoder) throws {
+        if let _ = try? decoder.singleValueContainer().decode(Double.self) {
+            self.primaryWindow = nil
+            self.secondaryWindow = nil
+            return
+        }
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.primaryWindow = try container.decodeIfPresent(WhamWindow.self, forKey: .primaryWindow)
+        self.secondaryWindow = try container.decodeIfPresent(WhamWindow.self, forKey: .secondaryWindow)
+    }
 }
 
 private struct WhamWindow: Decodable {
@@ -612,8 +634,14 @@ private struct WhamCredits: Decodable {
         case balance
     }
 
-    /// 兼容余额为数字 0 的响应；展示层只需要原样字符串，不参与金额计算。
+    /// 兼容余额为数字 0 或整个 credits 被压成裸 0 的响应。
     init(from decoder: Decoder) throws {
+        if let _ = try? decoder.singleValueContainer().decode(Double.self) {
+            self.hasCredits = false
+            self.unlimited = false
+            self.balance = "0"
+            return
+        }
         let container = try decoder.container(keyedBy: CodingKeys.self)
         self.hasCredits = try container.decode(Bool.self, forKey: .hasCredits)
         self.unlimited = try container.decode(Bool.self, forKey: .unlimited)

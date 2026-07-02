@@ -500,10 +500,14 @@ public struct PopoverDisplaySettings: Equatable, Sendable {
         self == PopoverDisplaySettings()
     }
 
-    /// 通知菜单栏弹窗重新构建内容，保证模块开关能即时反映在已打开的弹窗中。
-    public static func notifyDidChange(defaults: UserDefaults = MenuBarDisplaySettings.sharedDefaults) {
+    /// 通知菜单栏弹窗重新构建内容；可附带重置卡开关值，避免快速关开时后台只读到最终状态。
+    public static func notifyDidChange(
+        defaults: UserDefaults = MenuBarDisplaySettings.sharedDefaults,
+        showsResetCredits: Bool? = nil
+    ) {
         defaults.synchronize()
-        NotificationCenter.default.post(name: .popoverDisplaySettingsDidChange, object: defaults)
+        let userInfo = showsResetCredits.map { [PopoverPreferenceKeys.showsResetCredits: $0] }
+        NotificationCenter.default.post(name: .popoverDisplaySettingsDidChange, object: defaults, userInfo: userInfo)
         NotificationCenter.default.post(name: UserDefaults.didChangeNotification, object: defaults)
     }
 }

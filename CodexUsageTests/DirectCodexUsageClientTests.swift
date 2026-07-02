@@ -272,6 +272,58 @@ final class DirectCodexUsageClientTests: XCTestCase {
         )
     }
 
+    /// 验证关闭后重新打开重置卡模块时，可以绕过当天缓存立刻重新请求一次。
+    func testFetchUsageSnapshotRefreshesResetCreditsWhenForcedAfterDailyCache() async throws {
+        let authFile = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString)
+            .appendingPathComponent("auth.json")
+        let accountID = "account-\(UUID().uuidString)"
+        try FileManager.default.createDirectory(
+            at: authFile.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        try """
+        {"tokens":{"access_token":"test-access-token","account_id":"\(accountID)"}}
+        """.write(to: authFile, atomically: true, encoding: .utf8)
+        let recorder = RequestRecorder(responseBodySequencesByPath: [
+            "/backend-api/wham/usage": [
+                """
+                {"plan_type":"prolite","rate_limit":{"primary_window":{"used_percent":43}}}
+                """
+            ],
+            "/backend-api/wham/rate-limit-reset-credits": [
+                """
+                {"available_count":1,"credits":[]}
+                """,
+                """
+                {"available_count":2,"credits":[]}
+                """
+            ]
+        ])
+        let client = DirectCodexUsageClient(
+            authFileURL: authFile,
+            endpointURL: URL(string: "https://example.test/backend-api/wham/usage")!,
+            profileEndpointURL: URL(string: "https://example.test/backend-api/wham/profiles/me")!,
+            resetCreditsEndpointURL: URL(string: "https://example.test/backend-api/wham/rate-limit-reset-credits")!,
+            transport: recorder.transport,
+            resetCreditsCache: InMemoryResetCreditsDailyCache(),
+            currentDate: { Date(timeIntervalSince1970: 1_781_841_600) },
+            showsResetCreditsProvider: { true }
+        )
+
+        let firstSnapshot = try await client.fetchUsageSnapshot()
+        let cachedSnapshot = try await client.fetchUsageSnapshot()
+        let forcedSnapshot = try await client.fetchUsageSnapshot(forceRefreshResetCredits: true)
+
+        XCTAssertEqual(firstSnapshot.resetCredits?.availableCount, 1)
+        XCTAssertEqual(cachedSnapshot.resetCredits?.availableCount, 1)
+        XCTAssertEqual(forcedSnapshot.resetCredits?.availableCount, 2)
+        XCTAssertEqual(
+            recorder.requestURLs.filter { $0.path == "/backend-api/wham/rate-limit-reset-credits" }.count,
+            2
+        )
+    }
+
     /// 验证下拉面板关闭重置卡模块时，后台同步不会请求重置卡接口。
     func testFetchUsageSnapshotSkipsResetCreditsWhenModuleHidden() async throws {
         let authFile = FileManager.default.temporaryDirectory
@@ -422,6 +474,38 @@ final class DirectCodexUsageClientTests: XCTestCase {
         XCTAssertEqual(snapshot.credits?.balance, "0")
     }
 
+    func testFetchRateLimitsTreatsEntireRateLimitAsZero() async throws {
+        let authFile = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString)
+            .appendingPathComponent("auth.json")
+        try FileManager.default.createDirectory(
+            at: authFile.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        try """
+        {"tokens":{"access_token":"test-access-token"}}
+        """.write(to: authFile, atomically: true, encoding: .utf8)
+        let recorder = RequestRecorder(responseBody: """
+        {
+          "plan_type": "prolite",
+          "rate_limit": 0,
+          "credits": 0
+        }
+        """)
+        let client = DirectCodexUsageClient(
+            authFileURL: authFile,
+            endpointURL: URL(string: "https://example.test/backend-api/wham/usage")!,
+            transport: recorder.transport
+        )
+
+        let snapshot = try await client.fetchRateLimits()
+
+        XCTAssertNil(snapshot.primary)
+        XCTAssertNil(snapshot.secondary)
+        XCTAssertEqual(snapshot.credits?.balance, "0")
+        XCTAssertEqual(snapshot.credits?.hasCredits, false)
+    }
+
     /// 构造测试用 unsigned JWT；生产代码只读取 payload 展示字段，不依赖签名。
     private static func idToken(payload: [String: Any]) -> String {
         let header = ["alg": "none", "typ": "JWT"]
@@ -478,7 +562,7 @@ final class DirectCodexUsageClientTests: XCTestCase {
 }
 
 private final class RequestRecorder: @unchecked Sendable {
-    private let responseBodiesByPath: [String: String]
+    private let responseBodiesByPath: [String: [String]]
     private let queue = DispatchQueue(label: "CodexUsageTests.RequestRecorder")
     private var recordedAuthorizationHeader: String?
     private var recordedCachePolicy: URLRequest.CachePolicy?
@@ -487,13 +571,18 @@ private final class RequestRecorder: @unchecked Sendable {
     private var recordedRequestURL: URL?
     private var recordedRequestURLs: [URL] = []
     private var recordedHeadersByPath: [String: [String: String]] = [:]
+    private var responseIndexByPath: [String: Int] = [:]
 
     init(responseBody: String) {
-        self.responseBodiesByPath = ["*": responseBody]
+        self.responseBodiesByPath = ["*": [responseBody]]
     }
 
     init(responseBodiesByPath: [String: String]) {
-        self.responseBodiesByPath = responseBodiesByPath
+        self.responseBodiesByPath = responseBodiesByPath.mapValues { [$0] }
+    }
+
+    init(responseBodySequencesByPath: [String: [String]]) {
+        self.responseBodiesByPath = responseBodySequencesByPath
     }
 
     var authorizationHeader: String? {
@@ -526,7 +615,7 @@ private final class RequestRecorder: @unchecked Sendable {
     }
 
     func transport(_ request: URLRequest) async throws -> (Data, HTTPURLResponse) {
-        let responseBody = responseBodiesByPath[request.url?.path ?? ""] ?? responseBodiesByPath["*"] ?? "{}"
+        let path = request.url?.path ?? ""
         queue.sync {
             recordedAuthorizationHeader = request.value(forHTTPHeaderField: "Authorization")
             recordedCachePolicy = request.cachePolicy
@@ -541,6 +630,13 @@ private final class RequestRecorder: @unchecked Sendable {
                 }
                 recordedHeadersByPath[url.path] = headers
             }
+        }
+        let responseBody = queue.sync {
+            let key = responseBodiesByPath[path] == nil ? "*" : path
+            let bodies = responseBodiesByPath[key] ?? ["{}"]
+            let index = min(responseIndexByPath[key, default: 0], bodies.count - 1)
+            responseIndexByPath[key, default: 0] = index + 1
+            return bodies[index]
         }
         let response = HTTPURLResponse(
             url: request.url!,

@@ -13,10 +13,13 @@ final class UsageViewModel: ObservableObject {
     private let store: UsageSnapshotStore
     private let reloadWidgetTimelines: () -> Void
     private let refreshCadenceProvider: @MainActor @Sendable () -> UsageRefreshCadence
+    private let resetCreditsVisibilityProvider: @MainActor @Sendable () -> Bool
     private let logger = Logger(subsystem: "com.jinsihou.CodexUsage", category: "Usage")
     private var refreshTask: Task<Void, Never>?
     private var hasStartedRefreshLoop = false
     private var appBehaviorObserver: NSObjectProtocol?
+    private var popoverDisplayObserver: NSObjectProtocol?
+    private var lastShowsResetCredits: Bool
 
     init(
         client: any UsageRateLimitFetching = DirectCodexUsageClient(),
@@ -26,12 +29,17 @@ final class UsageViewModel: ObservableObject {
         },
         refreshCadenceProvider: @escaping @MainActor @Sendable () -> UsageRefreshCadence = {
             AppBehaviorSettings(defaults: MenuBarDisplaySettings.sharedDefaults).refreshCadence
+        },
+        resetCreditsVisibilityProvider: @escaping @MainActor @Sendable () -> Bool = {
+            PopoverDisplaySettings(defaults: MenuBarDisplaySettings.sharedDefaults).showsResetCredits
         }
     ) {
         self.client = client
         self.store = store
         self.reloadWidgetTimelines = reloadWidgetTimelines
         self.refreshCadenceProvider = refreshCadenceProvider
+        self.resetCreditsVisibilityProvider = resetCreditsVisibilityProvider
+        self.lastShowsResetCredits = resetCreditsVisibilityProvider()
         self.snapshot = try? store.load()
     }
 
@@ -123,6 +131,7 @@ final class UsageViewModel: ObservableObject {
 
         hasStartedRefreshLoop = true
         observeAppBehaviorSettings()
+        observePopoverDisplaySettings()
         applyRefreshCadence()
         // 本地已有缓存时也要唤醒 WidgetKit，避免上一次空时间线继续显示“暂无数据”。
         if snapshot != nil {
@@ -131,12 +140,17 @@ final class UsageViewModel: ObservableObject {
     }
 
     func refresh() async {
+        await refresh(forceRefreshResetCredits: false)
+    }
+
+    /// 刷新用量快照；只有重置卡模块从关到开时才绕过当天缓存，保留常规轮询的每日限频。
+    private func refresh(forceRefreshResetCredits: Bool) async {
         logger.info("Refresh started")
         isRefreshing = true
         defer { isRefreshing = false }
 
         do {
-            let updatedSnapshot = try await client.fetchUsageSnapshot()
+            let updatedSnapshot = try await client.fetchUsageSnapshot(forceRefreshResetCredits: forceRefreshResetCredits)
             try store.save(updatedSnapshot)
             snapshot = updatedSnapshot
             errorMessage = nil
@@ -171,6 +185,34 @@ final class UsageViewModel: ObservableObject {
         ) { [weak self] _ in
             Task { @MainActor in
                 self?.applyRefreshCadence()
+            }
+        }
+    }
+
+    /// 监听下拉面板模块开关；重置卡从隐藏恢复显示时，立即补一次真实接口请求。
+    private func observePopoverDisplaySettings() {
+        guard popoverDisplayObserver == nil else {
+            return
+        }
+        lastShowsResetCredits = resetCreditsVisibilityProvider()
+        popoverDisplayObserver = NotificationCenter.default.addObserver(
+            forName: .popoverDisplaySettingsDidChange,
+            object: MenuBarDisplaySettings.sharedDefaults,
+            queue: .main
+        ) { [weak self] notification in
+            let notifiedShowsResetCredits = notification.userInfo?[PopoverPreferenceKeys.showsResetCredits] as? Bool
+            Task { @MainActor in
+                guard let self else {
+                    return
+                }
+                let showsResetCredits = notifiedShowsResetCredits ?? self.resetCreditsVisibilityProvider()
+                defer {
+                    self.lastShowsResetCredits = showsResetCredits
+                }
+                guard showsResetCredits, !self.lastShowsResetCredits else {
+                    return
+                }
+                await self.refresh(forceRefreshResetCredits: true)
             }
         }
     }
