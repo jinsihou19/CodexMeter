@@ -398,8 +398,9 @@ public struct ResetCreditsSnapshot: Codable, Equatable, Sendable {
         self.credits = credits
     }
 
+    /// 接口已返回时即使 0 张也要展示模块，避免用户误以为开关或刷新没有生效。
     public var hasDisplayableContent: Bool {
-        availableCount > 0 || !credits.isEmpty
+        true
     }
 
     /// 按到期时间升序排列，未知到期时间放在最后，方便优先看到最需要关注的卡。

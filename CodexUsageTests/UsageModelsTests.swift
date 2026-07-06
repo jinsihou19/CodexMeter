@@ -156,6 +156,10 @@ final class UsageModelsTests: XCTestCase {
         XCTAssertEqual(snapshot.creditsSortedByExpiration.map(\.localizedStatus), ["已使用", "可用", "已过期"])
     }
 
+    func testResetCreditsSnapshotWithZeroAvailableStillHasDisplayableContent() {
+        XCTAssertTrue(ResetCreditsSnapshot(availableCount: 0).hasDisplayableContent)
+    }
+
     func testCodexPlanFormatterCleansKnownAndUnknownPlanNames() {
         XCTAssertEqual(CodexPlanFormatter.displayName(for: "prolite"), "Pro 5x")
         XCTAssertEqual(CodexPlanFormatter.displayName(for: "pro"), "Pro 20x")

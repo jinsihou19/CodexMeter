@@ -142,27 +142,6 @@ struct SettingsView: View {
             configurationInfo = CodexConfigurationInfo.current()
             loadPreviewSnapshot()
         }
-        .onChange(of: currentSettings) { _, _ in
-            MenuBarDisplaySettings.notifyDidChange()
-            WidgetCenter.shared.reloadTimelines(ofKind: "CodexUsageWidget")
-        }
-        .onChange(of: currentAppBehaviorSettings) { _, _ in
-            AppBehaviorSettings.notifyDidChange()
-        }
-        .onChange(of: currentCodexRadarSettings) { _, _ in
-            CodexRadarSettings.notifyDidChange()
-        }
-        .onChange(of: currentSurfaceAppearanceSettings) { _, _ in
-            SurfaceAppearanceSettings.notifyDidChange()
-            WidgetCenter.shared.reloadTimelines(ofKind: "CodexUsageWidget")
-        }
-        .onChange(of: currentWidgetSettings) { _, _ in
-            WidgetDisplaySettings.notifyDidChange()
-            WidgetCenter.shared.reloadTimelines(ofKind: "CodexUsageWidget")
-        }
-        .onChange(of: currentPopoverSettings) { _, settings in
-            PopoverDisplaySettings.notifyDidChange(showsResetCredits: settings.showsResetCredits)
-        }
     }
 
     private var header: some View {
@@ -243,7 +222,10 @@ struct SettingsView: View {
                 SettingsToggleRow(
                     title: "启动时打开设置",
                     subtitle: "应用启动后自动显示设置窗口；关闭后仍可从菜单栏进入。",
-                    isOn: $opensSettingsAtLaunch
+                    isOn: appBehaviorBinding(
+                        $opensSettingsAtLaunch,
+                        key: AppBehaviorPreferenceKeys.opensSettingsAtLaunch
+                    )
                 )
             }
 
@@ -251,7 +233,7 @@ struct SettingsView: View {
                 SettingsPickerRow(
                     title: "刷新频率",
                     subtitle: "手动模式只在点击下拉面板里的刷新按钮时请求接口。",
-                    selection: $refreshCadence,
+                    selection: appBehaviorBinding($refreshCadence, key: AppBehaviorPreferenceKeys.refreshCadence),
                     options: UsageRefreshCadence.allCases.map { ($0.rawValue, $0.title) }
                 )
             }
@@ -260,7 +242,10 @@ struct SettingsView: View {
                 SettingsPickerRow(
                     title: "外观",
                     subtitle: "自动会跟随系统；浅色和深色会强制所有浮层使用对应配色。",
-                    selection: $surfaceAppearanceMode,
+                    selection: surfaceAppearanceBinding(
+                        $surfaceAppearanceMode,
+                        key: SurfaceAppearancePreferenceKeys.appearanceMode
+                    ),
                     options: SurfaceAppearanceMode.allCases.map { ($0.rawValue, $0.title) }
                 )
                 SettingsPreferenceRow(
@@ -269,7 +254,10 @@ struct SettingsView: View {
                 ) {
                     HStack(spacing: 10) {
                         Slider(
-                            value: $surfaceCardOpacity,
+                            value: surfaceAppearanceBinding(
+                                $surfaceCardOpacity,
+                                key: SurfaceAppearancePreferenceKeys.cardOpacity
+                            ),
                             in: SurfaceAppearanceSettings.cardOpacityRange,
                             step: 0.05
                         )
@@ -294,9 +282,9 @@ struct SettingsView: View {
                     }
                 }
 
-                ColorHexPicker(title: "充足", hex: $goodColorHex)
-                ColorHexPicker(title: "偏低", hex: $warningColorHex)
-                ColorHexPicker(title: "紧张", hex: $dangerColorHex)
+                ColorHexPicker(title: "充足", hex: menuBarBinding($goodColorHex, key: MenuBarPreferenceKeys.goodColorHex))
+                ColorHexPicker(title: "偏低", hex: menuBarBinding($warningColorHex, key: MenuBarPreferenceKeys.warningColorHex))
+                ColorHexPicker(title: "紧张", hex: menuBarBinding($dangerColorHex, key: MenuBarPreferenceKeys.dangerColorHex))
             }
         }
         .settingsContentFrame()
@@ -337,7 +325,7 @@ struct SettingsView: View {
                     title: "菜单栏内容",
                     subtitle: Self.expectedUsageComparisonHelp
                 ) {
-                    Picker("", selection: $contentMode) {
+                    Picker("", selection: menuBarBinding($contentMode, key: MenuBarPreferenceKeys.contentMode)) {
                         ForEach(MenuBarContentMode.allCases) { mode in
                             Text(mode.title).tag(mode.rawValue)
                         }
@@ -359,29 +347,38 @@ struct SettingsView: View {
                 SettingsToggleRow(
                     title: "显示百分号",
                     subtitle: "关闭后只显示数字，适合菜单栏空间很紧张时使用。",
-                    isOn: $showsPercentSymbol
+                    isOn: menuBarBinding($showsPercentSymbol, key: MenuBarPreferenceKeys.showsPercentSymbol)
                 )
                 SettingsToggleRow(
                     title: "显示 Codex 图标",
                     subtitle: "在数字左侧显示 Codex 图标，便于和其他菜单栏项目区分。",
-                    isOn: $showsMenuBarIcon
+                    isOn: menuBarBinding($showsMenuBarIcon, key: MenuBarPreferenceKeys.showsMenuBarIcon)
                 )
                 SettingsToggleRow(
                     title: "显示活动指示",
                     subtitle: "Codex 运行、思考、需确认或刚完成时，在额度数字旁显示小型符号动效；空闲时自动隐藏。",
-                    isOn: $showsHookActivityLight
+                    isOn: menuBarBinding($showsHookActivityLight, key: MenuBarPreferenceKeys.showsHookActivityLight)
                 )
                 SettingsPickerRow(
                     title: "活动样式",
                     subtitle: "自动会按状态切换；固定样式会一直使用选中的系统符号，颜色跟随状态。",
-                    selection: $hookActivityIndicatorStyle,
+                    selection: menuBarBinding(
+                        $hookActivityIndicatorStyle,
+                        key: MenuBarPreferenceKeys.hookActivityIndicatorStyle
+                    ),
                     options: HookActivityIndicatorStyle.allCases.map { ($0.rawValue, $0.title) }
                 )
                 SettingsPreferenceRow(
                     title: "工作日刻度线",
                     subtitle: "设置用于每周用量条刻度和进度计算的工作日。"
                 ) {
-                    Picker("", selection: $weeklyProgressWorkDays) {
+                    Picker(
+                        "",
+                        selection: menuBarBinding(
+                            $weeklyProgressWorkDays,
+                            key: MenuBarPreferenceKeys.weeklyProgressWorkDays
+                        )
+                    ) {
                         Text("4 天").tag(4)
                         Text("5 天").tag(5)
                         Text("7 天").tag(7)
@@ -392,10 +389,28 @@ struct SettingsView: View {
             }
 
             SettingsSection(title: "排版", subtitle: "细调菜单栏占位和文字节奏") {
-                DensitySettingRow(layoutDensity: $layoutDensity)
-                SliderSettingRow(title: "项目间距", value: $itemSpacing, range: 0...8, step: 0.5, suffix: "pt")
-                SliderSettingRow(title: "两行行距", value: $rowSpacing, range: -5...6, step: 0.5, suffix: "pt")
-                SliderSettingRow(title: "数字字号", value: $numberFontSize, range: 7...13, step: 0.5, suffix: "pt")
+                DensitySettingRow(layoutDensity: menuBarBinding($layoutDensity, key: MenuBarPreferenceKeys.layoutDensity))
+                SliderSettingRow(
+                    title: "项目间距",
+                    value: menuBarBinding($itemSpacing, key: MenuBarPreferenceKeys.itemSpacing),
+                    range: 0...8,
+                    step: 0.5,
+                    suffix: "pt"
+                )
+                SliderSettingRow(
+                    title: "两行行距",
+                    value: menuBarBinding($rowSpacing, key: MenuBarPreferenceKeys.rowSpacing),
+                    range: -5...6,
+                    step: 0.5,
+                    suffix: "pt"
+                )
+                SliderSettingRow(
+                    title: "数字字号",
+                    value: menuBarBinding($numberFontSize, key: MenuBarPreferenceKeys.numberFontSize),
+                    range: 7...13,
+                    step: 0.5,
+                    suffix: "pt"
+                )
             }
 
             SettingsSection(title: "文字样式", subtitle: "调整菜单栏数字的视觉重量") {
@@ -403,7 +418,7 @@ struct SettingsView: View {
                     title: "数字字重",
                     subtitle: "控制菜单栏读数的视觉重量。"
                 ) {
-                    Picker("", selection: $numberFontWeight) {
+                    Picker("", selection: menuBarBinding($numberFontWeight, key: MenuBarPreferenceKeys.numberFontWeight)) {
                         ForEach(MenuBarNumberFontWeight.allCases) { weight in
                             Text(weight.title).tag(weight.rawValue)
                         }
@@ -433,28 +448,28 @@ struct SettingsView: View {
                 SettingsPickerRow(
                     title: "显示内容",
                     subtitle: "跟随菜单栏会复用菜单栏的 5 小时 / 7 天窗口选择。",
-                    selection: $widgetContentMode,
+                    selection: widgetBinding($widgetContentMode, key: WidgetDisplayPreferenceKeys.contentMode),
                     options: WidgetContentMode.allCases.map { ($0.rawValue, $0.title) }
                 )
                 SettingsToggleRow(
                     title: "显示重置时间",
                     subtitle: "在每行额度旁显示距离窗口重置还有多久。",
-                    isOn: $widgetShowsResetTime
+                    isOn: widgetBinding($widgetShowsResetTime, key: WidgetDisplayPreferenceKeys.showsResetTime)
                 )
                 SettingsToggleRow(
                     title: "显示预期消耗速度",
                     subtitle: "在每个窗口下显示节奏偏差，以及预计耗尽或持续到重置。",
-                    isOn: $widgetShowsPaceComparison
+                    isOn: widgetBinding($widgetShowsPaceComparison, key: WidgetDisplayPreferenceKeys.showsPaceComparison)
                 )
                 SettingsToggleRow(
                     title: "显示最近同步",
                     subtitle: "在底部显示最近一次成功读取的时间。",
-                    isOn: $widgetShowsLastSync
+                    isOn: widgetBinding($widgetShowsLastSync, key: WidgetDisplayPreferenceKeys.showsLastSync)
                 )
                 SettingsToggleRow(
                     title: "显示账户摘要",
                     subtitle: "在标题栏右侧显示账户邮箱和可读套餐标签。",
-                    isOn: $widgetShowsPlanLabel
+                    isOn: widgetBinding($widgetShowsPlanLabel, key: WidgetDisplayPreferenceKeys.showsPlanLabel)
                 )
             }
 
@@ -473,55 +488,67 @@ struct SettingsView: View {
                     title: "显示用量速度",
                     detail: "展示当前用量相对预期节奏是偏快还是有余量。",
                     systemImage: "speedometer",
-                    isOn: $popoverShowsPaceComparison
+                    isOn: popoverBinding(
+                        $popoverShowsPaceComparison,
+                        key: PopoverPreferenceKeys.showsPaceComparison
+                    )
                 )
                 SettingsCompactToggleRow(
                     title: "显示额外额度",
                     detail: "显示 Codex Spark 等接口返回的额外 rate limit。",
                     systemImage: "plus.circle",
-                    isOn: $popoverShowsAdditionalLimits
+                    isOn: popoverBinding(
+                        $popoverShowsAdditionalLimits,
+                        key: PopoverPreferenceKeys.showsAdditionalLimits
+                    )
                 )
                 SettingsCompactToggleRow(
                     title: "显示 Profile 概览",
                     detail: "展示累计 Token、峰值、最长任务和连续天数。",
                     systemImage: "person.text.rectangle",
-                    isOn: $popoverShowsProfileOverview
+                    isOn: popoverBinding(
+                        $popoverShowsProfileOverview,
+                        key: PopoverPreferenceKeys.showsProfileOverview
+                    )
                 )
                 SettingsCompactToggleRow(
                     title: "显示 Token 活动",
                     detail: "展示每日、每周和累计 Token 活动柱状图。",
                     systemImage: "chart.bar",
-                    isOn: $popoverShowsTokenActivity
+                    isOn: popoverBinding($popoverShowsTokenActivity, key: PopoverPreferenceKeys.showsTokenActivity)
                 )
                 SettingsCompactToggleRow(
                     title: "显示额度重置卡",
                     detail: "在 Token 活动下方显示可用重置卡数量和到期时间。",
                     systemImage: "creditcard",
-                    isOn: $popoverShowsResetCredits
+                    isOn: popoverResetCreditsBinding
                 )
                 SettingsCompactToggleRow(
                     title: "显示活动洞察",
                     detail: "展示快速模式、推理强度、技能和会话统计。",
                     systemImage: "lightbulb",
-                    isOn: $popoverShowsActivityInsights
+                    isOn: popoverBinding(
+                        $popoverShowsActivityInsights,
+                        key: PopoverPreferenceKeys.showsActivityInsights
+                    )
                 )
                 SettingsCompactToggleRow(
                     title: "显示最常用插件",
                     detail: "展示最近统计里最常用的插件或技能。",
                     systemImage: "puzzlepiece",
-                    isOn: $popoverShowsTopInvocations
+                    isOn: popoverBinding($popoverShowsTopInvocations, key: PopoverPreferenceKeys.showsTopInvocations)
                 )
                 SettingsCompactToggleRow(
                     title: "显示同步详情",
                     detail: "展示限制状态和最近同步时间。",
                     systemImage: "arrow.triangle.2.circlepath",
-                    isOn: $popoverShowsSyncDetails
+                    isOn: popoverBinding($popoverShowsSyncDetails, key: PopoverPreferenceKeys.showsSyncDetails)
                 )
                 SettingsCompactToggleRow(
                     title: "开启降智雷达",
                     detail: "读取 codexradar.com/current.json 并在下拉面板绘制 IQ 曲线；工作日 09:00-18:00 每小时拉取一次，其余时间每 4 小时一次。",
                     systemImage: "waveform.path.ecg",
-                    isOn: $codexRadarEnabled
+                    isOn: codexRadarBinding($codexRadarEnabled, key: CodexRadarPreferenceKeys.isEnabled)
                 )
             }
 
@@ -529,7 +556,10 @@ struct SettingsView: View {
                 SettingsPickerRow(
                     title: "重置时间",
                     subtitle: "倒计时适合快速扫读，具体时间适合规划任务开始时间。",
-                    selection: $popoverResetTimeDisplayStyle,
+                    selection: popoverBinding(
+                        $popoverResetTimeDisplayStyle,
+                        key: PopoverPreferenceKeys.resetTimeDisplayStyle
+                    ),
                     options: ResetTimeDisplayStyle.allCases.map { ($0.rawValue, $0.title) }
                 )
             }
@@ -721,6 +751,87 @@ struct SettingsView: View {
         )
     }
 
+    /// 包装设置控件的写入路径，点击后立即落到共享 defaults，再通知外层界面重读。
+    private func storedBinding<Value>(
+        _ binding: Binding<Value>,
+        key: String,
+        didSet: @escaping (Value) -> Void
+    ) -> Binding<Value> {
+        Binding(
+            get: { binding.wrappedValue },
+            set: { newValue in
+                binding.wrappedValue = newValue
+                MenuBarDisplaySettings.sharedDefaults.set(newValue, forKey: key)
+                didSet(newValue)
+            }
+        )
+    }
+
+    /// App 行为设置影响启动和后台刷新任务，写入后要唤醒 UsageViewModel。
+    private func appBehaviorBinding<Value>(_ binding: Binding<Value>, key: String) -> Binding<Value> {
+        storedBinding(binding, key: key) { _ in
+            AppBehaviorSettings.notifyDidChange()
+        }
+    }
+
+    /// 全局外观会同时影响菜单栏、下拉面板和小组件。
+    private func surfaceAppearanceBinding<Value>(_ binding: Binding<Value>, key: String) -> Binding<Value> {
+        storedBinding(binding, key: key) { _ in
+            SurfaceAppearanceSettings.notifyDidChange()
+            WidgetCenter.shared.reloadTimelines(ofKind: "CodexUsageWidget")
+        }
+    }
+
+    /// 菜单栏设置被小组件的“跟随菜单栏”模式复用，因此也刷新 WidgetKit 时间线。
+    private func menuBarBinding<Value>(_ binding: Binding<Value>, key: String) -> Binding<Value> {
+        storedBinding(binding, key: key) { _ in
+            notifyMenuBarDisplaySettingsDidChange()
+        }
+    }
+
+    /// 小组件设置写入后立刻刷新时间线，避免等待系统下一次拉取。
+    private func widgetBinding<Value>(_ binding: Binding<Value>, key: String) -> Binding<Value> {
+        storedBinding(binding, key: key) { _ in
+            notifyWidgetDisplaySettingsDidChange()
+        }
+    }
+
+    /// 下拉面板模块开关写入后立刻重建 popover 内容。
+    private func popoverBinding<Value>(_ binding: Binding<Value>, key: String) -> Binding<Value> {
+        storedBinding(binding, key: key) { _ in
+            PopoverDisplaySettings.notifyDidChange()
+        }
+    }
+
+    /// 重置卡开关需要把新状态带给 UsageViewModel，用来决定是否绕过当天缓存。
+    private var popoverResetCreditsBinding: Binding<Bool> {
+        storedBinding(
+            $popoverShowsResetCredits,
+            key: PopoverPreferenceKeys.showsResetCredits
+        ) { newValue in
+            PopoverDisplaySettings.notifyDidChange(showsResetCredits: newValue)
+        }
+    }
+
+    /// 降智雷达开关影响独立的后台 store，通知后由 store 自己决定是否拉取。
+    private func codexRadarBinding<Value>(_ binding: Binding<Value>, key: String) -> Binding<Value> {
+        storedBinding(binding, key: key) { _ in
+            CodexRadarSettings.notifyDidChange()
+        }
+    }
+
+    /// 统一发送菜单栏设置变更通知，并同步依赖菜单栏偏好的小组件。
+    private func notifyMenuBarDisplaySettingsDidChange() {
+        MenuBarDisplaySettings.notifyDidChange()
+        WidgetCenter.shared.reloadTimelines(ofKind: "CodexUsageWidget")
+    }
+
+    /// 统一发送小组件设置变更通知，并要求 WidgetKit 马上重建时间线。
+    private func notifyWidgetDisplaySettingsDidChange() {
+        WidgetDisplaySettings.notifyDidChange()
+        WidgetCenter.shared.reloadTimelines(ofKind: "CodexUsageWidget")
+    }
+
     private var launchAtLoginBinding: Binding<Bool> {
         Binding(
             get: { launchAtLoginEnabled },
@@ -745,6 +856,9 @@ struct SettingsView: View {
                 if !newValue && !showsSecondaryWindow {
                     showsSecondaryWindow = true
                 }
+                MenuBarDisplaySettings.sharedDefaults.set(showsPrimaryWindow, forKey: MenuBarPreferenceKeys.showsPrimaryWindow)
+                MenuBarDisplaySettings.sharedDefaults.set(showsSecondaryWindow, forKey: MenuBarPreferenceKeys.showsSecondaryWindow)
+                notifyMenuBarDisplaySettingsDidChange()
             }
         )
     }
@@ -757,6 +871,9 @@ struct SettingsView: View {
                 if !newValue && !showsPrimaryWindow {
                     showsPrimaryWindow = true
                 }
+                MenuBarDisplaySettings.sharedDefaults.set(showsPrimaryWindow, forKey: MenuBarPreferenceKeys.showsPrimaryWindow)
+                MenuBarDisplaySettings.sharedDefaults.set(showsSecondaryWindow, forKey: MenuBarPreferenceKeys.showsSecondaryWindow)
+                notifyMenuBarDisplaySettingsDidChange()
             }
         )
     }
@@ -769,6 +886,7 @@ struct SettingsView: View {
         rowSpacing = settings.rowSpacing
         numberFontSize = settings.numberFontSize
         numberFontWeight = settings.numberFontWeight.rawValue
+        notifyMenuBarDisplaySettingsDidChange()
     }
 
     /// 应用全局颜色预设，只覆盖三档余量颜色，菜单栏项目、下拉面板和小组件会共同读取。
@@ -777,8 +895,7 @@ struct SettingsView: View {
         goodColorHex = colors.goodColorHex
         warningColorHex = colors.warningColorHex
         dangerColorHex = colors.dangerColorHex
-        MenuBarDisplaySettings.notifyDidChange()
-        WidgetCenter.shared.reloadTimelines(ofKind: "CodexUsageWidget")
+        notifyMenuBarDisplaySettingsDidChange()
     }
 
     /// 恢复菜单栏显示默认值，范围限定在状态栏读数本身，不重置全局颜色。
@@ -796,6 +913,7 @@ struct SettingsView: View {
         showsHookActivityLight = MenuBarDisplaySettings.defaultShowsHookActivityLight
         hookActivityIndicatorStyle = MenuBarDisplaySettings.defaultHookActivityIndicatorStyle.rawValue
         weeklyProgressWorkDays = MenuBarDisplaySettings.defaultWeeklyProgressWorkDays
+        notifyMenuBarDisplaySettingsDidChange()
     }
 
     /// 恢复所有小组件全局偏好，并立刻刷新 WidgetKit 时间线。
@@ -805,7 +923,7 @@ struct SettingsView: View {
         widgetShowsPaceComparison = WidgetDisplaySettings.defaultShowsPaceComparison
         widgetShowsLastSync = WidgetDisplaySettings.defaultShowsLastSync
         widgetShowsPlanLabel = WidgetDisplaySettings.defaultShowsPlanLabel
-        WidgetCenter.shared.reloadTimelines(ofKind: "CodexUsageWidget")
+        notifyWidgetDisplaySettingsDidChange()
     }
 
     /// 恢复下拉面板模块开关，保持额外额度默认关闭以避免面板过长。
@@ -819,6 +937,7 @@ struct SettingsView: View {
         popoverShowsAdditionalLimits = PopoverDisplaySettings.defaultShowsAdditionalLimits
         popoverShowsResetCredits = PopoverDisplaySettings.defaultShowsResetCredits
         popoverResetTimeDisplayStyle = PopoverDisplaySettings.defaultResetTimeDisplayStyle.rawValue
+        PopoverDisplaySettings.notifyDidChange(showsResetCredits: popoverShowsResetCredits)
     }
 
     /// 读取本地快照用于菜单栏预览；失败时保留占位数据，不阻塞设置窗口。

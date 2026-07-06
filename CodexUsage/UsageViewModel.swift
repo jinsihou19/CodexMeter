@@ -206,10 +206,9 @@ final class UsageViewModel: ObservableObject {
                     return
                 }
                 let showsResetCredits = notifiedShowsResetCredits ?? self.resetCreditsVisibilityProvider()
-                defer {
-                    self.lastShowsResetCredits = showsResetCredits
-                }
-                guard showsResetCredits, !self.lastShowsResetCredits else {
+                let previousShowsResetCredits = self.lastShowsResetCredits
+                self.lastShowsResetCredits = showsResetCredits
+                guard showsResetCredits, !previousShowsResetCredits else {
                     return
                 }
                 await self.refresh(forceRefreshResetCredits: true)

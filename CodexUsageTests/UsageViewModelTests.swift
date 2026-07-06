@@ -784,6 +784,54 @@ final class UsageViewModelTests: XCTestCase {
         XCTAssertEqual(client.forceRefreshFlags, [true])
     }
 
+    /// 验证重置卡打开通知连续到达且接口较慢时，也只触发一次强制刷新。
+    func testDuplicateResetCreditsOnNotificationsOnlyForceRefreshOnce() async {
+        let client = RecordingUsageSnapshotClient(
+            snapshot: UsageSnapshot(
+                fetchedAt: Date(timeIntervalSince1970: 1_779_940_000),
+                rateLimits: RateLimitSnapshot(
+                    limitId: "codex",
+                    limitName: nil,
+                    primary: nil,
+                    secondary: nil,
+                    credits: nil,
+                    planType: nil,
+                    rateLimitReachedType: nil
+                )
+            ),
+            delayNanoseconds: 50_000_000
+        )
+        let viewModel = UsageViewModel(
+            client: client,
+            store: UsageSnapshotStore(
+                appGroupIdentifier: "",
+                fallbackDirectory: FileManager.default.temporaryDirectory
+                    .appendingPathComponent(UUID().uuidString, isDirectory: true)
+            ),
+            reloadWidgetTimelines: {},
+            refreshCadenceProvider: { .manual },
+            resetCreditsVisibilityProvider: { false }
+        )
+
+        viewModel.start()
+        NotificationCenter.default.post(
+            name: .popoverDisplaySettingsDidChange,
+            object: MenuBarDisplaySettings.sharedDefaults,
+            userInfo: [PopoverPreferenceKeys.showsResetCredits: true]
+        )
+        NotificationCenter.default.post(
+            name: .popoverDisplaySettingsDidChange,
+            object: MenuBarDisplaySettings.sharedDefaults,
+            userInfo: [PopoverPreferenceKeys.showsResetCredits: true]
+        )
+        for _ in 0..<10 where client.forceRefreshFlags.isEmpty {
+            await Task.yield()
+        }
+        try? await Task.sleep(nanoseconds: 80_000_000)
+
+        XCTAssertEqual(client.forceRefreshFlags, [true])
+    }
+
     /// 验证重置卡开关保持开启时，普通设置变更不会额外强制刷新。
     func testResetCreditsToggleNotificationDoesNotRefreshWhenAlreadyOn() async {
         let client = RecordingUsageSnapshotClient(snapshot: UsageSnapshot(
@@ -1184,11 +1232,13 @@ private final class CountingRateLimitClient: UsageRateLimitFetching, @unchecked 
 
 private final class RecordingUsageSnapshotClient: UsageRateLimitFetching, @unchecked Sendable {
     private let snapshot: UsageSnapshot
+    private let delayNanoseconds: UInt64
     private let lock = NSLock()
     private var protectedForceRefreshFlags: [Bool] = []
 
-    init(snapshot: UsageSnapshot) {
+    init(snapshot: UsageSnapshot, delayNanoseconds: UInt64 = 0) {
         self.snapshot = snapshot
+        self.delayNanoseconds = delayNanoseconds
     }
 
     var forceRefreshFlags: [Bool] {
@@ -1205,6 +1255,9 @@ private final class RecordingUsageSnapshotClient: UsageRateLimitFetching, @unche
     func fetchUsageSnapshot(forceRefreshResetCredits: Bool) async throws -> UsageSnapshot {
         lock.withLock {
             protectedForceRefreshFlags.append(forceRefreshResetCredits)
+        }
+        if delayNanoseconds > 0 {
+            try? await Task.sleep(nanoseconds: delayNanoseconds)
         }
         return snapshot
     }

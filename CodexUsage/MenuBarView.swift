@@ -274,10 +274,17 @@ struct MenuBarView: View {
             if let profileStats = snapshot.profileStats, activePopoverSettings.showsAnyProfileSection {
                 ProfileStatsSection(
                     stats: profileStats,
-                    resetCredits: snapshot.resetCredits,
                     activityMode: $activityMode,
                     formatter: formatter,
                     popoverSettings: activePopoverSettings
+                )
+            }
+
+            if activePopoverSettings.showsResetCredits {
+                ResetCreditsSection(
+                    snapshot: snapshot.resetCredits,
+                    isRefreshing: viewModel.isRefreshing,
+                    formatter: formatter
                 )
             }
 
@@ -845,7 +852,8 @@ private struct AdditionalRateLimitView: View {
 
 /// 额度重置卡模块只展示接口返回的可用张数和到期时间，避免和常规用量窗口语义混淆。
 private struct ResetCreditsSection: View {
-    let snapshot: ResetCreditsSnapshot
+    let snapshot: ResetCreditsSnapshot?
+    let isRefreshing: Bool
     let formatter: UsageFormatter
 
     var body: some View {
@@ -854,19 +862,27 @@ private struct ResetCreditsSection: View {
                 Label("额度重置卡", systemImage: "creditcard")
                     .foregroundStyle(.secondary)
                 Spacer()
-                Text("\(snapshot.availableCount) 张可用")
-                    .font(.caption.monospacedDigit().weight(.semibold))
+                if let snapshot {
+                    Text("\(snapshot.availableCount) 张可用")
+                        .font(.caption.monospacedDigit().weight(.semibold))
+                }
             }
             .font(.caption2)
 
-            if snapshot.creditsSortedByExpiration.isEmpty {
-                Text("暂无到期明细")
+            if let snapshot {
+                if snapshot.creditsSortedByExpiration.isEmpty {
+                    Text("暂无到期明细")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                } else {
+                    ForEach(Array(snapshot.creditsSortedByExpiration.enumerated()), id: \.offset) { index, credit in
+                        ResetCreditRow(index: index + 1, credit: credit, formatter: formatter)
+                    }
+                }
+            } else {
+                Text(isRefreshing ? "正在读取重置卡..." : "暂无重置卡信息")
                     .font(.caption2)
                     .foregroundStyle(.secondary)
-            } else {
-                ForEach(Array(snapshot.creditsSortedByExpiration.enumerated()), id: \.offset) { index, credit in
-                    ResetCreditRow(index: index + 1, credit: credit, formatter: formatter)
-                }
             }
         }
         .menuSectionCard(padding: 8)
@@ -917,7 +933,6 @@ private struct ResetCreditRow: View {
 
 private struct ProfileStatsSection: View {
     let stats: CodexProfileStats
-    let resetCredits: ResetCreditsSnapshot?
     @Binding var activityMode: TokenActivityMode
     let formatter: UsageFormatter
     let popoverSettings: PopoverDisplaySettings
@@ -942,10 +957,6 @@ private struct ProfileStatsSection: View {
                     activityMode: $activityMode,
                     formatter: formatter
                 )
-            }
-
-            if popoverSettings.showsResetCredits, let resetCredits, resetCredits.hasDisplayableContent {
-                ResetCreditsSection(snapshot: resetCredits, formatter: formatter)
             }
 
             if popoverSettings.showsActivityInsights {
@@ -1242,6 +1253,6 @@ private extension View {
 private extension PopoverDisplaySettings {
     /// Profile 数据分成多个模块显示；全部关闭时整块 Profile 区域都隐藏。
     var showsAnyProfileSection: Bool {
-        showsProfileOverview || showsTokenActivity || showsResetCredits || showsActivityInsights || showsTopInvocations
+        showsProfileOverview || showsTokenActivity || showsActivityInsights || showsTopInvocations
     }
 }
