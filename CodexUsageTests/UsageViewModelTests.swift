@@ -868,6 +868,72 @@ final class UsageViewModelTests: XCTestCase {
         XCTAssertEqual(client.forceRefreshFlags, [])
     }
 
+    /// 验证打开下拉框时若当前快照没有重置卡，会主动绕过当天缓存补读一次。
+    func testRefreshResetCreditsIfNeededForcesRefreshWhenVisibleSnapshotLacksCredits() async {
+        let client = RecordingUsageSnapshotClient(snapshot: UsageSnapshot(
+            fetchedAt: Date(timeIntervalSince1970: 1_779_940_000),
+            rateLimits: RateLimitSnapshot(
+                limitId: "codex",
+                limitName: nil,
+                primary: nil,
+                secondary: nil,
+                credits: nil,
+                planType: nil,
+                rateLimitReachedType: nil
+            ),
+            resetCredits: ResetCreditsSnapshot(availableCount: 2)
+        ))
+        let viewModel = UsageViewModel(
+            client: client,
+            store: UsageSnapshotStore(
+                appGroupIdentifier: "",
+                fallbackDirectory: FileManager.default.temporaryDirectory
+                    .appendingPathComponent(UUID().uuidString, isDirectory: true)
+            ),
+            reloadWidgetTimelines: {},
+            refreshCadenceProvider: { .manual },
+            resetCreditsVisibilityProvider: { true }
+        )
+
+        await viewModel.refreshResetCreditsIfNeeded()
+
+        XCTAssertEqual(client.forceRefreshFlags, [true])
+        XCTAssertEqual(viewModel.snapshot?.resetCredits?.availableCount, 2)
+    }
+
+    /// 验证用户手动刷新重置卡时，总是绕过当天缓存重新读取接口。
+    func testRefreshResetCreditsAlwaysForcesResetCreditsRequest() async {
+        let client = RecordingUsageSnapshotClient(snapshot: UsageSnapshot(
+            fetchedAt: Date(timeIntervalSince1970: 1_779_940_000),
+            rateLimits: RateLimitSnapshot(
+                limitId: "codex",
+                limitName: nil,
+                primary: nil,
+                secondary: nil,
+                credits: nil,
+                planType: nil,
+                rateLimitReachedType: nil
+            ),
+            resetCredits: ResetCreditsSnapshot(availableCount: 3)
+        ))
+        let viewModel = UsageViewModel(
+            client: client,
+            store: UsageSnapshotStore(
+                appGroupIdentifier: "",
+                fallbackDirectory: FileManager.default.temporaryDirectory
+                    .appendingPathComponent(UUID().uuidString, isDirectory: true)
+            ),
+            reloadWidgetTimelines: {},
+            refreshCadenceProvider: { .manual },
+            resetCreditsVisibilityProvider: { true }
+        )
+
+        await viewModel.refreshResetCredits()
+
+        XCTAssertEqual(client.forceRefreshFlags, [true])
+        XCTAssertEqual(viewModel.snapshot?.resetCredits?.availableCount, 3)
+    }
+
     /// 验证手动刷新模式下启动只读取本地缓存，也会主动刷新小组件时间线。
     func testStartReloadsWidgetTimelinesWhenCachedSnapshotExists() throws {
         let storeDirectory = FileManager.default.temporaryDirectory

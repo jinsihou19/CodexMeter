@@ -143,6 +143,19 @@ final class UsageViewModel: ObservableObject {
         await refresh(forceRefreshResetCredits: false)
     }
 
+    /// 用户主动刷新重置卡时绕过每日缓存，确保测试机上已经发放的卡能被立刻补读出来。
+    func refreshResetCredits() async {
+        await refresh(forceRefreshResetCredits: true)
+    }
+
+    /// 下拉框打开时补齐重置卡数据；开关已开但当前快照缺失时，绕过当天缓存重读一次。
+    func refreshResetCreditsIfNeeded() async {
+        guard resetCreditsVisibilityProvider(), snapshot?.resetCredits == nil else {
+            return
+        }
+        await refresh(forceRefreshResetCredits: true)
+    }
+
     /// 刷新用量快照；只有重置卡模块从关到开时才绕过当天缓存，保留常规轮询的每日限频。
     private func refresh(forceRefreshResetCredits: Bool) async {
         logger.info("Refresh started")

@@ -284,7 +284,10 @@ struct MenuBarView: View {
                 ResetCreditsSection(
                     snapshot: snapshot.resetCredits,
                     isRefreshing: viewModel.isRefreshing,
-                    formatter: formatter
+                    formatter: formatter,
+                    onRefresh: {
+                        Task { await viewModel.refreshResetCredits() }
+                    }
                 )
             }
 
@@ -855,6 +858,7 @@ private struct ResetCreditsSection: View {
     let snapshot: ResetCreditsSnapshot?
     let isRefreshing: Bool
     let formatter: UsageFormatter
+    let onRefresh: () -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -866,6 +870,11 @@ private struct ResetCreditsSection: View {
                     Text("\(snapshot.availableCount) 张可用")
                         .font(.caption.monospacedDigit().weight(.semibold))
                 }
+                if isRefreshing {
+                    ProgressView()
+                        .controlSize(.mini)
+                }
+                resetCreditsRefreshButton
             }
             .font(.caption2)
 
@@ -886,6 +895,20 @@ private struct ResetCreditsSection: View {
             }
         }
         .menuSectionCard(padding: 8)
+    }
+
+    /// 重置卡专用手动刷新按钮，和底部普通刷新分离以便明确绕过重置卡每日缓存。
+    private var resetCreditsRefreshButton: some View {
+        Button {
+            onRefresh()
+        } label: {
+            Image(systemName: "arrow.clockwise")
+        }
+        .buttonStyle(.plain)
+        .imageScale(.small)
+        .disabled(isRefreshing)
+        .help("刷新额度重置卡")
+        .accessibilityLabel("刷新额度重置卡")
     }
 }
 
