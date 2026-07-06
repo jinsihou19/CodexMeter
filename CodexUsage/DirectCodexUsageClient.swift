@@ -63,16 +63,21 @@ struct DirectCodexUsageClient: UsageRateLimitFetching {
         return try await fetchRateLimits(accessToken: authContext.accessToken)
     }
 
+    /// 刷新完整用量快照；仅在强制刷新时绕过内联重置卡数量去读取独立明细。
+    /// 基础用量、认证或解析失败会抛错；资料统计和重置卡明细失败只降级，不阻断主快照。
     func fetchUsageSnapshot(forceRefreshResetCredits: Bool = false) async throws -> UsageSnapshot {
         let authContext = try loadAuthContext()
-        async let rateLimits = fetchRateLimits(accessToken: authContext.accessToken)
+        async let usageResponse = fetchUsageResponse(accessToken: authContext.accessToken)
         async let profileStats = fetchProfileStatsIfAvailable(accessToken: authContext.accessToken)
-        async let resetCredits = fetchResetCreditsIfAvailable(
+        let fetchedUsageResponse = try await usageResponse
+        let fetchedRateLimits = fetchedUsageResponse.codexSnapshot
+        let inlineResetCredits = fetchedUsageResponse.resetCredits?.resetCreditsSnapshot
+        let resetCredits = await fetchResetCreditsIfAvailable(
             accessToken: authContext.accessToken,
             accountID: authContext.accountID,
-            forceRefresh: forceRefreshResetCredits
+            forceRefresh: forceRefreshResetCredits,
+            fallbackSnapshot: inlineResetCredits
         )
-        let fetchedRateLimits = try await rateLimits
         let account = CodexAccountSnapshot(
             email: authContext.accountEmail,
             planType: authContext.planType ?? fetchedRateLimits.planType
@@ -83,11 +88,17 @@ struct DirectCodexUsageClient: UsageRateLimitFetching {
             rateLimits: fetchedRateLimits,
             account: account.isEmpty ? nil : account,
             profileStats: await profileStats,
-            resetCredits: await resetCredits
+            resetCredits: resetCredits
         )
     }
 
     private func fetchRateLimits(accessToken: String) async throws -> RateLimitSnapshot {
+        try await fetchUsageResponse(accessToken: accessToken).codexSnapshot
+    }
+
+    /// 请求 Codex 用量接口并保留原始响应；accessToken 必须来自本机 auth.json。
+    /// 返回值同时承载基础额度和内联重置卡数量；HTTP、网络或解码失败会转为客户端错误。
+    private func fetchUsageResponse(accessToken: String) async throws -> WhamUsageResponse {
         let request = authenticatedRequest(url: endpointURL, accessToken: accessToken)
 
         do {
@@ -97,7 +108,7 @@ struct DirectCodexUsageClient: UsageRateLimitFetching {
                     .trimmingCharacters(in: .whitespacesAndNewlines)
                 throw DirectCodexUsageClientError.httpStatus(response.statusCode, message)
             }
-            return try JSONDecoder().decode(WhamUsageResponse.self, from: data).codexSnapshot
+            return try JSONDecoder().decode(WhamUsageResponse.self, from: data)
         } catch let error as DirectCodexUsageClientError {
             throw error
         } catch let error as DecodingError {
@@ -115,11 +126,13 @@ struct DirectCodexUsageClient: UsageRateLimitFetching {
         }
     }
 
-    /// 尝试读取额度重置卡；该接口只影响附加展示，失败时不阻断基础额度刷新。
+    /// 尝试读取额度重置卡明细；fallbackSnapshot 来自用量响应，只含可用张数。
+    /// 非强制刷新优先复用当天缓存；独立接口失败时返回 fallbackSnapshot，避免影响基础额度展示。
     private func fetchResetCreditsIfAvailable(
         accessToken: String,
         accountID: String?,
-        forceRefresh: Bool
+        forceRefresh: Bool,
+        fallbackSnapshot: ResetCreditsSnapshot? = nil
     ) async -> ResetCreditsSnapshot? {
         guard showsResetCreditsProvider() else {
             return nil
@@ -127,7 +140,10 @@ struct DirectCodexUsageClient: UsageRateLimitFetching {
 
         let now = currentDate()
         if !forceRefresh, let cachedAttempt = resetCreditsCache.loadAttempt(accountID: accountID, now: now) {
-            return cachedAttempt.snapshot
+            return cachedAttempt.snapshot ?? fallbackSnapshot
+        }
+        if !forceRefresh, let fallbackSnapshot {
+            return fallbackSnapshot
         }
 
         do {
@@ -135,8 +151,8 @@ struct DirectCodexUsageClient: UsageRateLimitFetching {
             resetCreditsCache.saveAttempt(.init(snapshot: snapshot), accountID: accountID, now: now)
             return snapshot
         } catch {
-            resetCreditsCache.saveAttempt(.init(snapshot: nil), accountID: accountID, now: now)
-            return nil
+            resetCreditsCache.saveAttempt(.init(snapshot: fallbackSnapshot), accountID: accountID, now: now)
+            return fallbackSnapshot
         }
     }
 
@@ -433,7 +449,8 @@ private struct WhamUsageResponse: Decodable {
     let rateLimit: WhamRateLimit?
     let additionalRateLimits: [WhamAdditionalRateLimit]?
     let credits: WhamCredits?
-    let rateLimitReachedType: String?
+    let rateLimitReachedType: WhamRateLimitReachedType?
+    let resetCredits: WhamResetCreditsResponse?
 
     enum CodingKeys: String, CodingKey {
         case planType = "plan_type"
@@ -441,6 +458,7 @@ private struct WhamUsageResponse: Decodable {
         case additionalRateLimits = "additional_rate_limits"
         case credits
         case rateLimitReachedType = "rate_limit_reached_type"
+        case resetCredits = "rate_limit_reset_credits"
     }
 
     var codexSnapshot: RateLimitSnapshot {
@@ -452,8 +470,42 @@ private struct WhamUsageResponse: Decodable {
             additionalLimits: additionalRateLimits?.map(\.additionalRateLimitSnapshot) ?? [],
             credits: credits?.creditsSnapshot,
             planType: planType,
-            rateLimitReachedType: rateLimitReachedType
+            rateLimitReachedType: rateLimitReachedType?.value
         )
+    }
+}
+
+/// 兼容限制命中原因的新旧响应形状；旧接口可能给字符串，新接口会给带 type/details 的对象。
+private struct WhamRateLimitReachedType: Decodable {
+    let value: String?
+
+    private enum CodingKeys: String, CodingKey {
+        case type
+        case details
+    }
+
+    /// 从字符串或对象中提取稳定的限制类型；未知形状视为缺失，不能影响基础用量解析。
+    init(from decoder: Decoder) throws {
+        let singleValueContainer = try decoder.singleValueContainer()
+        if let stringValue = try? singleValueContainer.decode(String.self) {
+            self.value = Self.normalized(stringValue)
+            return
+        }
+        if let container = try? decoder.container(keyedBy: CodingKeys.self) {
+            let type = try container.decodeFlexibleStringIfPresent(forKey: .type)
+            let details = try container.decodeFlexibleStringIfPresent(forKey: .details)
+            self.value = Self.normalized(type ?? details)
+            return
+        }
+        self.value = nil
+    }
+
+    /// 归一化后端返回的展示字段；空白值不进入共享快照。
+    private static func normalized(_ value: String?) -> String? {
+        guard let value = value?.trimmingCharacters(in: .whitespacesAndNewlines), !value.isEmpty else {
+            return nil
+        }
+        return value
     }
 }
 

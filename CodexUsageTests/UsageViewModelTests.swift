@@ -901,6 +901,55 @@ final class UsageViewModelTests: XCTestCase {
         XCTAssertEqual(viewModel.snapshot?.resetCredits?.availableCount, 2)
     }
 
+    /// 验证本地缓存只有重置卡数量但没有到期明细时，打开下拉框会补读独立接口。
+    func testRefreshResetCreditsIfNeededForcesRefreshWhenCachedCountLacksExpirationDetails() async throws {
+        let storeDirectory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let store = UsageSnapshotStore(appGroupIdentifier: "", fallbackDirectory: storeDirectory)
+        try store.save(UsageSnapshot(
+            fetchedAt: Date(timeIntervalSince1970: 1_779_940_000),
+            rateLimits: RateLimitSnapshot(
+                limitId: "codex",
+                limitName: nil,
+                primary: nil,
+                secondary: nil,
+                credits: nil,
+                planType: nil,
+                rateLimitReachedType: nil
+            ),
+            resetCredits: ResetCreditsSnapshot(availableCount: 1)
+        ))
+        let expiresAt = Date(timeIntervalSince1970: 1_782_554_400)
+        let client = RecordingUsageSnapshotClient(snapshot: UsageSnapshot(
+            fetchedAt: Date(timeIntervalSince1970: 1_779_940_000),
+            rateLimits: RateLimitSnapshot(
+                limitId: "codex",
+                limitName: nil,
+                primary: nil,
+                secondary: nil,
+                credits: nil,
+                planType: nil,
+                rateLimitReachedType: nil
+            ),
+            resetCredits: ResetCreditsSnapshot(
+                availableCount: 1,
+                credits: [ResetCreditSnapshot(grantedAt: nil, expiresAt: expiresAt, status: "available")]
+            )
+        ))
+        let viewModel = UsageViewModel(
+            client: client,
+            store: store,
+            reloadWidgetTimelines: {},
+            refreshCadenceProvider: { .manual },
+            resetCreditsVisibilityProvider: { true }
+        )
+
+        await viewModel.refreshResetCreditsIfNeeded()
+
+        XCTAssertEqual(client.forceRefreshFlags, [true])
+        XCTAssertEqual(viewModel.snapshot?.resetCredits?.credits.first?.expiresAt, expiresAt)
+    }
+
     /// 验证用户手动刷新重置卡时，总是绕过当天缓存重新读取接口。
     func testRefreshResetCreditsAlwaysForcesResetCreditsRequest() async {
         let client = RecordingUsageSnapshotClient(snapshot: UsageSnapshot(

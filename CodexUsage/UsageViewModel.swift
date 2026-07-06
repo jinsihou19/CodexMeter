@@ -148,9 +148,12 @@ final class UsageViewModel: ObservableObject {
         await refresh(forceRefreshResetCredits: true)
     }
 
-    /// 下拉框打开时补齐重置卡数据；开关已开但当前快照缺失时，绕过当天缓存重读一次。
+    /// 下拉框打开时补齐重置卡数据；只有数量但缺少到期明细时，也绕过当天缓存重读一次。
     func refreshResetCreditsIfNeeded() async {
-        guard resetCreditsVisibilityProvider(), snapshot?.resetCredits == nil else {
+        let resetCredits = snapshot?.resetCredits
+        let needsResetCreditsRefresh = resetCredits == nil
+            || (resetCredits?.availableCount ?? 0) > 0 && resetCredits?.credits.isEmpty == true
+        guard resetCreditsVisibilityProvider(), needsResetCreditsRefresh else {
             return
         }
         await refresh(forceRefreshResetCredits: true)

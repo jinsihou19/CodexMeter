@@ -210,6 +210,156 @@ final class DirectCodexUsageClientTests: XCTestCase {
         XCTAssertEqual(recorder.headerValue("ChatGPT-Account-ID", forPath: "/backend-api/wham/rate-limit-reset-credits"), "account-123")
     }
 
+    /// 验证额度耗尽响应里的对象型限制原因不会打断解析，并优先使用用量响应自带的重置卡数量。
+    func testFetchUsageSnapshotAcceptsReachedLimitObjectAndInlineResetCreditCount() async throws {
+        let authFile = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString)
+            .appendingPathComponent("auth.json")
+        try FileManager.default.createDirectory(
+            at: authFile.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        try """
+        {"tokens":{"access_token":"test-access-token","account_id":"account-123"}}
+        """.write(to: authFile, atomically: true, encoding: .utf8)
+        let recorder = RequestRecorder(responseBodiesByPath: [
+            "/backend-api/wham/usage": """
+            {
+              "plan_type": "prolite",
+              "rate_limit": {
+                "limit_reached": true,
+                "primary_window": {
+                  "used_percent": 21,
+                  "limit_window_seconds": 18000,
+                  "reset_after_seconds": 11056,
+                  "reset_at": 1783341412
+                },
+                "secondary_window": {
+                  "used_percent": 100,
+                  "limit_window_seconds": 604800,
+                  "reset_after_seconds": 143093,
+                  "reset_at": 1783473450
+                }
+              },
+              "additional_rate_limits": [{
+                "limit_name": "GPT-5.3-Codex-Spark",
+                "metered_feature": "codex_bengalfox",
+                "rate_limit": {
+                  "primary_window": {
+                    "used_percent": 0,
+                    "limit_window_seconds": 18000,
+                    "reset_after_seconds": 18000,
+                    "reset_at": 1783348357
+                  },
+                  "secondary_window": {
+                    "used_percent": 0,
+                    "limit_window_seconds": 604800,
+                    "reset_after_seconds": 604800,
+                    "reset_at": 1783935157
+                  }
+                }
+              }],
+              "credits": {
+                "has_credits": false,
+                "unlimited": false,
+                "balance": "0"
+              },
+              "rate_limit_reached_type": {
+                "type": "rate_limit_reached",
+                "details": "default"
+              },
+              "rate_limit_reset_credits": {
+                "available_count": 2
+              }
+            }
+            """,
+            "/backend-api/wham/profiles/me": "{}",
+            "/backend-api/wham/rate-limit-reset-credits": """
+            {"available_count": 99, "credits": []}
+            """
+        ])
+        let client = DirectCodexUsageClient(
+            authFileURL: authFile,
+            endpointURL: URL(string: "https://example.test/backend-api/wham/usage")!,
+            profileEndpointURL: URL(string: "https://example.test/backend-api/wham/profiles/me")!,
+            resetCreditsEndpointURL: URL(string: "https://example.test/backend-api/wham/rate-limit-reset-credits")!,
+            transport: recorder.transport,
+            resetCreditsCache: InMemoryResetCreditsDailyCache(),
+            showsResetCreditsProvider: { true }
+        )
+
+        let snapshot = try await client.fetchUsageSnapshot()
+
+        XCTAssertEqual(snapshot.rateLimits.primary?.remainingPercent, 79)
+        XCTAssertEqual(snapshot.rateLimits.secondary?.remainingPercent, 0)
+        XCTAssertEqual(snapshot.rateLimits.rateLimitReachedType, "rate_limit_reached")
+        XCTAssertEqual(snapshot.resetCredits?.availableCount, 2)
+        XCTAssertTrue(snapshot.resetCredits?.credits.isEmpty == true)
+        XCTAssertFalse(recorder.requestURLs.contains { $0.path == "/backend-api/wham/rate-limit-reset-credits" })
+    }
+
+    /// 验证当天已有重置卡明细缓存时，普通刷新优先复用缓存，避免内联数量覆盖到期时间。
+    func testFetchUsageSnapshotUsesCachedResetCreditDetailsBeforeInlineCount() async throws {
+        let authFile = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString)
+            .appendingPathComponent("auth.json")
+        try FileManager.default.createDirectory(
+            at: authFile.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        let accountID = "account-123"
+        try """
+        {"tokens":{"access_token":"test-access-token","account_id":"\(accountID)"}}
+        """.write(to: authFile, atomically: true, encoding: .utf8)
+        let recorder = RequestRecorder(responseBodiesByPath: [
+            "/backend-api/wham/usage": """
+            {
+              "plan_type": "prolite",
+              "rate_limit": {
+                "primary_window": {
+                  "used_percent": 43,
+                  "limit_window_seconds": 18000
+                }
+              },
+              "rate_limit_reset_credits": {
+                "available_count": 1
+              }
+            }
+            """,
+            "/backend-api/wham/profiles/me": "{}",
+            "/backend-api/wham/rate-limit-reset-credits": """
+            {"available_count": 99, "credits": []}
+            """
+        ])
+        let now = Date(timeIntervalSince1970: 1_781_841_600)
+        let expiresAt = Date(timeIntervalSince1970: 1_782_554_400)
+        let resetCreditsCache = InMemoryResetCreditsDailyCache()
+        resetCreditsCache.saveAttempt(
+            ResetCreditsDailyAttempt(snapshot: ResetCreditsSnapshot(
+                availableCount: 1,
+                credits: [ResetCreditSnapshot(grantedAt: nil, expiresAt: expiresAt, status: "available")]
+            )),
+            accountID: accountID,
+            now: now
+        )
+        let client = DirectCodexUsageClient(
+            authFileURL: authFile,
+            endpointURL: URL(string: "https://example.test/backend-api/wham/usage")!,
+            profileEndpointURL: URL(string: "https://example.test/backend-api/wham/profiles/me")!,
+            resetCreditsEndpointURL: URL(string: "https://example.test/backend-api/wham/rate-limit-reset-credits")!,
+            transport: recorder.transport,
+            resetCreditsCache: resetCreditsCache,
+            currentDate: { now },
+            showsResetCreditsProvider: { true }
+        )
+
+        let snapshot = try await client.fetchUsageSnapshot()
+
+        XCTAssertEqual(snapshot.resetCredits?.availableCount, 1)
+        XCTAssertEqual(snapshot.resetCredits?.credits.first?.expiresAt, expiresAt)
+        XCTAssertFalse(recorder.requestURLs.contains { $0.path == "/backend-api/wham/rate-limit-reset-credits" })
+    }
+
     /// 验证重置卡接口当天只请求一次，后续刷新复用缓存，避免菜单栏轮询反复打到同一接口。
     func testFetchUsageSnapshotRequestsResetCreditsOnlyOncePerDay() async throws {
         let authFile = FileManager.default.temporaryDirectory
