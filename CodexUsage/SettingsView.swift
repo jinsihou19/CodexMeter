@@ -180,6 +180,13 @@ struct SettingsView: View {
             }
 
             Spacer()
+
+            Text(AppVersionDisplay.text())
+                .font(.caption2.monospacedDigit())
+                .foregroundStyle(.tertiary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 8)
+                .accessibilityLabel("当前\(AppVersionDisplay.text())")
         }
         .padding(14)
         .frame(width: SettingsPanelLayout.sidebarWidth)

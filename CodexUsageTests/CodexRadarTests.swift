@@ -39,6 +39,23 @@ final class CodexRadarTests: XCTestCase {
         XCTAssertFalse(source.contains(".help(cardHelpText(for: run))"))
     }
 
+    /// 验证最多六条雷达曲线拥有六种互不重复的图例颜色。
+    func testCodexRadarPaletteProvidesSixDistinctSeriesColors() throws {
+        let testFileURL = URL(fileURLWithPath: #filePath)
+        let projectRoot = testFileURL
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        let sourceURL = projectRoot.appendingPathComponent("CodexUsage/CodexRadarView.swift")
+        let source = try String(contentsOf: sourceURL, encoding: .utf8)
+        let expectedColors = ["#2F6ED3", "#0E9F6E", "#D98200", "#D9293A", "#8B5CF6", "#0891B2"]
+
+        XCTAssertEqual(Set(expectedColors).count, 6)
+        for color in expectedColors {
+            XCTAssertTrue(source.contains("\"\(color)\""))
+        }
+        XCTAssertTrue(source.contains("seriesHexColors[index % seriesHexColors.count]"))
+    }
+
     /// 验证单点序列只画圆点，多点序列画线并同时标记首尾端点。
     func testCodexRadarLineChartCreatesSinglePointAndLineDrawingPlans() {
         XCTAssertEqual(

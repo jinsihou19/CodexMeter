@@ -55,3 +55,22 @@ The app targets macOS 14.0 and newer.
 Debug uses automatic Apple Development signing with App Group `group.com.jinsihou.CodexUsage`.
 
 Release is configured for ad-hoc signing (`CODE_SIGN_IDENTITY = -`). Release also disables Hardened Runtime and clears the app and widget entitlement files because App Group entitlements require a provisioning profile, and Hardened Runtime library validation can reject embedded ad-hoc frameworks at launch. This is useful for local or small-scope testing, but it is not a notarized Developer ID distribution build and may still be blocked by Gatekeeper after internet download.
+
+## Release Versioning
+
+- `MARKETING_VERSION` uses semantic versioning (`MAJOR.MINOR.PATCH`).
+- `CURRENT_PROJECT_VERSION` is a positive, monotonically increasing build number.
+- Release artifacts are named `CodexUsage-<version>-<build>-<arch>.dmg` and existing artifacts are never overwritten.
+- After both architecture packages and local installation succeed, the release script advances the project build number for the next release.
+
+Use the current semantic version:
+
+```bash
+rtk bash script/package_release.sh
+```
+
+Bump the semantic version for a feature or fix release:
+
+```bash
+CODEX_RELEASE_VERSION=1.1.0 rtk bash script/package_release.sh
+```

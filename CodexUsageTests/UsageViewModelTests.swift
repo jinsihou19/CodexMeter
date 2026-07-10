@@ -5,6 +5,33 @@ import XCTest
 
 @MainActor
 final class UsageViewModelTests: XCTestCase {
+    /// 验证设置侧栏版本文案组合用户版本和构建号，并能在缺少构建号时安全回退。
+    func testAppVersionDisplayFormatsBundleVersionAndBuild() {
+        XCTAssertEqual(
+            AppVersionDisplay.text(infoDictionary: [
+                "CFBundleShortVersionString": "1.0.1",
+                "CFBundleVersion": "2"
+            ]),
+            "版本 1.0.1 (2)"
+        )
+        XCTAssertEqual(
+            AppVersionDisplay.text(infoDictionary: ["CFBundleShortVersionString": "1.0.1"]),
+            "版本 1.0.1"
+        )
+    }
+
+    /// 验证设置侧栏常驻使用 Bundle 版本文案，而不是硬编码某次发布版本。
+    func testSettingsSidebarDisplaysCurrentAppVersion() throws {
+        let testFileURL = URL(fileURLWithPath: #filePath)
+        let projectRoot = testFileURL
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        let sourceURL = projectRoot.appendingPathComponent("CodexUsage/SettingsView.swift")
+        let source = try String(contentsOf: sourceURL, encoding: .utf8)
+
+        XCTAssertTrue(source.contains("Text(AppVersionDisplay.text())"))
+    }
+
     func testSettingsWindowPresenterCreatesAndReusesSettingsWindow() {
         var createdWindowCount = 0
         let presenter = SettingsWindowPresenter(

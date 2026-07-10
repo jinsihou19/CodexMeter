@@ -352,6 +352,16 @@ private struct CodexRadarLineChart: View {
 
 /// 雷达颜色表；集中管理状态色和曲线色，避免卡片和图例各自漂移。
 private enum CodexRadarPalette {
+    /// 六条曲线使用互不重复的高对比颜色，顺序与图例、数据点保持一致。
+    private static let seriesHexColors = [
+        "#2F6ED3", // 蓝
+        "#0E9F6E", // 绿
+        "#D98200", // 橙
+        "#D9293A", // 红
+        "#8B5CF6", // 紫
+        "#0891B2"  // 青
+    ]
+
     static func color(status: String?, score: Double) -> Color {
         switch status {
         case "green":
@@ -372,8 +382,7 @@ private enum CodexRadarPalette {
     }
 
     static func seriesColor(index: Int) -> Color {
-        let colors = ["#2F6ED3", "#0E9F6E", "#D98200", "#D9293A"]
-        return Color(hexRGB: colors[index % colors.count])
+        Color(hexRGB: seriesHexColors[index % seriesHexColors.count])
     }
 }
 
