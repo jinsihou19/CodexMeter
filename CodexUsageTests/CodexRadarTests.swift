@@ -5,6 +5,88 @@ import XCTest
 
 /// 降智雷达共享模型测试，覆盖开关默认值、缓存落盘和工作时间刷新节奏。
 final class CodexRadarTests: XCTestCase {
+    /// 验证分数卡列数会把全部项目均分到最多两行，五项时形成三列两行。
+    func testCodexRadarScoreGridUsesAtMostTwoRows() {
+        XCTAssertEqual(CodexRadarScoreGridLayout.columnCount(for: 0), 1)
+        XCTAssertEqual(CodexRadarScoreGridLayout.columnCount(for: 1), 1)
+        XCTAssertEqual(CodexRadarScoreGridLayout.columnCount(for: 4), 2)
+        XCTAssertEqual(CodexRadarScoreGridLayout.columnCount(for: 5), 3)
+        XCTAssertEqual(CodexRadarScoreGridLayout.columnCount(for: 8), 4)
+    }
+
+    /// 验证图例最多使用三列，六项时形成清晰的三列两行布局。
+    func testCodexRadarLegendUsesAtMostThreeColumns() {
+        XCTAssertEqual(CodexRadarLineChartLayout.legendColumnCount(for: 0), 1)
+        XCTAssertEqual(CodexRadarLineChartLayout.legendColumnCount(for: 1), 1)
+        XCTAssertEqual(CodexRadarLineChartLayout.legendColumnCount(for: 3), 3)
+        XCTAssertEqual(CodexRadarLineChartLayout.legendColumnCount(for: 6), 3)
+    }
+
+    /// 验证顶部卡片和下方图表共用排序后最多六项的展示序列。
+    func testCodexRadarSectionUsesOneLimitedDisplaySeries() throws {
+        let testFileURL = URL(fileURLWithPath: #filePath)
+        let projectRoot = testFileURL
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        let sourceURL = projectRoot.appendingPathComponent("CodexUsage/CodexRadarView.swift")
+        let source = try String(contentsOf: sourceURL, encoding: .utf8)
+
+        XCTAssertTrue(source.contains("let displaySeries = modelIQ.displaySeries(limit: 6)"))
+        XCTAssertTrue(source.contains("CodexRadarScoreGrid(runs: displaySeries.compactMap(\\.latest))"))
+        XCTAssertTrue(source.contains("CodexRadarLineChart(series: displaySeries)"))
+        XCTAssertTrue(source.contains(".instantHelp(cardHelpText(for: run))"))
+        XCTAssertTrue(source.contains(".instantHelp(seriesHelpText(for: item))"))
+        XCTAssertFalse(source.contains(".help(cardHelpText(for: run))"))
+    }
+
+    /// 验证单点序列只画圆点，多点序列画线并同时标记首尾端点。
+    func testCodexRadarLineChartCreatesSinglePointAndLineDrawingPlans() {
+        XCTAssertEqual(
+            CodexRadarLineChartLayout.drawingPlan(for: 0),
+            .init(drawsLine: false, markerIndexes: [])
+        )
+        XCTAssertEqual(
+            CodexRadarLineChartLayout.drawingPlan(for: 1),
+            .init(drawsLine: false, markerIndexes: [0])
+        )
+        XCTAssertEqual(
+            CodexRadarLineChartLayout.drawingPlan(for: 5),
+            .init(drawsLine: true, markerIndexes: [0, 4])
+        )
+    }
+
+    /// 验证模型族和推理档位按预设能力排序，并在排序后只保留前六项。
+    func testCodexRadarDisplaySeriesSortsByModelAndEffortThenLimitsToSix() {
+        let modelIQ = CodexRadarModelIQ(
+            primary: makeRadarSeries(id: "luna-medium", model: "gpt-5.6-luna", effort: "medium"),
+            comparisons: [
+                makeRadarSeries(id: "terra-medium", model: "gpt-5.6-terra", effort: "medium"),
+                makeRadarSeries(id: "sol-low", model: "gpt-5.6-sol", effort: "low"),
+                makeRadarSeries(id: "sol-high", model: "gpt-5.6-sol", effort: "high"),
+                makeRadarSeries(id: "sol-ultra", model: "gpt-5.6-sol", effort: "ultra"),
+                makeRadarSeries(id: "sol-medium", model: "gpt-5.6-sol", effort: "medium"),
+                makeRadarSeries(id: "sol-xhigh", model: "gpt-5.6-sol", effort: "xhigh")
+            ]
+        )
+
+        XCTAssertEqual(
+            modelIQ.displaySeries(limit: 6).map(\.id),
+            ["sol-ultra", "sol-xhigh", "sol-high", "sol-medium", "sol-low", "terra-medium"]
+        )
+    }
+
+    /// 验证紧凑标签使用后缀首字母，悬停全称保留完整模型和推理档位。
+    func testCodexRadarScoreCardTextFormatsShortAndFullLabels() {
+        XCTAssertEqual(
+            CodexRadarScoreCardText.shortLabel(model: "gpt-5.6-sol", effort: "ultra"),
+            "5.6-Sol-u"
+        )
+        XCTAssertEqual(
+            CodexRadarScoreCardText.fullLabel(model: "gpt-5.6-sol", effort: "ultra"),
+            "GPT-5.6-Sol ultra"
+        )
+    }
+
     /// 验证降智雷达模块关闭时，后台 Store 启动也不会访问外部雷达接口。
     @MainActor
     func testCodexRadarStoreDoesNotFetchWhenModuleHidden() async throws {
@@ -195,6 +277,31 @@ final class CodexRadarTests: XCTestCase {
         XCTAssertTrue(FileManager.default.fileExists(atPath: store.snapshotURL().path))
         XCTAssertEqual(try store.load(), snapshot)
     }
+}
+
+/// 构造用于排序测试的最小模型序列，避免无关运行指标掩盖排序意图。
+private func makeRadarSeries(id: String, model: String, effort: String) -> CodexRadarModelSeries {
+    let run = CodexRadarIQRun(
+        date: id,
+        score: 100,
+        status: "green",
+        passed: 1,
+        tasks: 1,
+        invalid: nil,
+        totalTokens: nil,
+        wallTimeHuman: nil,
+        model: model,
+        reasoningEffort: effort,
+        costUSD: nil
+    )
+    return CodexRadarModelSeries(
+        id: id,
+        label: id,
+        model: model,
+        reasoningEffort: effort,
+        latest: run,
+        recentDays: [run]
+    )
 }
 
 private final class CountingCodexRadarClient: CodexRadarFetching, @unchecked Sendable {

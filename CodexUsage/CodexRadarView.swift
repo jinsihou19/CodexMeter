@@ -17,8 +17,9 @@ struct CodexRadarSection: View {
                 header
 
                 if let snapshot = store.snapshot, let modelIQ = snapshot.modelIQ {
-                    CodexRadarScoreGrid(runs: Array(modelIQ.latestRuns.prefix(4)))
-                    CodexRadarLineChart(series: modelIQ.allSeries)
+                    let displaySeries = modelIQ.displaySeries(limit: 6)
+                    CodexRadarScoreGrid(runs: displaySeries.compactMap(\.latest))
+                    CodexRadarLineChart(series: displaySeries)
                     footer(snapshot: snapshot)
                 } else if store.isRefreshing {
                     ProgressView()
@@ -93,68 +94,60 @@ struct CodexRadarSection: View {
     }
 }
 
-/// 最新模型分数条，用一行紧凑 chip 展示模型、分数和通过数，避免雷达头部过于醒目。
+/// 最新模型分数区，用最多两行的紧凑卡片展示全部模型、分数和通过数。
 private struct CodexRadarScoreGrid: View {
     let runs: [CodexRadarIQRun]
 
     var body: some View {
-        HStack(spacing: 4) {
+        let columnCount = CodexRadarScoreGridLayout.columnCount(for: runs.count)
+        let columns = Array(
+            repeating: GridItem(.flexible(minimum: 0), spacing: 4),
+            count: columnCount
+        )
+
+        return LazyVGrid(columns: columns, alignment: .leading, spacing: 4) {
             ForEach(runs) { run in
-                HStack(alignment: .firstTextBaseline, spacing: 2) {
-                    Text(shortLabel(for: run))
-                        .font(.caption2.weight(.semibold))
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.58)
-                    Text(CodexRadarNumberFormatter.compactScore(run.score))
-                        .font(.caption.weight(.bold))
-                        .monospacedDigit()
-                        .foregroundStyle(color(for: run))
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.62)
-                    if let passed = run.passed, let tasks = run.tasks {
-                        Text("\(passed)/\(tasks)")
-                            .font(.caption2.weight(.semibold))
-                            .foregroundStyle(.secondary)
-                            .lineLimit(1)
-                            .minimumScaleFactor(0.58)
-                    }
-                }
-                .padding(.horizontal, 4)
-                .frame(maxWidth: .infinity, minHeight: 22, alignment: .center)
-                .background(color(for: run).opacity(0.10))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 6, style: .continuous)
-                        .stroke(color(for: run).opacity(0.28), lineWidth: 1)
-                )
-                .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+                scoreCard(for: run)
             }
         }
     }
 
-    /// 生成适合单行 chip 的短标签，压缩 GPT 前缀和推理强度但保留区分度。
-    private func shortLabel(for run: CodexRadarIQRun) -> String {
-        let model = (run.model ?? "GPT")
-            .replacingOccurrences(of: "gpt-", with: "", options: .caseInsensitive)
-            .replacingOccurrences(of: "GPT-", with: "")
-        guard let effort = run.reasoningEffort, !effort.isEmpty else {
-            return model
+    /// 构造单个分数卡，保留模型标识、分数和通过数的统一视觉层级。
+    private func scoreCard(for run: CodexRadarIQRun) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 2) {
+            Text(CodexRadarScoreCardText.shortLabel(model: run.model, effort: run.reasoningEffort))
+                .font(.caption2.weight(.semibold))
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+                .minimumScaleFactor(0.58)
+            Text(CodexRadarNumberFormatter.compactScore(run.score))
+                .font(.caption.weight(.bold))
+                .monospacedDigit()
+                .foregroundStyle(color(for: run))
+                .lineLimit(1)
+                .minimumScaleFactor(0.62)
+            if let passed = run.passed, let tasks = run.tasks {
+                Text("\(passed)/\(tasks)")
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.58)
+            }
         }
-        return "\(model)\(shortEffort(effort))"
+        .padding(.horizontal, 4)
+        .frame(maxWidth: .infinity, minHeight: 22, alignment: .center)
+        .background(color(for: run).opacity(0.10))
+        .overlay(
+            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                .stroke(color(for: run).opacity(0.28), lineWidth: 1)
+        )
+        .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+        .instantHelp(cardHelpText(for: run))
     }
 
-    /// 把推理强度缩成 chip 能承载的后缀。
-    private func shortEffort(_ value: String) -> String {
-        switch value.lowercased() {
-        case "xhigh":
-            return "xh"
-        case "high":
-            return "h"
-        case "medium":
-            return "m"
-        default:
-            return value
-        }
+    /// 生成卡片悬停详情，完整展示模型名、分数和任务通过情况。
+    private func cardHelpText(for run: CodexRadarIQRun) -> String {
+        CodexRadarDetailFormatter.text(for: run)
     }
 
     /// 根据雷达状态映射颜色，缺失状态时用分数兜底。
@@ -181,20 +174,36 @@ private struct CodexRadarLineChart: View {
     }
 
     private var legend: some View {
-        HStack(spacing: 9) {
+        let columnCount = CodexRadarLineChartLayout.legendColumnCount(for: series.count)
+        let columns = Array(
+            repeating: GridItem(.flexible(minimum: 0), spacing: 8),
+            count: columnCount
+        )
+
+        return LazyVGrid(columns: columns, alignment: .leading, spacing: 4) {
             ForEach(Array(series.enumerated()), id: \.element.id) { index, item in
                 HStack(spacing: 5) {
                     RoundedRectangle(cornerRadius: 2, style: .continuous)
                         .fill(CodexRadarPalette.seriesColor(index: index))
                         .frame(width: 14, height: 3)
-                    Text(shortLabel(item.label))
+                    Text(CodexRadarScoreCardText.shortLabel(model: item.model, effort: item.reasoningEffort))
                         .font(.caption2.weight(.semibold))
                         .lineLimit(1)
-                        .minimumScaleFactor(0.72)
                 }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .contentShape(Rectangle())
+                .instantHelp(seriesHelpText(for: item))
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    /// 生成图例悬停详情；缺少最新跑分时仍保留完整模型名称。
+    private func seriesHelpText(for item: CodexRadarModelSeries) -> String {
+        guard let latest = item.latest else {
+            return CodexRadarScoreCardText.fullLabel(model: item.model, effort: item.reasoningEffort)
+        }
+        return CodexRadarDetailFormatter.text(for: latest)
     }
 
     /// 画坐标、常态区间和每条模型曲线。
@@ -240,16 +249,26 @@ private struct CodexRadarLineChart: View {
         rect: CGRect
     ) {
         let points = points(for: item, rect: rect)
-        guard points.count >= 2 else {
+        let drawingPlan = CodexRadarLineChartLayout.drawingPlan(for: points.count)
+        guard !drawingPlan.markerIndexes.isEmpty else {
             return
         }
-        var path = Path()
-        path = smoothedPath(points: points)
         let color = CodexRadarPalette.seriesColor(index: index)
-        context.stroke(path, with: .color(color.opacity(index == 0 ? 0.95 : 0.72)), lineWidth: index == 0 ? 3 : 2)
+        if drawingPlan.drawsLine {
+            let path = smoothedPath(points: points)
+            context.stroke(
+                path,
+                with: .color(color.opacity(index == 0 ? 0.95 : 0.72)),
+                lineWidth: index == 0 ? 3 : 2
+            )
+        }
 
-        if let lastPoint = points.last {
-            context.fill(Path(ellipseIn: CGRect(x: lastPoint.x - 3, y: lastPoint.y - 3, width: 6, height: 6)), with: .color(color))
+        for markerIndex in drawingPlan.markerIndexes {
+            let point = points[markerIndex]
+            context.fill(
+                Path(ellipseIn: CGRect(x: point.x - 3, y: point.y - 3, width: 6, height: 6)),
+                with: .color(color)
+            )
         }
     }
 
@@ -329,14 +348,6 @@ private struct CodexRadarLineChart: View {
         return (value * scale).rounded() / scale
     }
 
-    /// 图例用更紧凑的模型名，适合 380pt 弹窗宽度。
-    private func shortLabel(_ label: String) -> String {
-        label
-            .replacingOccurrences(of: "GPT-", with: "")
-            .replacingOccurrences(of: "xhigh", with: "xh")
-            .replacingOccurrences(of: "medium", with: "m")
-            .replacingOccurrences(of: " ", with: "-")
-    }
 }
 
 /// 雷达颜色表；集中管理状态色和曲线色，避免卡片和图例各自漂移。
@@ -374,6 +385,53 @@ private enum CodexRadarNumberFormatter {
 
     static func compactScore(_ value: Double) -> String {
         value.rounded() == value ? String(Int(value)) : String(format: "%.1f", value)
+    }
+}
+
+/// 雷达悬停详情格式化工具；卡片和图例共享相同的完整信息层级。
+private enum CodexRadarDetailFormatter {
+    /// 生成完整模型名、分数和任务通过情况的多行说明。
+    static func text(for run: CodexRadarIQRun) -> String {
+        var details = [
+            CodexRadarScoreCardText.fullLabel(model: run.model, effort: run.reasoningEffort),
+            "分数 \(CodexRadarNumberFormatter.compactScore(run.score))"
+        ]
+        if let passed = run.passed, let tasks = run.tasks {
+            details.append("通过 \(passed)/\(tasks)")
+        }
+        return details.joined(separator: "\n")
+    }
+}
+
+/// 即时悬停浮层；替代系统 help 的固定等待时间，并保持内容不参与原布局测量。
+private struct CodexRadarInstantHelpModifier: ViewModifier {
+    let text: String
+    @State private var isPresented = false
+
+    /// 鼠标进入时立即呈现浮层，离开时立即关闭，并禁用状态切换动画延迟。
+    func body(content: Content) -> some View {
+        content
+            .onHover { hovering in
+                var transaction = Transaction()
+                transaction.disablesAnimations = true
+                withTransaction(transaction) {
+                    isPresented = hovering
+                }
+            }
+            .popover(isPresented: $isPresented, attachmentAnchor: .rect(.bounds), arrowEdge: .bottom) {
+                Text(text)
+                    .font(.caption)
+                    .multilineTextAlignment(.leading)
+                    .padding(8)
+                    .fixedSize(horizontal: true, vertical: true)
+            }
+    }
+}
+
+private extension View {
+    /// 为雷达卡片和图例附加无系统等待时间的悬停详情。
+    func instantHelp(_ text: String) -> some View {
+        modifier(CodexRadarInstantHelpModifier(text: text))
     }
 }
 

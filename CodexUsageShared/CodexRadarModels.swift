@@ -131,6 +131,51 @@ public struct CodexRadarModelIQ: Codable, Equatable, Sendable {
     public var latestRuns: [CodexRadarIQRun] {
         allSeries.compactMap(\.latest)
     }
+
+    /// 按预设模型能力和推理档位稳定排序，并返回界面允许展示的前若干项。
+    public func displaySeries(limit: Int = 6) -> [CodexRadarModelSeries] {
+        allSeries.enumerated()
+            .sorted { left, right in
+                let leftRank = Self.displayRank(for: left.element)
+                let rightRank = Self.displayRank(for: right.element)
+                if leftRank.model != rightRank.model {
+                    return leftRank.model < rightRank.model
+                }
+                if leftRank.effort != rightRank.effort {
+                    return leftRank.effort < rightRank.effort
+                }
+                return left.offset < right.offset
+            }
+            .prefix(max(limit, 0))
+            .map(\.element)
+    }
+
+    /// 返回模型族和推理档位的显示优先级；未知值放在已知值之后。
+    private static func displayRank(for series: CodexRadarModelSeries) -> (model: Int, effort: Int) {
+        let family = series.model?
+            .lowercased()
+            .split(separator: "-")
+            .last
+            .map(String.init)
+        let modelRank: Int
+        switch family {
+        case "sol": modelRank = 0
+        case "terra": modelRank = 1
+        case "luna": modelRank = 2
+        default: modelRank = 3
+        }
+
+        let effortRank: Int
+        switch series.reasoningEffort?.lowercased() {
+        case "ultra": effortRank = 0
+        case "xhigh": effortRank = 1
+        case "high": effortRank = 2
+        case "medium": effortRank = 3
+        case "low": effortRank = 4
+        default: effortRank = 5
+        }
+        return (modelRank, effortRank)
+    }
 }
 
 /// 图表中的单条模型曲线；id 保留远端 comparison key，label 用于展示。
