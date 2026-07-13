@@ -5,25 +5,8 @@ import XCTest
 
 /// 降智雷达共享模型测试，覆盖开关默认值、缓存落盘和工作时间刷新节奏。
 final class CodexRadarTests: XCTestCase {
-    /// 验证分数卡列数会把全部项目均分到最多两行，五项时形成三列两行。
-    func testCodexRadarScoreGridUsesAtMostTwoRows() {
-        XCTAssertEqual(CodexRadarScoreGridLayout.columnCount(for: 0), 1)
-        XCTAssertEqual(CodexRadarScoreGridLayout.columnCount(for: 1), 1)
-        XCTAssertEqual(CodexRadarScoreGridLayout.columnCount(for: 4), 2)
-        XCTAssertEqual(CodexRadarScoreGridLayout.columnCount(for: 5), 3)
-        XCTAssertEqual(CodexRadarScoreGridLayout.columnCount(for: 8), 4)
-    }
-
-    /// 验证图例最多使用三列，六项时形成清晰的三列两行布局。
-    func testCodexRadarLegendUsesAtMostThreeColumns() {
-        XCTAssertEqual(CodexRadarLineChartLayout.legendColumnCount(for: 0), 1)
-        XCTAssertEqual(CodexRadarLineChartLayout.legendColumnCount(for: 1), 1)
-        XCTAssertEqual(CodexRadarLineChartLayout.legendColumnCount(for: 3), 3)
-        XCTAssertEqual(CodexRadarLineChartLayout.legendColumnCount(for: 6), 3)
-    }
-
-    /// 验证顶部卡片和下方图表共用排序后最多六项的展示序列。
-    func testCodexRadarSectionUsesOneLimitedDisplaySeries() throws {
+    /// 验证顶部卡片和下方图表共用排序后的全部展示序列。
+    func testCodexRadarSectionUsesAllDisplaySeries() throws {
         let testFileURL = URL(fileURLWithPath: #filePath)
         let projectRoot = testFileURL
             .deletingLastPathComponent()
@@ -31,32 +14,51 @@ final class CodexRadarTests: XCTestCase {
         let sourceURL = projectRoot.appendingPathComponent("CodexUsage/CodexRadarView.swift")
         let source = try String(contentsOf: sourceURL, encoding: .utf8)
 
-        XCTAssertTrue(source.contains("let displaySeries = modelIQ.displaySeries(limit: 6)"))
+        XCTAssertTrue(source.contains("let displaySeries = modelIQ.displaySeries(limit: modelIQ.allSeries.count)"))
         XCTAssertTrue(source.contains("CodexRadarScoreGrid(runs: displaySeries.compactMap(\\.latest))"))
         XCTAssertTrue(source.contains("CodexRadarLineChart(series: displaySeries)"))
         XCTAssertTrue(source.contains(".instantHelp(cardHelpText(for: run))"))
-        XCTAssertTrue(source.contains(".instantHelp(seriesHelpText(for: item))"))
+        XCTAssertTrue(source.contains("hoverTooltip(date: hoveredPoint.date, score: hoveredPoint.score)"))
+        XCTAssertTrue(source.contains("abs($0.score - score) < 0.001"))
+        XCTAssertFalse(source.contains("private var legend"))
         XCTAssertFalse(source.contains(".help(cardHelpText(for: run))"))
     }
 
-    /// 验证最多六条雷达曲线拥有六种互不重复的图例颜色。
-    func testCodexRadarPaletteProvidesSixDistinctSeriesColors() throws {
+    /// 验证折线图设置只在雷达开启后出现，且任何开关变化都会通知后台刷新。
+    func testCodexRadarChartSettingIsConditionalAndRefreshesWhenEnabled() throws {
+        let testFileURL = URL(fileURLWithPath: #filePath)
+        let projectRoot = testFileURL.deletingLastPathComponent().deletingLastPathComponent()
+        let source = try String(
+            contentsOf: projectRoot.appendingPathComponent("CodexUsage/SettingsView.swift"),
+            encoding: .utf8
+        )
+
+        XCTAssertTrue(source.contains("if codexRadarEnabled {"))
+        XCTAssertTrue(source.contains("isOn: codexRadarScoreChartBinding"))
+        XCTAssertTrue(source.contains(") { _ in\n            CodexRadarSettings.notifyDidChange()"))
+    }
+
+    /// 验证放开模型数量后，前十二条雷达曲线仍拥有互不重复的颜色。
+    func testCodexRadarPaletteProvidesTwelveDistinctSeriesColors() throws {
         let testFileURL = URL(fileURLWithPath: #filePath)
         let projectRoot = testFileURL
             .deletingLastPathComponent()
             .deletingLastPathComponent()
         let sourceURL = projectRoot.appendingPathComponent("CodexUsage/CodexRadarView.swift")
         let source = try String(contentsOf: sourceURL, encoding: .utf8)
-        let expectedColors = ["#2F6ED3", "#0E9F6E", "#D98200", "#D9293A", "#8B5CF6", "#0891B2"]
+        let expectedColors = [
+            "#2F6ED3", "#0E9F6E", "#D98200", "#D9293A", "#8B5CF6", "#0891B2",
+            "#C026D3", "#65A30D", "#E11D74", "#4F46E5", "#0F766E", "#A16207"
+        ]
 
-        XCTAssertEqual(Set(expectedColors).count, 6)
+        XCTAssertEqual(Set(expectedColors).count, 12)
         for color in expectedColors {
             XCTAssertTrue(source.contains("\"\(color)\""))
         }
         XCTAssertTrue(source.contains("seriesHexColors[index % seriesHexColors.count]"))
     }
 
-    /// 验证单点序列只画圆点，多点序列画线并同时标记首尾端点。
+    /// 验证单点序列只画圆点，多点序列画线并标记全部时间点。
     func testCodexRadarLineChartCreatesSinglePointAndLineDrawingPlans() {
         XCTAssertEqual(
             CodexRadarLineChartLayout.drawingPlan(for: 0),
@@ -68,7 +70,7 @@ final class CodexRadarTests: XCTestCase {
         )
         XCTAssertEqual(
             CodexRadarLineChartLayout.drawingPlan(for: 5),
-            .init(drawsLine: true, markerIndexes: [0, 4])
+            .init(drawsLine: true, markerIndexes: [0, 1, 2, 3, 4])
         )
     }
 
@@ -80,7 +82,7 @@ final class CodexRadarTests: XCTestCase {
                 makeRadarSeries(id: "terra-medium", model: "gpt-5.6-terra", effort: "medium"),
                 makeRadarSeries(id: "sol-low", model: "gpt-5.6-sol", effort: "low"),
                 makeRadarSeries(id: "sol-high", model: "gpt-5.6-sol", effort: "high"),
-                makeRadarSeries(id: "sol-ultra", model: "gpt-5.6-sol", effort: "ultra"),
+                makeRadarSeries(id: "sol-max", model: "gpt-5.6-sol", effort: "max"),
                 makeRadarSeries(id: "sol-medium", model: "gpt-5.6-sol", effort: "medium"),
                 makeRadarSeries(id: "sol-xhigh", model: "gpt-5.6-sol", effort: "xhigh")
             ]
@@ -88,19 +90,21 @@ final class CodexRadarTests: XCTestCase {
 
         XCTAssertEqual(
             modelIQ.displaySeries(limit: 6).map(\.id),
-            ["sol-ultra", "sol-xhigh", "sol-high", "sol-medium", "sol-low", "terra-medium"]
+            ["sol-max", "sol-xhigh", "sol-high", "sol-medium", "sol-low", "terra-medium"]
         )
     }
 
-    /// 验证紧凑标签使用后缀首字母，悬停全称保留完整模型和推理档位。
+    /// 验证模型矩阵使用完整档位，并把旧 ultra 名称统一为 max。
     func testCodexRadarScoreCardTextFormatsShortAndFullLabels() {
         XCTAssertEqual(
-            CodexRadarScoreCardText.shortLabel(model: "gpt-5.6-sol", effort: "ultra"),
-            "5.6-Sol-u"
+            CodexRadarScoreCardText.shortLabel(model: "gpt-5.6-sol", effort: "medium"),
+            "Sol med"
         )
+        XCTAssertEqual(CodexRadarScoreCardText.familyLabel(model: "gpt-5.6-terra"), "Terra")
+        XCTAssertEqual(CodexRadarScoreCardText.effortLabel("xhigh"), "xhigh")
         XCTAssertEqual(
             CodexRadarScoreCardText.fullLabel(model: "gpt-5.6-sol", effort: "ultra"),
-            "GPT-5.6-Sol ultra"
+            "GPT-5.6-Sol max"
         )
     }
 
@@ -182,10 +186,13 @@ final class CodexRadarTests: XCTestCase {
         }
 
         XCTAssertFalse(CodexRadarSettings(defaults: defaults).isEnabled)
+        XCTAssertTrue(CodexRadarSettings(defaults: defaults).showsScoreChart)
 
         defaults.set(true, forKey: CodexRadarPreferenceKeys.isEnabled)
+        defaults.set(false, forKey: CodexRadarPreferenceKeys.showsScoreChart)
 
         XCTAssertTrue(CodexRadarSettings(defaults: defaults).isEnabled)
+        XCTAssertFalse(CodexRadarSettings(defaults: defaults).showsScoreChart)
     }
 
     /// 验证工作日白天使用一小时节奏，夜间和周末回落到四小时节奏。

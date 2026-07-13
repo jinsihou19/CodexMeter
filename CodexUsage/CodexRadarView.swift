@@ -17,9 +17,11 @@ struct CodexRadarSection: View {
                 header
 
                 if let snapshot = store.snapshot, let modelIQ = snapshot.modelIQ {
-                    let displaySeries = modelIQ.displaySeries(limit: 6)
+                    let displaySeries = modelIQ.displaySeries(limit: modelIQ.allSeries.count)
                     CodexRadarScoreGrid(runs: displaySeries.compactMap(\.latest))
-                    CodexRadarLineChart(series: displaySeries)
+                    if settings.showsScoreChart {
+                        CodexRadarLineChart(series: displaySeries)
+                    }
                     footer(snapshot: snapshot)
                 } else if store.isRefreshing {
                     ProgressView()
@@ -94,54 +96,65 @@ struct CodexRadarSection: View {
     }
 }
 
-/// 最新模型分数区，用最多两行的紧凑卡片展示全部模型、分数和通过数。
+/// 最新模型矩阵，用最多两行的紧凑卡片展示模型和 IQ。
 private struct CodexRadarScoreGrid: View {
     let runs: [CodexRadarIQRun]
 
-    var body: some View {
-        let columnCount = CodexRadarScoreGridLayout.columnCount(for: runs.count)
-        let columns = Array(
-            repeating: GridItem(.flexible(minimum: 0), spacing: 4),
-            count: columnCount
-        )
+    /// 矩阵中的单个模型家族，runs 保留上游的档位排序。
+    private struct ModelFamily: Identifiable {
+        let id: String
+        let runs: [CodexRadarIQRun]
+    }
 
-        return LazyVGrid(columns: columns, alignment: .leading, spacing: 4) {
-            ForEach(runs) { run in
-                scoreCard(for: run)
+    var body: some View {
+        VStack(spacing: 0) {
+            ForEach(modelFamilies) { family in
+                HStack(spacing: 4) {
+                    Text(family.id)
+                        .font(.caption2.weight(.medium))
+                        .foregroundStyle(.secondary)
+                        .frame(width: 30, alignment: .leading)
+
+                    ForEach(family.runs) { run in
+                        scoreCell(for: run)
+                    }
+                }
+                .frame(maxWidth: .infinity, minHeight: 19, alignment: .leading)
             }
         }
     }
 
-    /// 构造单个分数卡，保留模型标识、分数和通过数的统一视觉层级。
-    private func scoreCard(for run: CodexRadarIQRun) -> some View {
-        HStack(alignment: .firstTextBaseline, spacing: 2) {
-            Text(CodexRadarScoreCardText.shortLabel(model: run.model, effort: run.reasoningEffort))
-                .font(.caption2.weight(.semibold))
-                .foregroundStyle(.secondary)
+    /// 按首次出现顺序聚合模型家族，避免矩阵重复显示家族名。
+    private var modelFamilies: [ModelFamily] {
+        var familyOrder: [String] = []
+        var groupedRuns: [String: [CodexRadarIQRun]] = [:]
+        for run in runs {
+            let family = CodexRadarScoreCardText.familyLabel(model: run.model)
+            if groupedRuns[family] == nil {
+                familyOrder.append(family)
+            }
+            groupedRuns[family, default: []].append(run)
+        }
+        return familyOrder.map { ModelFamily(id: $0, runs: groupedRuns[$0] ?? []) }
+    }
+
+    /// 构造档位单元格；通过数等次要信息只在悬停详情中展示。
+    private func scoreCell(for run: CodexRadarIQRun) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 3) {
+            Text(CodexRadarScoreCardText.effortLabel(run.reasoningEffort))
+                .font(.caption2.weight(.medium))
+                .foregroundStyle(.primary)
                 .lineLimit(1)
-                .minimumScaleFactor(0.58)
+                .minimumScaleFactor(0.72)
             Text(CodexRadarNumberFormatter.compactScore(run.score))
                 .font(.caption.weight(.bold))
                 .monospacedDigit()
                 .foregroundStyle(color(for: run))
                 .lineLimit(1)
                 .minimumScaleFactor(0.62)
-            if let passed = run.passed, let tasks = run.tasks {
-                Text("\(passed)/\(tasks)")
-                    .font(.caption2.weight(.semibold))
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.58)
-            }
         }
-        .padding(.horizontal, 4)
-        .frame(maxWidth: .infinity, minHeight: 22, alignment: .center)
-        .background(color(for: run).opacity(0.10))
-        .overlay(
-            RoundedRectangle(cornerRadius: 6, style: .continuous)
-                .stroke(color(for: run).opacity(0.28), lineWidth: 1)
-        )
-        .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+        .frame(maxWidth: .infinity, minHeight: 18)
+        .contentShape(Rectangle())
         .instantHelp(cardHelpText(for: run))
     }
 
@@ -160,55 +173,48 @@ private struct CodexRadarScoreGrid: View {
 private struct CodexRadarLineChart: View {
     let series: [CodexRadarModelSeries]
     @Environment(\.displayScale) private var displayScale
+    @State private var hoveredPoint: HoveredPoint?
+
+    /// 记录当前命中的日期和画布坐标，用于就近摆放聚合提示。
+    private struct HoveredPoint: Equatable {
+        let date: String
+        let score: Double
+        let location: CGPoint
+    }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 3) {
+        ZStack(alignment: .topLeading) {
             Canvas { context, size in
                 drawChart(context: &context, size: size)
             }
-            .frame(height: 86)
             .accessibilityLabel("降智雷达 IQ 曲线")
 
-            legend
-        }
-    }
+            GeometryReader { proxy in
+                Color.clear
+                    .contentShape(Rectangle())
+                    .onContinuousHover { phase in
+                        switch phase {
+                        case .active(let location):
+                            hoveredPoint = nearestPoint(to: location, size: proxy.size)
+                        case .ended:
+                            hoveredPoint = nil
+                        }
+                    }
+            }
 
-    private var legend: some View {
-        let columnCount = CodexRadarLineChartLayout.legendColumnCount(for: series.count)
-        let columns = Array(
-            repeating: GridItem(.flexible(minimum: 0), spacing: 8),
-            count: columnCount
-        )
-
-        return LazyVGrid(columns: columns, alignment: .leading, spacing: 4) {
-            ForEach(Array(series.enumerated()), id: \.element.id) { index, item in
-                HStack(spacing: 5) {
-                    RoundedRectangle(cornerRadius: 2, style: .continuous)
-                        .fill(CodexRadarPalette.seriesColor(index: index))
-                        .frame(width: 14, height: 3)
-                    Text(CodexRadarScoreCardText.shortLabel(model: item.model, effort: item.reasoningEffort))
-                        .font(.caption2.weight(.semibold))
-                        .lineLimit(1)
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .contentShape(Rectangle())
-                .instantHelp(seriesHelpText(for: item))
+            if let hoveredPoint {
+                hoverTooltip(date: hoveredPoint.date, score: hoveredPoint.score)
+                    .fixedSize()
+                    .position(tooltipPosition(for: hoveredPoint, chartWidth: MenuBarPopoverLayout.contentWidth - 10))
+                    .allowsHitTesting(false)
             }
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
-    }
-
-    /// 生成图例悬停详情；缺少最新跑分时仍保留完整模型名称。
-    private func seriesHelpText(for item: CodexRadarModelSeries) -> String {
-        guard let latest = item.latest else {
-            return CodexRadarScoreCardText.fullLabel(model: item.model, effort: item.reasoningEffort)
-        }
-        return CodexRadarDetailFormatter.text(for: latest)
+        .frame(height: 116)
     }
 
     /// 画坐标、常态区间和每条模型曲线。
     private func drawChart(context: inout GraphicsContext, size: CGSize) {
-        let plotRect = CGRect(x: 28, y: 4, width: max(size.width - 34, 1), height: max(size.height - 20, 1))
+        let plotRect = plotRect(for: size)
         drawNormalBand(context: &context, rect: plotRect)
         drawGrid(context: &context, rect: plotRect)
         drawXAxisLabels(context: &context, rect: plotRect)
@@ -218,17 +224,17 @@ private struct CodexRadarLineChart: View {
         }
     }
 
-    /// 绘制 90-110 常态区间背景。
+    /// 绘制可见范围内的 100-110 常态区间背景。
     private func drawNormalBand(context: inout GraphicsContext, rect: CGRect) {
         let yTop = yPosition(score: 110, rect: rect)
-        let yBottom = yPosition(score: 90, rect: rect)
+        let yBottom = yPosition(score: 100, rect: rect)
         let band = CGRect(x: rect.minX, y: yTop, width: rect.width, height: yBottom - yTop)
         context.fill(Path(roundedRect: band, cornerRadius: 6), with: .color(.primary.opacity(0.045)))
     }
 
     /// 绘制轻量网格和关键刻度，保持菜单弹窗可扫读。
     private func drawGrid(context: inout GraphicsContext, rect: CGRect) {
-        for score in [60.0, 80.0, 100.0, 120.0] {
+        for score in [100.0, 120.0, 140.0] {
             let y = pixelAligned(yPosition(score: score, rect: rect))
             var path = Path()
             path.move(to: CGPoint(x: rect.minX, y: y))
@@ -241,47 +247,45 @@ private struct CodexRadarLineChart: View {
         }
     }
 
-    /// 绘制单条模型曲线和端点圆点。
+    /// 绘制单条模型曲线和每个时间节点。
     private func drawSeries(
         _ item: CodexRadarModelSeries,
         index: Int,
         context: inout GraphicsContext,
         rect: CGRect
     ) {
-        let points = points(for: item, rect: rect)
-        let drawingPlan = CodexRadarLineChartLayout.drawingPlan(for: points.count)
-        guard !drawingPlan.markerIndexes.isEmpty else {
-            return
-        }
         let color = CodexRadarPalette.seriesColor(index: index)
-        if drawingPlan.drawsLine {
-            let path = smoothedPath(points: points)
-            context.stroke(
-                path,
-                with: .color(color.opacity(index == 0 ? 0.95 : 0.72)),
-                lineWidth: index == 0 ? 3 : 2
-            )
-        }
-
-        for markerIndex in drawingPlan.markerIndexes {
-            let point = points[markerIndex]
-            context.fill(
-                Path(ellipseIn: CGRect(x: point.x - 3, y: point.y - 3, width: 6, height: 6)),
-                with: .color(color)
-            )
+        for segment in visibleSegments(for: item) {
+            let points = points(for: segment, rect: rect)
+            let drawingPlan = CodexRadarLineChartLayout.drawingPlan(for: points.count)
+            if drawingPlan.drawsLine {
+                context.stroke(
+                    smoothedPath(points: points),
+                    with: .color(color.opacity(index == 0 ? 0.95 : 0.72)),
+                    lineWidth: index == 0 ? 3 : 2
+                )
+            }
+            for markerIndex in drawingPlan.markerIndexes {
+                let point = points[markerIndex]
+                context.fill(
+                    Path(ellipseIn: CGRect(x: point.x - 3, y: point.y - 3, width: 6, height: 6)),
+                    with: .color(color)
+                )
+            }
         }
     }
 
     /// 在横轴底部标出首、中、末日期，弥补迷你曲线缺少时间参照的问题。
     private func drawXAxisLabels(context: inout GraphicsContext, rect: CGRect) {
-        guard let runs = series.first?.recentDays, !runs.isEmpty else {
+        let dates = allDates
+        guard !dates.isEmpty else {
             return
         }
-        let indexes = Array(Set([0, runs.count / 2, runs.count - 1])).sorted()
-        let denominator = max(runs.count - 1, 1)
+        let indexes = Array(Set([0, dates.count / 2, dates.count - 1])).sorted()
+        let denominator = max(dates.count - 1, 1)
         for index in indexes {
             let x = rect.minX + rect.width * CGFloat(index) / CGFloat(denominator)
-            let label = Text(CodexRadarDateFormatter.axisLabel(runs[index].date))
+            let label = Text(CodexRadarDateFormatter.axisLabel(dates[index]))
                 .font(.caption2.weight(.medium))
                 .foregroundStyle(.secondary)
             context.draw(label, at: CGPoint(x: x, y: rect.maxY + 11), anchor: .center)
@@ -320,25 +324,94 @@ private struct CodexRadarLineChart: View {
         return path
     }
 
-    /// 把远端日期序列等距映射到图表区域。
-    private func points(for item: CodexRadarModelSeries, rect: CGRect) -> [CGPoint] {
-        let runs = item.recentDays
-        guard !runs.isEmpty else {
+    /// 把远端日期映射到所有曲线共用的时间轴。
+    private func points(for runs: [CodexRadarIQRun], rect: CGRect) -> [CGPoint] {
+        let dates = allDates
+        guard !runs.isEmpty, !dates.isEmpty else {
             return []
         }
-        let denominator = max(runs.count - 1, 1)
-        return runs.enumerated().map { offset, run in
-            CGPoint(
+        let denominator = max(dates.count - 1, 1)
+        return runs.compactMap { run in
+            guard let offset = dates.firstIndex(of: run.date) else {
+                return nil
+            }
+            return CGPoint(
                 x: rect.minX + rect.width * CGFloat(offset) / CGFloat(denominator),
                 y: yPosition(score: run.score, rect: rect)
             )
         }
     }
 
-    /// 将 IQ 分数夹到 45-130 的可视范围，避免异常值把图挤扁。
+    /// 把 IQ 100 以上的连续跑分分段，低分日期会真正断开曲线。
+    private func visibleSegments(for item: CodexRadarModelSeries) -> [[CodexRadarIQRun]] {
+        item.recentDays.reduce(into: [[CodexRadarIQRun]]()) { segments, run in
+            guard run.score >= 100 else {
+                if segments.last?.isEmpty == false {
+                    segments.append([])
+                }
+                return
+            }
+            if segments.isEmpty {
+                segments.append([])
+            }
+            segments[segments.count - 1].append(run)
+        }.filter { !$0.isEmpty }
+    }
+
+    /// 合并所有曲线的日期，保证同一时间的多个模型落在同一竖线。
+    private var allDates: [String] {
+        Array(Set(series.flatMap { $0.recentDays.map(\.date) })).sorted()
+    }
+
+    /// 只在鼠标距离数据点 10 像素内时命中，避免整条曲线都弹出提示。
+    private func nearestPoint(to location: CGPoint, size: CGSize) -> HoveredPoint? {
+        let rect = plotRect(for: size)
+        let candidates = series.flatMap { item in
+            let runs = item.recentDays.filter { $0.score >= 100 }
+            return zip(runs, points(for: runs, rect: rect)).map { ($0.0.date, $0.0.score, $0.1) }
+        }
+        return candidates
+            .map { (date: $0.0, score: $0.1, point: $0.2, distance: hypot($0.2.x - location.x, $0.2.y - location.y)) }
+            .filter { $0.distance <= 10 }
+            .min { $0.distance < $1.distance }
+            .map { HoveredPoint(date: $0.date, score: $0.score, location: $0.point) }
+    }
+
+    /// 只聚合同一时间且同一 IQ 坐标的模型，不合并同时间的其他高度。
+    private func hoverTooltip(date: String, score: Double) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            ForEach(Array(series.enumerated()), id: \.element.id) { index, item in
+                if let run = item.recentDays.first(where: { $0.date == date && abs($0.score - score) < 0.001 }) {
+                    HStack(spacing: 5) {
+                        Circle()
+                            .fill(CodexRadarPalette.seriesColor(index: index))
+                            .frame(width: 7, height: 7)
+                        Text("\(CodexRadarScoreCardText.shortLabel(model: item.model, effort: item.reasoningEffort)) · IQ \(CodexRadarNumberFormatter.compactScore(run.score))")
+                    }
+                }
+            }
+        }
+        .font(.caption.weight(.semibold))
+        .padding(.horizontal, 8)
+        .padding(.vertical, 6)
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 6).stroke(.secondary.opacity(0.35)))
+    }
+
+    /// 让提示框靠近数据点且不超出图表左右边界。
+    private func tooltipPosition(for hoveredPoint: HoveredPoint, chartWidth: CGFloat) -> CGPoint {
+        CGPoint(x: min(max(hoveredPoint.location.x, 80), chartWidth - 80), y: max(28, hoveredPoint.location.y - 30))
+    }
+
+    /// 统一画布绘制与悬停命中的实际坐标区域。
+    private func plotRect(for size: CGSize) -> CGRect {
+        CGRect(x: 28, y: 4, width: max(size.width - 34, 1), height: max(size.height - 20, 1))
+    }
+
+    /// 将 IQ 分数夹到 100-150 的可视范围，突出高分模型之间的差异。
     private func yPosition(score: Double, rect: CGRect) -> CGFloat {
-        let clamped = min(max(score, 45), 130)
-        let ratio = (clamped - 45) / 85
+        let clamped = min(max(score, 100), 150)
+        let ratio = (clamped - 100) / 50
         return rect.maxY - rect.height * CGFloat(ratio)
     }
 
@@ -352,14 +425,20 @@ private struct CodexRadarLineChart: View {
 
 /// 雷达颜色表；集中管理状态色和曲线色，避免卡片和图例各自漂移。
 private enum CodexRadarPalette {
-    /// 六条曲线使用互不重复的高对比颜色，顺序与图例、数据点保持一致。
+    /// 最多十二条曲线使用互不重复的高对比颜色，顺序与数据点和悬停提示保持一致。
     private static let seriesHexColors = [
         "#2F6ED3", // 蓝
         "#0E9F6E", // 绿
         "#D98200", // 橙
         "#D9293A", // 红
         "#8B5CF6", // 紫
-        "#0891B2"  // 青
+        "#0891B2", // 青
+        "#C026D3", // 紫红
+        "#65A30D", // 黄绿
+        "#E11D74", // 玫红
+        "#4F46E5", // 靛蓝
+        "#0F766E", // 蓝绿
+        "#A16207"  // 琥珀
     ]
 
     static func color(status: String?, score: Double) -> Color {

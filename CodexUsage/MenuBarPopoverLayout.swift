@@ -27,14 +27,6 @@ enum MenuBarPopoverContentRegion: Equatable {
     case footer
 }
 
-/// 降智雷达分数卡布局规则；按项目数量计算最多两行所需的等宽列数。
-enum CodexRadarScoreGridLayout {
-    /// 返回容纳全部项目且不超过两行的列数；空列表返回一列以安全构造网格。
-    static func columnCount(for itemCount: Int) -> Int {
-        max(1, (itemCount + 1) / 2)
-    }
-}
-
 /// 降智雷达折线图布局规则；集中决定需要强调的数据点。
 enum CodexRadarLineChartLayout {
     /// 单条曲线的绘制计划；区分是否连线以及需要强调的数据点。
@@ -43,7 +35,7 @@ enum CodexRadarLineChartLayout {
         let markerIndexes: [Int]
     }
 
-    /// 返回曲线绘制计划；单点只画圆点，多点画线并强调首尾。
+    /// 返回曲线绘制计划；所有时间点都画圆点，便于精确悬停查看。
     static func drawingPlan(for pointCount: Int) -> DrawingPlan {
         guard pointCount > 0 else {
             return DrawingPlan(drawsLine: false, markerIndexes: [])
@@ -51,24 +43,35 @@ enum CodexRadarLineChartLayout {
         guard pointCount > 1 else {
             return DrawingPlan(drawsLine: false, markerIndexes: [0])
         }
-        return DrawingPlan(drawsLine: true, markerIndexes: [0, pointCount - 1])
-    }
-
-    /// 返回图例列数；最多三列，六项时自然形成两行。
-    static func legendColumnCount(for itemCount: Int) -> Int {
-        min(max(itemCount, 1), 3)
+        return DrawingPlan(drawsLine: true, markerIndexes: Array(0..<pointCount))
     }
 }
 
-/// 降智雷达卡片与图例文案规则；统一紧凑标签和悬停全称的模型格式。
+/// 降智雷达模型矩阵文案规则；统一卡片标签和悬停全称的模型格式。
 enum CodexRadarScoreCardText {
-    /// 生成 `5.6-Sol-u` 格式的紧凑标签；推理档位只保留首字母。
+    /// 提取模型家族名，供矩阵每行只展示一次。
+    static func familyLabel(model: String?) -> String {
+        normalizedModel(model, includesGPTPrefix: false)
+            .split(separator: "-")
+            .last
+            .map(String.init) ?? "GPT"
+    }
+
+    /// 返回矩阵单元格的完整档位名，并兼容旧 ultra 数据。
+    static func effortLabel(_ effort: String?) -> String {
+        guard let effort, !effort.isEmpty else {
+            return "--"
+        }
+        return fullEffort(effort)
+    }
+
+    /// 生成 `Sol max` 格式的矩阵标签，去掉重复的 GPT 和版本前缀。
     static func shortLabel(model: String?, effort: String?) -> String {
-        let base = normalizedModel(model, includesGPTPrefix: false)
-        guard let suffix = effort?.lowercased().first else {
+        let base = familyLabel(model: model)
+        guard let effort, !effort.isEmpty else {
             return base
         }
-        return "\(base)-\(suffix)"
+        return "\(base) \(compactEffort(effort))"
     }
 
     /// 生成 `GPT-5.6-Sol ultra` 格式的完整名称，供悬停详情使用。
@@ -77,7 +80,21 @@ enum CodexRadarScoreCardText {
         guard let effort, !effort.isEmpty else {
             return base
         }
-        return "\(base) \(effort.lowercased())"
+        return "\(base) \(fullEffort(effort))"
+    }
+
+    /// 生成矩阵中的紧凑档位，medium 缩写为 med，旧 ultra 统一为 max。
+    private static func compactEffort(_ effort: String) -> String {
+        switch effort.lowercased() {
+        case "medium": return "med"
+        case "ultra": return "max"
+        default: return effort.lowercased()
+        }
+    }
+
+    /// 悬停详情保留完整档位名，仅兼容旧 ultra 名称。
+    private static func fullEffort(_ effort: String) -> String {
+        effort.lowercased() == "ultra" ? "max" : effort.lowercased()
     }
 
     /// 规范远端模型名的大小写和 GPT 前缀，未知格式保留可读兜底。
