@@ -294,7 +294,7 @@ struct StatusLineDisplay: Identifiable, Equatable {
         }
 
         var lines: [StatusLineDisplay] = []
-        if settings.showsPrimaryWindow {
+        if settings.showsPrimaryWindow, viewModel.snapshot?.rateLimits.primary != nil {
             lines.append(StatusLineDisplay(
                 id: "primary",
                 label: viewModel.menuBarPrimaryLabel,
@@ -302,7 +302,7 @@ struct StatusLineDisplay: Identifiable, Equatable {
                 tone: viewModel.menuBarPrimaryTone
             ))
         }
-        if settings.showsSecondaryWindow {
+        if settings.showsSecondaryWindow, viewModel.snapshot?.rateLimits.secondary != nil {
             lines.append(StatusLineDisplay(
                 id: "secondary",
                 label: viewModel.menuBarSecondaryLabel,
@@ -310,7 +310,7 @@ struct StatusLineDisplay: Identifiable, Equatable {
                 tone: viewModel.menuBarSecondaryTone
             ))
         }
-        if lines.isEmpty {
+        if lines.isEmpty, viewModel.snapshot == nil {
             lines.append(StatusLineDisplay(
                 id: "fallback-primary",
                 label: viewModel.menuBarPrimaryLabel,

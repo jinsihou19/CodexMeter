@@ -1063,7 +1063,7 @@ public struct UsageWindowPaceDisplay: Equatable, Identifiable, Sendable {
         self.display = display
     }
 
-    /// 收集“用量速度”区域可展示的窗口 Pace，当前包含 5 小时和 7 天两个窗口。
+    /// 收集“用量速度”区域实际返回且达到展示阈值的窗口 Pace。
     public static func displays(
         rateLimits: RateLimitSnapshot,
         now: Date = Date(),
@@ -1072,14 +1072,14 @@ public struct UsageWindowPaceDisplay: Equatable, Identifiable, Sendable {
         [
             UsageWindowPaceDisplay(
                 id: "primary",
-                title: "5 小时",
+                title: rateLimits.primary?.durationLabel ?? "用量窗口",
                 window: rateLimits.primary,
                 now: now,
                 weeklyProgressWorkDays: weeklyProgressWorkDays
             ),
             UsageWindowPaceDisplay(
                 id: "secondary",
-                title: "7 天",
+                title: rateLimits.secondary?.durationLabel ?? "用量窗口",
                 window: rateLimits.secondary,
                 now: now,
                 weeklyProgressWorkDays: weeklyProgressWorkDays
@@ -1130,19 +1130,19 @@ public struct CodexUsageWidgetDisplay: Equatable, Sendable {
     ) {
         var lines: [Line] = []
         let windows = Self.visibleWindows(menuBarSettings: settings, widgetSettings: widgetSettings)
-        if windows.showsPrimary {
+        if windows.showsPrimary, let primary = snapshot.rateLimits.primary {
             lines.append(Self.line(
                 id: "primary",
-                title: "5 小时",
-                window: snapshot.rateLimits.primary,
+                title: primary.durationLabel,
+                window: primary,
                 resetText: widgetSettings.showsResetTime
-                    ? formatter.resetRemainingText(window: snapshot.rateLimits.primary, now: now)
+                    ? formatter.resetRemainingText(window: primary, now: now)
                     : "",
                 paceDisplay: widgetSettings.showsPaceComparison
                     ? UsageWindowPaceDisplay(
                         id: "primary",
-                        title: "5 小时",
-                        window: snapshot.rateLimits.primary,
+                        title: primary.durationLabel,
+                        window: primary,
                         now: now,
                         weeklyProgressWorkDays: settings.weeklyProgressWorkDays
                     )?.display
@@ -1150,19 +1150,19 @@ public struct CodexUsageWidgetDisplay: Equatable, Sendable {
                 settings: settings
             ))
         }
-        if windows.showsSecondary {
+        if windows.showsSecondary, let secondary = snapshot.rateLimits.secondary {
             lines.append(Self.line(
                 id: "secondary",
-                title: "7 天",
-                window: snapshot.rateLimits.secondary,
+                title: secondary.durationLabel,
+                window: secondary,
                 resetText: widgetSettings.showsResetTime
-                    ? formatter.resetRemainingText(window: snapshot.rateLimits.secondary, now: now)
+                    ? formatter.resetRemainingText(window: secondary, now: now)
                     : "",
                 paceDisplay: widgetSettings.showsPaceComparison
                     ? UsageWindowPaceDisplay(
                         id: "secondary",
-                        title: "7 天",
-                        window: snapshot.rateLimits.secondary,
+                        title: secondary.durationLabel,
+                        window: secondary,
                         now: now,
                         weeklyProgressWorkDays: settings.weeklyProgressWorkDays
                     )?.display
@@ -1170,19 +1170,19 @@ public struct CodexUsageWidgetDisplay: Equatable, Sendable {
                 settings: settings
             ))
         }
-        if lines.isEmpty {
+        if lines.isEmpty, let fallback = snapshot.rateLimits.primary ?? snapshot.rateLimits.secondary {
             lines.append(Self.line(
-                id: "primary",
-                title: "5 小时",
-                window: snapshot.rateLimits.primary,
+                id: "fallback",
+                title: fallback.durationLabel,
+                window: fallback,
                 resetText: widgetSettings.showsResetTime
-                    ? formatter.resetRemainingText(window: snapshot.rateLimits.primary, now: now)
+                    ? formatter.resetRemainingText(window: fallback, now: now)
                     : "",
                 paceDisplay: widgetSettings.showsPaceComparison
                     ? UsageWindowPaceDisplay(
-                        id: "primary",
-                        title: "5 小时",
-                        window: snapshot.rateLimits.primary,
+                        id: "fallback",
+                        title: fallback.durationLabel,
+                        window: fallback,
                         now: now,
                         weeklyProgressWorkDays: settings.weeklyProgressWorkDays
                     )?.display

@@ -115,6 +115,34 @@ public struct RateLimitWindow: Codable, Equatable, Sendable {
         Int(min(max(usedPercent, 0), 100).rounded())
     }
 
+    /// 按接口返回的实际窗口时长生成中文标题，未返回时长时使用通用名称。
+    public var durationLabel: String {
+        guard let minutes = windowDurationMins, minutes > 0 else {
+            return "用量窗口"
+        }
+        if minutes % 1_440 == 0 {
+            return "\(minutes / 1_440) 天"
+        }
+        if minutes % 60 == 0 {
+            return "\(minutes / 60) 小时"
+        }
+        return "\(minutes) 分钟"
+    }
+
+    /// 生成适合状态栏窄宽度的实际窗口时长标签。
+    public var compactDurationLabel: String {
+        guard let minutes = windowDurationMins, minutes > 0 else {
+            return "quota"
+        }
+        if minutes % 1_440 == 0 {
+            return "\(minutes / 1_440)d"
+        }
+        if minutes % 60 == 0 {
+            return "\(minutes / 60)h"
+        }
+        return "\(minutes)m"
+    }
+
     /// 计算窗口的理论消耗进度；周窗口可按工作日切分，避免周末时间稀释工作日用量节奏。
     public func usagePace(now: Date = Date(), weeklyProgressWorkDays: Int? = nil, calendar: Calendar = .current) -> UsagePace? {
         guard let windowDurationMins, windowDurationMins > 0 else {
