@@ -96,6 +96,14 @@ final class UsageViewModelTests: XCTestCase {
         XCTAssertEqual(events, ["unhide", "activate"])
     }
 
+    /// 验证设置页图标会遵循手动外观，并在自动模式下采用系统当前配色。
+    func testSettingsAppearanceSelectsMatchingApplicationIcon() {
+        XCTAssertEqual(SurfaceAppearanceMode.light.appIconResourceName(systemColorScheme: .dark), "SettingsAppIconLight")
+        XCTAssertEqual(SurfaceAppearanceMode.dark.appIconResourceName(systemColorScheme: .light), "SettingsAppIconDark")
+        XCTAssertEqual(SurfaceAppearanceMode.automatic.appIconResourceName(systemColorScheme: .dark), "SettingsAppIconDark")
+        XCTAssertEqual(SurfaceAppearanceMode.automatic.appIconResourceName(systemColorScheme: .light), "SettingsAppIconLight")
+    }
+
     func testSettingsWindowOpenerActivatesApplicationBeforeShowingSettings() async {
         var events: [String] = []
         let opener = SettingsWindowOpener(

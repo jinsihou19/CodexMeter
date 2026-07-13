@@ -99,6 +99,7 @@ struct SettingsView: View {
     @State private var launchAtLoginEnabled = false
     @State private var launchAtLoginError: String?
     @State private var cacheActionMessage: String?
+    @Environment(\.colorScheme) private var systemColorScheme
     private let hookActivityURL = CodexHookActivityLocation.activityURL()
 
     private static let expectedUsageComparisonHelp = """
@@ -117,6 +118,22 @@ struct SettingsView: View {
     """
 
     var body: some View {
+        themedContent
+    }
+
+    /// 强制浅色或深色时覆盖设置页的 SwiftUI 环境，自动模式继续沿用系统外观。
+    @ViewBuilder private var themedContent: some View {
+        let mode = currentSurfaceAppearanceSettings.appearanceMode
+        let baseContent = content
+        if let colorScheme = mode.colorScheme {
+            baseContent.environment(\.colorScheme, colorScheme)
+        } else {
+            baseContent
+        }
+    }
+
+    /// 设置窗口的固定布局内容；外观由 themedContent 在最外层统一注入。
+    private var content: some View {
         VStack(spacing: 0) {
             header
 
@@ -147,7 +164,7 @@ struct SettingsView: View {
 
     private var header: some View {
         HStack(spacing: 12) {
-            Image(nsImage: NSApplication.shared.applicationIconImage)
+            Image(nsImage: settingsApplicationIcon)
                 .resizable()
                 .frame(width: 38, height: 38)
                 .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
@@ -165,6 +182,13 @@ struct SettingsView: View {
         }
         .padding(.horizontal, 22)
         .padding(.vertical, 16)
+    }
+
+    /// 从普通图片资源读取当前明暗模式图标，避免非默认 App Icon Set 被构建缓存替换。
+    private var settingsApplicationIcon: NSImage {
+        let mode = currentSurfaceAppearanceSettings.appearanceMode
+        let resourceName = mode.appIconResourceName(systemColorScheme: systemColorScheme)
+        return NSImage(named: NSImage.Name(resourceName)) ?? NSApplication.shared.applicationIconImage
     }
 
     private var sidebar: some View {
@@ -797,6 +821,7 @@ struct SettingsView: View {
     private func surfaceAppearanceBinding<Value>(_ binding: Binding<Value>, key: String) -> Binding<Value> {
         storedBinding(binding, key: key) { _ in
             SurfaceAppearanceSettings.notifyDidChange()
+            SettingsWindowPresenter.shared.applyCurrentAppearance()
             WidgetCenter.shared.reloadTimelines(ofKind: "CodexUsageWidget")
         }
     }
