@@ -48,7 +48,10 @@ final class UsageViewModel: ObservableObject {
     }
 
     var menuBarTitle: String {
-        "\(menuBarPrimaryTitle)\n\(menuBarSecondaryTitle)"
+        [snapshot?.rateLimits.primary, snapshot?.rateLimits.secondary]
+            .compactMap { $0 }
+            .map { "\($0.compactDurationLabel) \($0.remainingPercentText)" }
+            .joined(separator: "\n")
     }
 
     var menuBarPrimaryTitle: String {
@@ -60,7 +63,7 @@ final class UsageViewModel: ObservableObject {
     }
 
     var menuBarPrimaryLabel: String {
-        "5h"
+        snapshot?.rateLimits.primary?.compactDurationLabel ?? "quota"
     }
 
     var menuBarPrimaryValue: String {
@@ -71,7 +74,7 @@ final class UsageViewModel: ObservableObject {
     }
 
     var menuBarSecondaryLabel: String {
-        "7d"
+        snapshot?.rateLimits.secondary?.compactDurationLabel ?? "quota"
     }
 
     var menuBarSecondaryValue: String {
@@ -90,17 +93,17 @@ final class UsageViewModel: ObservableObject {
     }
 
     var menuHeaderPrimaryText: String {
-        guard let rateLimits = snapshot?.rateLimits else {
-            return "5 小时剩余 --"
+        guard let window = snapshot?.rateLimits.primary else {
+            return "用量窗口剩余 --"
         }
-        return "5 小时剩余 \(rateLimits.primary?.remainingPercentText ?? "--")"
+        return "\(window.durationLabel)剩余 \(window.remainingPercentText)"
     }
 
     var menuHeaderSecondaryText: String {
-        guard let rateLimits = snapshot?.rateLimits else {
-            return "7 天剩余 --"
+        guard let window = snapshot?.rateLimits.secondary else {
+            return "用量窗口剩余 --"
         }
-        return "7 天剩余 \(rateLimits.secondary?.remainingPercentText ?? "--")"
+        return "\(window.durationLabel)剩余 \(window.remainingPercentText)"
     }
 
     var statusSymbolName: String {

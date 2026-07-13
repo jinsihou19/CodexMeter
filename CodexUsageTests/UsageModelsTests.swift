@@ -2,6 +2,17 @@ import XCTest
 @testable import CodexUsageShared
 
 final class UsageModelsTests: XCTestCase {
+    /// 验证窗口标签始终来自接口时长，覆盖单窗口 Team 账号的非标准周期。
+    func testDurationLabelsUseActualWindowDuration() {
+        let hourly = RateLimitWindow(usedPercent: 0, windowDurationMins: 180, resetsAt: nil)
+        let daily = RateLimitWindow(usedPercent: 0, windowDurationMins: 43_200, resetsAt: nil)
+
+        XCTAssertEqual(hourly.durationLabel, "3 小时")
+        XCTAssertEqual(hourly.compactDurationLabel, "3h")
+        XCTAssertEqual(daily.durationLabel, "30 天")
+        XCTAssertEqual(daily.compactDurationLabel, "30d")
+    }
+
     func testRemainingPercentClampsUsedPercentIntoDisplayRange() {
         XCTAssertEqual(RateLimitWindow(usedPercent: 17, windowDurationMins: 300, resetsAt: 1_779_949_290).remainingPercent, 83)
         XCTAssertEqual(RateLimitWindow(usedPercent: -20, windowDurationMins: nil, resetsAt: nil).remainingPercent, 100)

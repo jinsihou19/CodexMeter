@@ -390,37 +390,32 @@ private struct QuotaSummaryGrid: View {
     let onPaceMarkerHoverChange: (String?, Bool) -> Void
 
     var body: some View {
-        let primaryPaceMarker = paceMarker(for: snapshot.primary)
-        let secondaryPaceMarker = paceMarker(for: snapshot.secondary)
-        let primaryPaceDisplay = paceDisplay(id: "primary", title: "5 小时", window: snapshot.primary)
-        let secondaryPaceDisplay = paceDisplay(id: "secondary", title: "7 天", window: snapshot.secondary)
         HStack(spacing: 8) {
-            QuotaSummaryCard(
-                title: "5 小时",
-                display: UsageMetricDisplay(title: "5 小时", window: snapshot.primary),
-                resetText: resetText(for: snapshot.primary),
-                paceDisplay: primaryPaceDisplay,
-                tone: UsageRemainingTone(remainingPercent: snapshot.primary?.remainingPercent),
-                settings: settings,
-                workdayMarkers: [],
-                paceMarker: primaryPaceMarker,
-                onPaceMarkerHoverChange: updateActivePaceHelpText
-            )
-            QuotaSummaryCard(
-                title: "7 天",
-                display: UsageMetricDisplay(title: "7 天", window: snapshot.secondary),
-                resetText: resetText(for: snapshot.secondary),
-                paceDisplay: secondaryPaceDisplay,
-                tone: UsageRemainingTone(remainingPercent: snapshot.secondary?.remainingPercent),
-                settings: settings,
-                workdayMarkers: weeklyWorkdayMarkerPercents(
-                    workDays: settings.weeklyProgressWorkDays,
-                    windowDurationMins: snapshot.secondary?.windowDurationMins
-                ),
-                paceMarker: secondaryPaceMarker,
-                onPaceMarkerHoverChange: updateActivePaceHelpText
-            )
+            if let primary = snapshot.primary {
+                quotaCard(id: "primary", window: primary)
+            }
+            if let secondary = snapshot.secondary {
+                quotaCard(id: "secondary", window: secondary)
+            }
         }
+    }
+
+    /// 用接口的实际时长生成额度卡，避免把主次窗口误当成固定的 5 小时和 7 天。
+    private func quotaCard(id: String, window: RateLimitWindow) -> some View {
+        QuotaSummaryCard(
+            title: window.durationLabel,
+            display: UsageMetricDisplay(title: window.durationLabel, window: window),
+            resetText: resetText(for: window),
+            paceDisplay: paceDisplay(id: id, title: window.durationLabel, window: window),
+            tone: UsageRemainingTone(remainingPercent: window.remainingPercent),
+            settings: settings,
+            workdayMarkers: weeklyWorkdayMarkerPercents(
+                workDays: settings.weeklyProgressWorkDays,
+                windowDurationMins: window.windowDurationMins
+            ),
+            paceMarker: paceMarker(for: window),
+            onPaceMarkerHoverChange: updateActivePaceHelpText
+        )
     }
 
     /// 为额度卡片生成内嵌 Pace 文案；关闭用量速度时只保留基础余量信息。
@@ -783,35 +778,33 @@ private struct AdditionalRateLimitView: View {
     let onPaceMarkerHoverChange: (String?, Bool) -> Void
 
     var body: some View {
-        let primaryPaceMarker = paceMarker(for: limit.primary)
-        let secondaryPaceMarker = paceMarker(for: limit.secondary)
         HStack(spacing: 8) {
-            QuotaSummaryCard(
-                title: "\(displayName) 5 小时",
-                display: UsageMetricDisplay(title: "\(displayName) 5 小时", window: limit.primary),
-                resetText: resetText(for: limit.primary),
-                paceDisplay: nil,
-                tone: UsageRemainingTone(remainingPercent: limit.primary?.remainingPercent),
-                settings: settings,
-                workdayMarkers: [],
-                paceMarker: primaryPaceMarker,
-                onPaceMarkerHoverChange: updateActivePaceHelpText
-            )
-            QuotaSummaryCard(
-                title: "\(displayName) 7 天",
-                display: UsageMetricDisplay(title: "\(displayName) 7 天", window: limit.secondary),
-                resetText: resetText(for: limit.secondary),
-                paceDisplay: nil,
-                tone: UsageRemainingTone(remainingPercent: limit.secondary?.remainingPercent),
-                settings: settings,
-                workdayMarkers: weeklyWorkdayMarkerPercents(
-                    workDays: settings.weeklyProgressWorkDays,
-                    windowDurationMins: limit.secondary?.windowDurationMins
-                ),
-                paceMarker: secondaryPaceMarker,
-                onPaceMarkerHoverChange: updateActivePaceHelpText
-            )
+            if let primary = limit.primary {
+                quotaCard(window: primary)
+            }
+            if let secondary = limit.secondary {
+                quotaCard(window: secondary)
+            }
         }
+    }
+
+    /// 按额外额度的实际窗口时长生成卡片，并跳过接口未返回的窗口。
+    private func quotaCard(window: RateLimitWindow) -> some View {
+        let title = "\(displayName) \(window.durationLabel)"
+        return QuotaSummaryCard(
+            title: title,
+            display: UsageMetricDisplay(title: title, window: window),
+            resetText: resetText(for: window),
+            paceDisplay: nil,
+            tone: UsageRemainingTone(remainingPercent: window.remainingPercent),
+            settings: settings,
+            workdayMarkers: weeklyWorkdayMarkerPercents(
+                workDays: settings.weeklyProgressWorkDays,
+                windowDurationMins: window.windowDurationMins
+            ),
+            paceMarker: paceMarker(for: window),
+            onPaceMarkerHoverChange: updateActivePaceHelpText
+        )
     }
 
     private var displayName: String {
