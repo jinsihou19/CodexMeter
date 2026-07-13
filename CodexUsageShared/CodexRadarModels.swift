@@ -5,26 +5,36 @@ import Foundation
 /// 降智雷达偏好键，集中定义 UserDefaults 名称，避免设置页和后台任务写散字符串。
 public enum CodexRadarPreferenceKeys {
     public static let isEnabled = "codexRadar.isEnabled"
+    public static let showsScoreChart = "codexRadar.showsScoreChart"
 
     public static let allKeys = [
-        isEnabled
+        isEnabled,
+        showsScoreChart
     ]
 }
 
 /// 降智雷达开关设置；只控制外部雷达接口读取，不影响本机 Codex 用量同步。
 public struct CodexRadarSettings: Equatable, Sendable {
     public static let defaultIsEnabled = false
+    public static let defaultShowsScoreChart = true
 
     public let isEnabled: Bool
+    public let showsScoreChart: Bool
 
-    public init(isEnabled: Bool = Self.defaultIsEnabled) {
+    public init(
+        isEnabled: Bool = Self.defaultIsEnabled,
+        showsScoreChart: Bool = Self.defaultShowsScoreChart
+    ) {
         self.isEnabled = isEnabled
+        self.showsScoreChart = showsScoreChart
     }
 
     public init(defaults: UserDefaults) {
         self.init(
             isEnabled: defaults.object(forKey: CodexRadarPreferenceKeys.isEnabled) as? Bool
-                ?? Self.defaultIsEnabled
+                ?? Self.defaultIsEnabled,
+            showsScoreChart: defaults.object(forKey: CodexRadarPreferenceKeys.showsScoreChart) as? Bool
+                ?? Self.defaultShowsScoreChart
         )
     }
 
@@ -167,7 +177,7 @@ public struct CodexRadarModelIQ: Codable, Equatable, Sendable {
 
         let effortRank: Int
         switch series.reasoningEffort?.lowercased() {
-        case "ultra": effortRank = 0
+        case "max", "ultra": effortRank = 0
         case "xhigh": effortRank = 1
         case "high": effortRank = 2
         case "medium": effortRank = 3

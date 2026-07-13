@@ -56,6 +56,7 @@ struct SettingsView: View {
     @AppStorage(AppBehaviorPreferenceKeys.opensSettingsAtLaunch, store: MenuBarDisplaySettings.sharedDefaults) private var opensSettingsAtLaunch = AppBehaviorSettings.defaultOpensSettingsAtLaunch
     @AppStorage(AppBehaviorPreferenceKeys.refreshCadence, store: MenuBarDisplaySettings.sharedDefaults) private var refreshCadence = AppBehaviorSettings.defaultRefreshCadence.rawValue
     @AppStorage(CodexRadarPreferenceKeys.isEnabled, store: MenuBarDisplaySettings.sharedDefaults) private var codexRadarEnabled = CodexRadarSettings.defaultIsEnabled
+    @AppStorage(CodexRadarPreferenceKeys.showsScoreChart, store: MenuBarDisplaySettings.sharedDefaults) private var codexRadarShowsScoreChart = CodexRadarSettings.defaultShowsScoreChart
     @AppStorage(SurfaceAppearancePreferenceKeys.appearanceMode, store: MenuBarDisplaySettings.sharedDefaults) private var surfaceAppearanceMode = SurfaceAppearanceSettings.defaultAppearanceMode.rawValue
     @AppStorage(SurfaceAppearancePreferenceKeys.cardOpacity, store: MenuBarDisplaySettings.sharedDefaults) private var surfaceCardOpacity = SurfaceAppearanceSettings.defaultCardOpacity
 
@@ -553,10 +554,18 @@ struct SettingsView: View {
                 )
                 SettingsCompactToggleRow(
                     title: "开启降智雷达",
-                    detail: "读取 codexradar.com/current.json 并在下拉面板绘制 IQ 曲线；工作日 09:00-18:00 每小时拉取一次，其余时间每 4 小时一次。",
+                    detail: "读取 codexradar.com/current.json 并展示模型 IQ；工作日 09:00-18:00 每小时拉取一次，其余时间每 4 小时一次。",
                     systemImage: "waveform.path.ecg",
                     isOn: codexRadarBinding($codexRadarEnabled, key: CodexRadarPreferenceKeys.isEnabled)
                 )
+                if codexRadarEnabled {
+                    SettingsCompactToggleRow(
+                        title: "显示分值折线图",
+                        detail: "只绘制 IQ 100 及以上的历史分值。",
+                        systemImage: "chart.xyaxis.line",
+                        isOn: codexRadarScoreChartBinding
+                    )
+                }
             }
 
             SettingsSection(title: "时间显示", subtitle: "控制下拉面板里的窗口重置文案") {
@@ -694,7 +703,10 @@ struct SettingsView: View {
     }
 
     private var currentCodexRadarSettings: CodexRadarSettings {
-        CodexRadarSettings(isEnabled: codexRadarEnabled)
+        CodexRadarSettings(
+            isEnabled: codexRadarEnabled,
+            showsScoreChart: codexRadarShowsScoreChart
+        )
     }
 
     private var currentSettings: MenuBarDisplaySettings {
@@ -823,6 +835,16 @@ struct SettingsView: View {
     /// 降智雷达开关影响独立的后台 store，通知后由 store 自己决定是否拉取。
     private func codexRadarBinding<Value>(_ binding: Binding<Value>, key: String) -> Binding<Value> {
         storedBinding(binding, key: key) { _ in
+            CodexRadarSettings.notifyDidChange()
+        }
+    }
+
+    /// 折线图开关发生任何变化时都立即通知 Store 刷新雷达数据。
+    private var codexRadarScoreChartBinding: Binding<Bool> {
+        storedBinding(
+            $codexRadarShowsScoreChart,
+            key: CodexRadarPreferenceKeys.showsScoreChart
+        ) { _ in
             CodexRadarSettings.notifyDidChange()
         }
     }
@@ -957,7 +979,9 @@ struct SettingsView: View {
         let appBehavior = currentAppBehaviorSettings
         opensSettingsAtLaunch = appBehavior.opensSettingsAtLaunch
         refreshCadence = appBehavior.refreshCadence.rawValue
-        codexRadarEnabled = CodexRadarSettings(defaults: MenuBarDisplaySettings.sharedDefaults).isEnabled
+        let codexRadarSettings = CodexRadarSettings(defaults: MenuBarDisplaySettings.sharedDefaults)
+        codexRadarEnabled = codexRadarSettings.isEnabled
+        codexRadarShowsScoreChart = codexRadarSettings.showsScoreChart
 
         let surfaceAppearance = SurfaceAppearanceSettings(defaults: MenuBarDisplaySettings.sharedDefaults)
         surfaceAppearanceMode = surfaceAppearance.appearanceMode.rawValue
