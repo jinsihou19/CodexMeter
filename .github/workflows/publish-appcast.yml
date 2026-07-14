@@ -1,26 +1,82 @@
-name: 发布 Sparkle 更新源
+name: 打包并发布 CodexMeter
 
 on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 语义版本；留空时使用工程版本
+        required: false
+        type: string
   release:
     types: [published]
 
 permissions:
-  contents: read
+  contents: write
   pages: write
   id-token: write
 
 concurrency:
   group: github-pages
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
-  deploy:
+  package:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: macos-15
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: 检出源码
+        uses: actions/checkout@v4
+
+      - name: 计算构建号
+        id: version
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          source script/release_version.sh
+          project_build="$(release_read_project_setting CodexMeter.xcodeproj/project.pbxproj CURRENT_PROJECT_VERSION)"
+          latest_build="$(gh release list --limit 100 --json tagName --jq '.[].tagName' | sed -nE 's/^v[0-9]+\.[0-9]+\.[0-9]+-([0-9]+)$/\1/p' | sort -n | tail -1)"
+          if [[ -n "$latest_build" && "$latest_build" -ge "$project_build" ]]; then
+            project_build="$((latest_build + 1))"
+          fi
+          echo "build_number=$project_build" >> "$GITHUB_OUTPUT"
+
+      - name: 构建并创建 Release
+        env:
+          CODEX_BUILD_NUMBER: ${{ steps.version.outputs.build_number }}
+          CODEX_INSTALL_LOCAL: "0"
+          CODEX_RELEASE_VERSION: ${{ inputs.version }}
+          GH_TOKEN: ${{ github.token }}
+          SPARKLE_PRIVATE_KEY: ${{ secrets.SPARKLE_PRIVATE_KEY }}
+        run: bash script/package_release.sh
+
+      - name: 准备 Pages 产物
+        run: |
+          mkdir site
+          cp dist/appcast.xml site/appcast.xml
+
+      - name: 配置 GitHub Pages
+        uses: actions/configure-pages@v5
+
+      - name: 上传 Pages 产物
+        uses: actions/upload-pages-artifact@v4
+        with:
+          path: site
+
+      - name: 部署 GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
+
+  deploy-local-release:
+    if: github.event_name == 'release'
     runs-on: ubuntu-latest
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
-      # Release 由本地签名脚本创建；Pages 只分发已经签名的 appcast，不接触私钥。
+      # 本机脚本创建 Release 时，继续兼容从 Release 资源部署 appcast。
       - name: 下载 appcast
         env:
           GH_TOKEN: ${{ github.token }}

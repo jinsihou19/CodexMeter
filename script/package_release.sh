@@ -17,13 +17,14 @@ APPCAST_WORK_DIR="$BUILD_DIR/appcast"
 INSTALLED_APP_PATH="/Applications/$COMPATIBLE_PRODUCT_NAME.app"
 GITHUB_REPOSITORY="jinsihou19/CodexMeter"
 PUBLISH_RELEASE="${CODEX_PUBLISH_RELEASE:-1}"
+INSTALL_LOCAL="${CODEX_INSTALL_LOCAL:-1}"
 source "$ROOT_DIR/script/release_version.sh"
 
 # Release 面向本机和小范围传包测试，保持纯 ad-hoc 签名，不依赖开发者证书或本机描述文件。
 SIGN_IDENTITY="${CODE_SIGN_IDENTITY:--}"
 PROJECT_MARKETING_VERSION="$(release_read_project_setting "$PROJECT_FILE" MARKETING_VERSION)"
 MARKETING_VERSION="${CODEX_RELEASE_VERSION:-$PROJECT_MARKETING_VERSION}"
-BUILD_NUMBER="$(release_read_project_setting "$PROJECT_FILE" CURRENT_PROJECT_VERSION)"
+BUILD_NUMBER="${CODEX_BUILD_NUMBER:-$(release_read_project_setting "$PROJECT_FILE" CURRENT_PROJECT_VERSION)}"
 release_validate_marketing_version "$MARKETING_VERSION" || {
   echo "Invalid CODEX_RELEASE_VERSION: $MARKETING_VERSION" >&2
   exit 1
@@ -34,6 +35,10 @@ release_validate_build_number "$BUILD_NUMBER" || {
 }
 if [[ "$PUBLISH_RELEASE" != "0" && "$PUBLISH_RELEASE" != "1" ]]; then
   echo "CODEX_PUBLISH_RELEASE must be 0 or 1" >&2
+  exit 1
+fi
+if [[ "$INSTALL_LOCAL" != "0" && "$INSTALL_LOCAL" != "1" ]]; then
+  echo "CODEX_INSTALL_LOCAL must be 0 or 1" >&2
   exit 1
 fi
 
@@ -58,12 +63,6 @@ find_sparkle_bin_dir() {
     | xargs -I{} dirname "{}"
 }
 
-SPARKLE_BIN_DIR="$(find_sparkle_bin_dir)"
-GENERATE_APPCAST="$SPARKLE_BIN_DIR/generate_appcast"
-if [ ! -x "$GENERATE_APPCAST" ]; then
-  echo "Sparkle generate_appcast not found; resolve Xcode package dependencies first" >&2
-  exit 1
-fi
 if [ -e "$DMG_PATH" ]; then
   echo "Release artifact already exists: $DMG_PATH" >&2
   exit 1
@@ -104,6 +103,13 @@ xcodebuild \
   CURRENT_PROJECT_VERSION="$BUILD_NUMBER" \
   build
 
+SPARKLE_BIN_DIR="$(find_sparkle_bin_dir)"
+GENERATE_APPCAST="$SPARKLE_BIN_DIR/generate_appcast"
+if [ ! -x "$GENERATE_APPCAST" ]; then
+  echo "Sparkle generate_appcast not found after resolving Xcode packages" >&2
+  exit 1
+fi
+
 codesign --verify --deep --strict --verbose=2 "$APP_PATH"
 
 APP_ARCHS="$(lipo -archs "$APP_PATH/Contents/MacOS/$COMPATIBLE_PRODUCT_NAME")"
@@ -129,30 +135,33 @@ hdiutil create \
 # 每次只发布一个完整 Universal 包；历史版本由 GitHub Releases 保存，不生成增量文件。
 mkdir -p "$APPCAST_WORK_DIR"
 cp "$DMG_PATH" "$APPCAST_WORK_DIR/"
-"$GENERATE_APPCAST" \
-  --download-url-prefix "$DOWNLOAD_URL_PREFIX" \
-  --maximum-versions 1 \
-  --maximum-deltas 0 \
-  -o "$APPCAST_PATH" \
+APPCAST_ARGUMENTS=(
+  --download-url-prefix "$DOWNLOAD_URL_PREFIX"
+  --maximum-versions 1
+  --maximum-deltas 0
+  -o "$APPCAST_PATH"
   "$APPCAST_WORK_DIR"
+)
+if [ -n "${SPARKLE_PRIVATE_KEY:-}" ]; then
+  printf '%s' "$SPARKLE_PRIVATE_KEY" | "$GENERATE_APPCAST" --ed-key-file - "${APPCAST_ARGUMENTS[@]}"
+else
+  "$GENERATE_APPCAST" "${APPCAST_ARGUMENTS[@]}"
+fi
 
 # Sparkle 会用兼容 App 包目录生成频道标题；仅替换展示标题，保留已签名 enclosure 的全部属性。
 perl -0pi -e 's{(<channel>\s*<title>)[^<]*(</title>)}{$1CodexMeter$2}' "$APPCAST_PATH"
 
-# WidgetKit 会保留 extension 进程；安装新版前一并结束，避免桌面继续使用旧时间线代码。
-pkill -x "$WIDGET_PROCESS_NAME" 2>/dev/null || true
-pkill -x "$COMPATIBLE_PRODUCT_NAME" 2>/dev/null || true
-rm -rf "$INSTALLED_APP_PATH"
-ditto "$APP_PATH" "$INSTALLED_APP_PATH"
-open -n "$INSTALLED_APP_PATH"
+# WidgetKit 会保留 extension 进程；本机安装前一并结束，Actions runner 则跳过该步骤。
+if [ "$INSTALL_LOCAL" = "1" ]; then
+  pkill -x "$WIDGET_PROCESS_NAME" 2>/dev/null || true
+  pkill -x "$COMPATIBLE_PRODUCT_NAME" 2>/dev/null || true
+  rm -rf "$INSTALLED_APP_PATH"
+  ditto "$APP_PATH" "$INSTALLED_APP_PATH"
+  open -n "$INSTALLED_APP_PATH"
+fi
 
-# 发布模式创建唯一 Release，并把 appcast 交给 release 事件触发的 Pages 工作流部署。
+# 发布模式创建唯一 Release；Actions 会在同一任务中继续部署 appcast 到 Pages。
 if [ "$PUBLISH_RELEASE" = "1" ]; then
-  if gh api "repos/$GITHUB_REPOSITORY/pages" >/dev/null 2>&1; then
-    gh api --method PUT "repos/$GITHUB_REPOSITORY/pages" -f build_type=workflow >/dev/null
-  else
-    gh api --method POST "repos/$GITHUB_REPOSITORY/pages" -f build_type=workflow >/dev/null
-  fi
   gh release create "$RELEASE_TAG" \
     "$DMG_PATH" \
     "$APPCAST_PATH" \
@@ -169,7 +178,9 @@ echo "Released locally: $MARKETING_VERSION ($BUILD_NUMBER)"
 echo "Next build number: $NEXT_BUILD_NUMBER"
 echo "DMG: $DMG_PATH"
 echo "Appcast: $APPCAST_PATH"
-echo "Installed: $INSTALLED_APP_PATH"
+if [ "$INSTALL_LOCAL" = "1" ]; then
+  echo "Installed: $INSTALLED_APP_PATH"
+fi
 if [ "$PUBLISH_RELEASE" = "1" ]; then
   echo "GitHub Release: https://github.com/$GITHUB_REPOSITORY/releases/tag/$RELEASE_TAG"
 fi
