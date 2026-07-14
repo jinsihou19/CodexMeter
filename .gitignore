@@ -6,9 +6,11 @@
 xcuserdata/
 
 # 构建、发布与覆盖率产物
+
 build/
 dist/
 *.profraw
+kms-release-assets/
 
 # 本机真实接口响应
 .codex/real-usage-response.json
