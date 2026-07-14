@@ -585,7 +585,7 @@ struct SettingsView: View {
                 if codexRadarEnabled {
                     SettingsCompactToggleRow(
                         title: "显示分值折线图",
-                        detail: "只绘制 IQ 100 及以上的历史分值。",
+                        detail: "只绘制 IQ 90 及以上的历史分值。",
                         systemImage: "chart.xyaxis.line",
                         isOn: codexRadarScoreChartBinding
                     )

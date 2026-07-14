@@ -22,6 +22,8 @@ final class CodexRadarTests: XCTestCase {
         XCTAssertTrue(source.contains("abs($0.score - score) < 0.001"))
         XCTAssertFalse(source.contains("private var legend"))
         XCTAssertFalse(source.contains(".help(cardHelpText(for: run))"))
+        XCTAssertTrue(source.contains("guard run.score >= 90"))
+        XCTAssertTrue(source.contains("let clamped = min(max(score, 90), 150)"))
     }
 
     /// 验证折线图设置只在雷达开启后出现，且任何开关变化都会通知后台刷新。

@@ -224,22 +224,22 @@ private struct CodexRadarLineChart: View {
         }
     }
 
-    /// 绘制可见范围内的 100-110 常态区间背景。
+    /// 绘制 90-110 常态区间背景。
     private func drawNormalBand(context: inout GraphicsContext, rect: CGRect) {
         let yTop = yPosition(score: 110, rect: rect)
-        let yBottom = yPosition(score: 100, rect: rect)
+        let yBottom = yPosition(score: 90, rect: rect)
         let band = CGRect(x: rect.minX, y: yTop, width: rect.width, height: yBottom - yTop)
         context.fill(Path(roundedRect: band, cornerRadius: 6), with: .color(.primary.opacity(0.045)))
     }
 
     /// 绘制轻量网格和关键刻度，保持菜单弹窗可扫读。
     private func drawGrid(context: inout GraphicsContext, rect: CGRect) {
-        for score in [100.0, 120.0, 140.0] {
+        for score in [90.0, 110.0, 130.0, 150.0] {
             let y = pixelAligned(yPosition(score: score, rect: rect))
             var path = Path()
             path.move(to: CGPoint(x: rect.minX, y: y))
             path.addLine(to: CGPoint(x: rect.maxX, y: y))
-            context.stroke(path, with: .color(.primary.opacity(score == 100 ? 0.22 : 0.11)), lineWidth: 1)
+            context.stroke(path, with: .color(.primary.opacity(score == 110 ? 0.22 : 0.11)), lineWidth: 1)
             let label = Text("\(Int(score))")
                 .font(.caption2.weight(.semibold))
                 .foregroundStyle(.secondary)
@@ -342,10 +342,10 @@ private struct CodexRadarLineChart: View {
         }
     }
 
-    /// 把 IQ 100 以上的连续跑分分段，低分日期会真正断开曲线。
+    /// 把 IQ 90 及以上的连续跑分分段，低分日期会真正断开曲线。
     private func visibleSegments(for item: CodexRadarModelSeries) -> [[CodexRadarIQRun]] {
         item.recentDays.reduce(into: [[CodexRadarIQRun]]()) { segments, run in
-            guard run.score >= 100 else {
+            guard run.score >= 90 else {
                 if segments.last?.isEmpty == false {
                     segments.append([])
                 }
@@ -367,7 +367,7 @@ private struct CodexRadarLineChart: View {
     private func nearestPoint(to location: CGPoint, size: CGSize) -> HoveredPoint? {
         let rect = plotRect(for: size)
         let candidates = series.flatMap { item in
-            let runs = item.recentDays.filter { $0.score >= 100 }
+            let runs = item.recentDays.filter { $0.score >= 90 }
             return zip(runs, points(for: runs, rect: rect)).map { ($0.0.date, $0.0.score, $0.1) }
         }
         return candidates
@@ -408,10 +408,10 @@ private struct CodexRadarLineChart: View {
         CGRect(x: 28, y: 4, width: max(size.width - 34, 1), height: max(size.height - 20, 1))
     }
 
-    /// 将 IQ 分数夹到 100-150 的可视范围，突出高分模型之间的差异。
+    /// 将 IQ 分数夹到 90-150 的可视范围，突出高分模型之间的差异。
     private func yPosition(score: Double, rect: CGRect) -> CGFloat {
-        let clamped = min(max(score, 100), 150)
-        let ratio = (clamped - 100) / 50
+        let clamped = min(max(score, 90), 150)
+        let ratio = (clamped - 90) / 60
         return rect.maxY - rect.height * CGFloat(ratio)
     }
 
