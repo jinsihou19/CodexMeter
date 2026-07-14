@@ -1,15 +1,24 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# 本文件构建、签名并安装 CodexMeter，并默认创建 GitHub Release、启用 Pages；可显式关闭远程发布。
+
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-APP_NAME="CodexUsage"
-WIDGET_PROCESS_NAME="CodexUsageWidgetExtension"
-PROJECT_PATH="$ROOT_DIR/CodexUsage.xcodeproj"
+APP_NAME="CodexMeter"
+SCHEME_NAME="CodexMeter"
+# 兼容标识：旧安装路径和 Sparkle 更新都依赖该包名，不能随展示名称一起修改。
+COMPATIBLE_PRODUCT_NAME="CodexUsage"
+WIDGET_PROCESS_NAME="CodexMeterWidgetExtension"
+PROJECT_PATH="$ROOT_DIR/CodexMeter.xcodeproj"
 PROJECT_FILE="$PROJECT_PATH/project.pbxproj"
-BUILD_DIR="$ROOT_DIR/build"
+BUILD_DIR="$ROOT_DIR/build/universal"
 DIST_DIR="$ROOT_DIR/dist"
-INSTALLED_APP_PATH="/Applications/$APP_NAME.app"
+APPCAST_WORK_DIR="$BUILD_DIR/appcast"
+INSTALLED_APP_PATH="/Applications/$COMPATIBLE_PRODUCT_NAME.app"
+GITHUB_REPOSITORY="jinsihou19/CodexMeter"
+PUBLISH_RELEASE="${CODEX_PUBLISH_RELEASE:-1}"
 source "$ROOT_DIR/script/release_version.sh"
+
 # Release 面向本机和小范围传包测试，保持纯 ad-hoc 签名，不依赖开发者证书或本机描述文件。
 SIGN_IDENTITY="${CODE_SIGN_IDENTITY:--}"
 PROJECT_MARKETING_VERSION="$(release_read_project_setting "$PROJECT_FILE" MARKETING_VERSION)"
@@ -23,88 +32,144 @@ release_validate_build_number "$BUILD_NUMBER" || {
   echo "Invalid CURRENT_PROJECT_VERSION: $BUILD_NUMBER" >&2
   exit 1
 }
-NEXT_BUILD_NUMBER="$(release_next_build_number "$BUILD_NUMBER")"
-PACKAGE_TARGETS=(
-  "arm64:arm64"
-  "intel:x86_64"
-)
-LOCAL_PACKAGE_NAME="intel"
-if [ "$(uname -m)" = "arm64" ]; then
-  LOCAL_PACKAGE_NAME="arm64"
+if [[ "$PUBLISH_RELEASE" != "0" && "$PUBLISH_RELEASE" != "1" ]]; then
+  echo "CODEX_PUBLISH_RELEASE must be 0 or 1" >&2
+  exit 1
 fi
 
+NEXT_BUILD_NUMBER="$(release_next_build_number "$BUILD_NUMBER")"
+DMG_PATH="$DIST_DIR/$APP_NAME-$MARKETING_VERSION-$BUILD_NUMBER-universal.dmg"
+APPCAST_PATH="$DIST_DIR/appcast.xml"
+APP_PATH="$BUILD_DIR/Release/$COMPATIBLE_PRODUCT_NAME.app"
+RELEASE_TAG="v$MARKETING_VERSION-$BUILD_NUMBER"
+DOWNLOAD_URL_PREFIX="https://github.com/jinsihou19/CodexMeter/releases/download/$RELEASE_TAG/"
+
+# 查找 Swift Package Manager 下载的 Sparkle 发布工具；允许调用方显式指定以适配自定义 DerivedData。
+find_sparkle_bin_dir() {
+  if [ -n "${SPARKLE_BIN_DIR:-}" ]; then
+    printf '%s\n' "$SPARKLE_BIN_DIR"
+    return
+  fi
+  find "$HOME/Library/Developer/Xcode/DerivedData" \
+    -type f \
+    -path '*/SourcePackages/artifacts/sparkle/Sparkle/bin/generate_appcast' \
+    -print \
+    -quit \
+    | xargs -I{} dirname "{}"
+}
+
+SPARKLE_BIN_DIR="$(find_sparkle_bin_dir)"
+GENERATE_APPCAST="$SPARKLE_BIN_DIR/generate_appcast"
+if [ ! -x "$GENERATE_APPCAST" ]; then
+  echo "Sparkle generate_appcast not found; resolve Xcode package dependencies first" >&2
+  exit 1
+fi
+if [ -e "$DMG_PATH" ]; then
+  echo "Release artifact already exists: $DMG_PATH" >&2
+  exit 1
+fi
+
+# 对外发布必须来自干净且已提交的工作区，避免 Release 标签和实际二进制内容不一致。
+if [ "$PUBLISH_RELEASE" = "1" ]; then
+  if ! git -C "$ROOT_DIR" diff --quiet || ! git -C "$ROOT_DIR" diff --cached --quiet \
+    || [ -n "$(git -C "$ROOT_DIR" ls-files --others --exclude-standard)" ]; then
+    echo "Publishing requires a clean git worktree" >&2
+    exit 1
+  fi
+  command -v gh >/dev/null || {
+    echo "GitHub CLI is required for publishing" >&2
+    exit 1
+  }
+  gh auth status >/dev/null
+fi
+
+rm -rf "$BUILD_DIR"
 mkdir -p "$DIST_DIR"
 
-# 发布前一次性检查双架构产物，避免完成一半后才发现同版本文件已存在。
-for PACKAGE_TARGET in "${PACKAGE_TARGETS[@]}"; do
-  PACKAGE_NAME="${PACKAGE_TARGET%%:*}"
-  DMG_PATH="$DIST_DIR/$APP_NAME-$MARKETING_VERSION-$BUILD_NUMBER-$PACKAGE_NAME.dmg"
-  if [ -e "$DMG_PATH" ]; then
-    echo "Release artifact already exists: $DMG_PATH" >&2
+xcodebuild \
+  -project "$PROJECT_PATH" \
+  -scheme "$SCHEME_NAME" \
+  -configuration Release \
+  -destination "generic/platform=macOS" \
+  SYMROOT="$BUILD_DIR" \
+  ARCHS="arm64 x86_64" \
+  ONLY_ACTIVE_ARCH=NO \
+  CODE_SIGN_STYLE=Manual \
+  CODE_SIGN_IDENTITY="$SIGN_IDENTITY" \
+  CODE_SIGN_ENTITLEMENTS="" \
+  DEVELOPMENT_TEAM="" \
+  PROVISIONING_PROFILE="" \
+  PROVISIONING_PROFILE_SPECIFIER="" \
+  MARKETING_VERSION="$MARKETING_VERSION" \
+  CURRENT_PROJECT_VERSION="$BUILD_NUMBER" \
+  build
+
+codesign --verify --deep --strict --verbose=2 "$APP_PATH"
+
+APP_ARCHS="$(lipo -archs "$APP_PATH/Contents/MacOS/$COMPATIBLE_PRODUCT_NAME")"
+for REQUIRED_ARCH in arm64 x86_64; do
+  if [[ " $APP_ARCHS " != *" $REQUIRED_ARCH "* ]]; then
+    echo "Missing $REQUIRED_ARCH in app binary: $APP_ARCHS" >&2
     exit 1
   fi
 done
 
-for PACKAGE_TARGET in "${PACKAGE_TARGETS[@]}"; do
-  PACKAGE_NAME="${PACKAGE_TARGET%%:*}"
-  PACKAGE_ARCH="${PACKAGE_TARGET##*:}"
-  PACKAGE_BUILD_DIR="$BUILD_DIR/$PACKAGE_NAME"
-  APP_PATH="$PACKAGE_BUILD_DIR/Release/$APP_NAME.app"
-  DMG_ROOT="$PACKAGE_BUILD_DIR/dmg-root"
-  DMG_PATH="$DIST_DIR/$APP_NAME-$MARKETING_VERSION-$BUILD_NUMBER-$PACKAGE_NAME.dmg"
+DMG_ROOT="$BUILD_DIR/dmg-root"
+rm -rf "$DMG_ROOT"
+mkdir -p "$DMG_ROOT"
+cp -R "$APP_PATH" "$DMG_ROOT/"
+ln -s /Applications "$DMG_ROOT/Applications"
+hdiutil create \
+  -volname "$APP_NAME" \
+  -srcfolder "$DMG_ROOT" \
+  -ov \
+  -format UDZO \
+  "$DMG_PATH"
 
-  rm -rf "$PACKAGE_BUILD_DIR"
+# 每次只发布一个完整 Universal 包；历史版本由 GitHub Releases 保存，不生成增量文件。
+mkdir -p "$APPCAST_WORK_DIR"
+cp "$DMG_PATH" "$APPCAST_WORK_DIR/"
+"$GENERATE_APPCAST" \
+  --download-url-prefix "$DOWNLOAD_URL_PREFIX" \
+  --maximum-versions 1 \
+  --maximum-deltas 0 \
+  -o "$APPCAST_PATH" \
+  "$APPCAST_WORK_DIR"
 
-  xcodebuild \
-    -project "$PROJECT_PATH" \
-    -scheme "$APP_NAME" \
-    -configuration Release \
-    -destination "generic/platform=macOS" \
-    SYMROOT="$PACKAGE_BUILD_DIR" \
-    ARCHS="$PACKAGE_ARCH" \
-    ONLY_ACTIVE_ARCH=NO \
-    CODE_SIGN_STYLE=Manual \
-    CODE_SIGN_IDENTITY="$SIGN_IDENTITY" \
-    CODE_SIGN_ENTITLEMENTS="" \
-    DEVELOPMENT_TEAM="" \
-    PROVISIONING_PROFILE="" \
-    PROVISIONING_PROFILE_SPECIFIER="" \
-    MARKETING_VERSION="$MARKETING_VERSION" \
-    CURRENT_PROJECT_VERSION="$BUILD_NUMBER" \
-    build
-
-  codesign --verify --deep --strict --verbose=2 "$APP_PATH"
-
-  APP_ARCHS="$(lipo -archs "$APP_PATH/Contents/MacOS/$APP_NAME")"
-  if [ "$APP_ARCHS" != "$PACKAGE_ARCH" ]; then
-    echo "Unexpected $PACKAGE_NAME archs: $APP_ARCHS" >&2
-    exit 1
-  fi
-
-  rm -rf "$DMG_ROOT"
-  mkdir -p "$DMG_ROOT"
-  cp -R "$APP_PATH" "$DMG_ROOT/"
-  ln -s /Applications "$DMG_ROOT/Applications"
-  hdiutil create \
-    -volname "$APP_NAME" \
-    -srcfolder "$DMG_ROOT" \
-    -ov \
-    -format UDZO \
-    "$DMG_PATH"
-
-  echo "DMG ($PACKAGE_NAME/$PACKAGE_ARCH): $DMG_PATH"
-done
+# Sparkle 会用兼容 App 包目录生成频道标题；仅替换展示标题，保留已签名 enclosure 的全部属性。
+perl -0pi -e 's{(<channel>\s*<title>)[^<]*(</title>)}{$1CodexMeter$2}' "$APPCAST_PATH"
 
 # WidgetKit 会保留 extension 进程；安装新版前一并结束，避免桌面继续使用旧时间线代码。
 pkill -x "$WIDGET_PROCESS_NAME" 2>/dev/null || true
-pkill -x "$APP_NAME" 2>/dev/null || true
+pkill -x "$COMPATIBLE_PRODUCT_NAME" 2>/dev/null || true
 rm -rf "$INSTALLED_APP_PATH"
-ditto "$BUILD_DIR/$LOCAL_PACKAGE_NAME/Release/$APP_NAME.app" "$INSTALLED_APP_PATH"
+ditto "$APP_PATH" "$INSTALLED_APP_PATH"
 open -n "$INSTALLED_APP_PATH"
 
-# 全部产物和本机安装成功后再推进工程版本，失败发布不会消耗构建号。
+# 发布模式创建唯一 Release，并把 appcast 交给 release 事件触发的 Pages 工作流部署。
+if [ "$PUBLISH_RELEASE" = "1" ]; then
+  if gh api "repos/$GITHUB_REPOSITORY/pages" >/dev/null 2>&1; then
+    gh api --method PUT "repos/$GITHUB_REPOSITORY/pages" -f build_type=workflow >/dev/null
+  else
+    gh api --method POST "repos/$GITHUB_REPOSITORY/pages" -f build_type=workflow >/dev/null
+  fi
+  gh release create "$RELEASE_TAG" \
+    "$DMG_PATH" \
+    "$APPCAST_PATH" \
+    --repo "$GITHUB_REPOSITORY" \
+    --target "$(git -C "$ROOT_DIR" rev-parse HEAD)" \
+    --title "$APP_NAME $MARKETING_VERSION ($BUILD_NUMBER)" \
+    --generate-notes
+fi
+
+# 全部构建、安装和所选发布流程成功后再推进工程版本，失败发布不会消耗构建号。
 release_update_project_versions "$PROJECT_FILE" "$MARKETING_VERSION" "$NEXT_BUILD_NUMBER"
 
-echo "Released: $MARKETING_VERSION ($BUILD_NUMBER)"
+echo "Released locally: $MARKETING_VERSION ($BUILD_NUMBER)"
 echo "Next build number: $NEXT_BUILD_NUMBER"
-echo "Installed ($LOCAL_PACKAGE_NAME): $INSTALLED_APP_PATH"
+echo "DMG: $DMG_PATH"
+echo "Appcast: $APPCAST_PATH"
+echo "Installed: $INSTALLED_APP_PATH"
+if [ "$PUBLISH_RELEASE" = "1" ]; then
+  echo "GitHub Release: https://github.com/$GITHUB_REPOSITORY/releases/tag/$RELEASE_TAG"
+fi

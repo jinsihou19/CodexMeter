@@ -25,8 +25,8 @@
 ### Task 1: 用纯计算约束双行布局
 
 **Files:**
-- Modify: `CodexUsage/MenuBarPopoverLayout.swift`
-- Test: `CodexUsageTests/CodexRadarTests.swift`
+- Modify: `CodexMeter/MenuBarPopoverLayout.swift`
+- Test: `CodexMeterTests/CodexRadarTests.swift`
 
 **Interfaces:**
 - Consumes: 分数卡数量 `Int`。
@@ -52,7 +52,7 @@ func testCodexRadarScoreGridUsesAtMostTwoRows() {
 Run:
 
 ```bash
-rtk xcodebuild -project CodexUsage.xcodeproj -scheme CodexUsage -destination 'platform=macOS' test CODE_SIGNING_ALLOWED=NO -only-testing:CodexUsageTests/CodexRadarTests/testCodexRadarScoreGridUsesAtMostTwoRows
+rtk xcodebuild -project CodexMeter.xcodeproj -scheme CodexMeter -destination 'platform=macOS' test CODE_SIGNING_ALLOWED=NO -only-testing:CodexMeterTests/CodexRadarTests/testCodexRadarScoreGridUsesAtMostTwoRows
 ```
 
 Expected: 编译失败，提示找不到 `CodexRadarScoreGridLayout`。
@@ -80,8 +80,8 @@ Expected: `testCodexRadarScoreGridUsesAtMostTwoRows` 通过，测试进程退出
 ### Task 2: 限制分数卡最多展示六项
 
 **Files:**
-- Modify: `CodexUsage/CodexRadarView.swift:20,97-166`
-- Test: `CodexUsageTests/CodexRadarTests.swift`
+- Modify: `CodexMeter/CodexRadarView.swift:20,97-166`
+- Test: `CodexMeterTests/CodexRadarTests.swift`
 
 **Interfaces:**
 - Consumes: `modelIQ.latestRuns` 全部项目，以及 Task 1 的 `CodexRadarScoreGridLayout.columnCount(for:)`。
@@ -98,7 +98,7 @@ func testCodexRadarSectionLimitsLatestRunsToSix() throws {
     let projectRoot = testFileURL
         .deletingLastPathComponent()
         .deletingLastPathComponent()
-    let sourceURL = projectRoot.appendingPathComponent("CodexUsage/CodexRadarView.swift")
+    let sourceURL = projectRoot.appendingPathComponent("CodexMeter/CodexRadarView.swift")
     let source = try String(contentsOf: sourceURL, encoding: .utf8)
 
     XCTAssertTrue(source.contains("CodexRadarScoreGrid(runs: Array(modelIQ.latestRuns.prefix(6)))"))
@@ -108,7 +108,7 @@ func testCodexRadarSectionLimitsLatestRunsToSix() throws {
 Run:
 
 ```bash
-rtk xcodebuild -project CodexUsage.xcodeproj -scheme CodexUsage -destination 'platform=macOS' test CODE_SIGNING_ALLOWED=NO -only-testing:CodexUsageTests/CodexRadarTests/testCodexRadarSectionLimitsLatestRunsToSix
+rtk xcodebuild -project CodexMeter.xcodeproj -scheme CodexMeter -destination 'platform=macOS' test CODE_SIGNING_ALLOWED=NO -only-testing:CodexMeterTests/CodexRadarTests/testCodexRadarSectionLimitsLatestRunsToSix
 ```
 
 Expected: 断言失败，因为源码尚未限制为 `prefix(6)`。
@@ -146,7 +146,7 @@ var body: some View {
 Run:
 
 ```bash
-rtk xcodebuild -project CodexUsage.xcodeproj -scheme CodexUsage -destination 'platform=macOS' test CODE_SIGNING_ALLOWED=NO -only-testing:CodexUsageTests/CodexRadarTests/testCodexRadarScoreGridUsesAtMostTwoRows -only-testing:CodexUsageTests/CodexRadarTests/testCodexRadarSectionLimitsLatestRunsToSix
+rtk xcodebuild -project CodexMeter.xcodeproj -scheme CodexMeter -destination 'platform=macOS' test CODE_SIGNING_ALLOWED=NO -only-testing:CodexMeterTests/CodexRadarTests/testCodexRadarScoreGridUsesAtMostTwoRows -only-testing:CodexMeterTests/CodexRadarTests/testCodexRadarSectionLimitsLatestRunsToSix
 ```
 
 Expected: 两个测试均通过，测试进程退出码为 0。
@@ -154,9 +154,9 @@ Expected: 两个测试均通过，测试进程退出码为 0。
 ### Task 3: 绘制曲线首尾端点
 
 **Files:**
-- Modify: `CodexUsage/MenuBarPopoverLayout.swift`
-- Modify: `CodexUsage/CodexRadarView.swift:247-265`
-- Test: `CodexUsageTests/CodexRadarTests.swift`
+- Modify: `CodexMeter/MenuBarPopoverLayout.swift`
+- Modify: `CodexMeter/CodexRadarView.swift:247-265`
+- Test: `CodexMeterTests/CodexRadarTests.swift`
 
 **Interfaces:**
 - Produces: `CodexRadarLineChartLayout.drawingPlan(for:)`；单点计划不画线但包含索引 `[0]`，多点计划画线并包含首尾索引。
@@ -175,7 +175,7 @@ func testCodexRadarLineChartCreatesSinglePointAndLineDrawingPlans() {
 - [ ] **Step 2: 运行定向测试并确认因类型不存在而失败**
 
 ```bash
-rtk xcodebuild -project CodexUsage.xcodeproj -scheme CodexUsage -destination 'platform=macOS' test CODE_SIGNING_ALLOWED=NO -only-testing:CodexUsageTests/CodexRadarTests/testCodexRadarLineChartCreatesSinglePointAndLineDrawingPlans
+rtk xcodebuild -project CodexMeter.xcodeproj -scheme CodexMeter -destination 'platform=macOS' test CODE_SIGNING_ALLOWED=NO -only-testing:CodexMeterTests/CodexRadarTests/testCodexRadarLineChartCreatesSinglePointAndLineDrawingPlans
 ```
 
 - [ ] **Step 3: 添加最小端点索引规则并用于绘制**
@@ -208,10 +208,10 @@ Expected: 测试通过，退出码为 0。
 ### Task 4: 统一排序、限量和展示文案
 
 **Files:**
-- Modify: `CodexUsageShared/CodexRadarModels.swift`
-- Modify: `CodexUsage/CodexRadarView.swift`
-- Modify: `CodexUsage/MenuBarPopoverLayout.swift`
-- Test: `CodexUsageTests/CodexRadarTests.swift`
+- Modify: `CodexMeterShared/CodexRadarModels.swift`
+- Modify: `CodexMeter/CodexRadarView.swift`
+- Modify: `CodexMeter/MenuBarPopoverLayout.swift`
+- Test: `CodexMeterTests/CodexRadarTests.swift`
 
 **Interfaces:**
 - Produces: `CodexRadarModelIQ.displaySeries(limit:)`，按模型族和推理档位稳定排序后取前六项。
@@ -224,7 +224,7 @@ Expected: 测试通过，退出码为 0。
 - [ ] **Step 2: 运行定向测试确认失败**
 
 ```bash
-rtk xcodebuild -project CodexUsage.xcodeproj -scheme CodexUsage -destination 'platform=macOS' test CODE_SIGNING_ALLOWED=NO -only-testing:CodexUsageTests/CodexRadarTests
+rtk xcodebuild -project CodexMeter.xcodeproj -scheme CodexMeter -destination 'platform=macOS' test CODE_SIGNING_ALLOWED=NO -only-testing:CodexMeterTests/CodexRadarTests
 ```
 
 - [ ] **Step 3: 实现稳定排序与文案，并让上下共用 displaySeries**
@@ -238,8 +238,8 @@ Run: 与 Step 2 相同。
 ### Task 5: 完整验证与本地安装
 
 **Files:**
-- Verify: `CodexUsage/CodexRadarView.swift`
-- Verify: `CodexUsageTests/CodexRadarTests.swift`
+- Verify: `CodexMeter/CodexRadarView.swift`
+- Verify: `CodexMeterTests/CodexRadarTests.swift`
 - Verify: `docs/superpowers/specs/2026-07-10-radar-score-grid-two-row-design.md`
 
 **Interfaces:**
@@ -249,7 +249,7 @@ Run: 与 Step 2 相同。
 - [ ] **Step 1: 运行完整测试**
 
 ```bash
-rtk xcodebuild -project CodexUsage.xcodeproj -scheme CodexUsage -destination 'platform=macOS' test CODE_SIGNING_ALLOWED=NO
+rtk xcodebuild -project CodexMeter.xcodeproj -scheme CodexMeter -destination 'platform=macOS' test CODE_SIGNING_ALLOWED=NO
 ```
 
 Expected: `** TEST SUCCEEDED **`，退出码为 0。
@@ -257,14 +257,14 @@ Expected: `** TEST SUCCEEDED **`，退出码为 0。
 - [ ] **Step 2: 运行 Debug 构建**
 
 ```bash
-rtk xcodebuild -project CodexUsage.xcodeproj -scheme CodexUsage -destination 'platform=macOS' -configuration Debug build CODE_SIGNING_ALLOWED=NO
+rtk xcodebuild -project CodexMeter.xcodeproj -scheme CodexMeter -destination 'platform=macOS' -configuration Debug build CODE_SIGNING_ALLOWED=NO
 ```
 
 Expected: `** BUILD SUCCEEDED **`，退出码为 0。
 
 - [ ] **Step 3: 定位构建产物、安装并启动**
 
-先用 `xcodebuild -showBuildSettings` 获取 `TARGET_BUILD_DIR` 和 `FULL_PRODUCT_NAME`，退出已运行的 CodexUsage，将构建产物复制到 `/Applications/CodexUsage.app`，再使用 `open -a /Applications/CodexUsage.app` 启动。复制前仅移除该应用自身的旧安装，不操作其他文件。
+先用 `xcodebuild -showBuildSettings` 获取 `TARGET_BUILD_DIR` 和 `FULL_PRODUCT_NAME`，退出已运行的 CodexMeter，将构建产物复制到 `/Applications/CodexMeter.app`，再使用 `open -a /Applications/CodexMeter.app` 启动。复制前仅移除该应用自身的旧安装，不操作其他文件。
 
 - [ ] **Step 4: 视觉与变更检查**
 

@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>com.apple.security.application-groups</key>
+	<array>
+		<!-- 兼容标识：保留旧 App Group 以继续读取设置和缓存。 -->
+		<string>group.com.jinsihou.CodexUsage</string>
+	</array>
+</dict>
+</plist>

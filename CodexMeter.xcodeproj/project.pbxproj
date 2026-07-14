@@ -1,0 +1,948 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 60;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		100000000000000000000001 /* Empty.swift in Sources */ = {isa = PBXBuildFile; fileRef = 100000000000000000000011 /* Empty.swift */; };
+		100000000000000000000002 /* UsageModelsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 100000000000000000000012 /* UsageModelsTests.swift */; };
+		100000000000000000000003 /* CodexMeterShared.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 100000000000000000000021 /* CodexMeterShared.framework */; };
+		100000000000000000000004 /* UsageFormatterTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 100000000000000000000013 /* UsageFormatterTests.swift */; };
+		100000000000000000000005 /* UsageSnapshotStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 100000000000000000000014 /* UsageSnapshotStoreTests.swift */; };
+		100000000000000000000006 /* DirectCodexUsageClientTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 100000000000000000000015 /* DirectCodexUsageClientTests.swift */; };
+		100000000000000000000007 /* UsageModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 100000000000000000000016 /* UsageModels.swift */; };
+		100000000000000000000008 /* UsageFormatter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 100000000000000000000017 /* UsageFormatter.swift */; };
+		100000000000000000000009 /* UsageSnapshotStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 100000000000000000000018 /* UsageSnapshotStore.swift */; };
+		10000000000000000000000A /* DirectCodexUsageClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 100000000000000000000019 /* DirectCodexUsageClient.swift */; };
+		10000000000000000000000B /* CodexMeterApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 10000000000000000000001A /* CodexMeterApp.swift */; };
+		10000000000000000000000C /* UsageViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 10000000000000000000001B /* UsageViewModel.swift */; };
+		10000000000000000000000D /* MenuBarView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 10000000000000000000001C /* MenuBarView.swift */; };
+		10000000000000000000000E /* DirectCodexUsageClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 100000000000000000000019 /* DirectCodexUsageClient.swift */; };
+		100000000000000000000E01 /* MenuBarDisplaySettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = 100000000000000000000E02 /* MenuBarDisplaySettings.swift */; };
+		10000000000000000000000F /* CodexMeterShared.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 100000000000000000000021 /* CodexMeterShared.framework */; };
+		100000000000000000000010 /* CodexMeterShared.framework in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = 100000000000000000000021 /* CodexMeterShared.framework */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
+		100000000000000000000020 /* CodexMeterWidgetExtension.appex in Embed App Extensions */ = {isa = PBXBuildFile; fileRef = 100000000000000000000024 /* CodexMeterWidgetExtension.appex */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
+		100000000000000000000025 /* CodexMeterWidgetBundle.swift in Sources */ = {isa = PBXBuildFile; fileRef = 10000000000000000000002A /* CodexMeterWidgetBundle.swift */; };
+		100000000000000000000026 /* CodexMeterWidget.swift in Sources */ = {isa = PBXBuildFile; fileRef = 10000000000000000000002B /* CodexMeterWidget.swift */; };
+		100000000000000000000027 /* CodexMeterShared.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 100000000000000000000021 /* CodexMeterShared.framework */; };
+		100000000000000000000028 /* CodexMeterShared.framework in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = 100000000000000000000021 /* CodexMeterShared.framework */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
+		100000000000000000000A01 /* UsageViewModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 100000000000000000000A03 /* UsageViewModelTests.swift */; };
+		100000000000000000000A02 /* UsageViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 10000000000000000000001B /* UsageViewModel.swift */; };
+		100000000000000000000B01 /* MenuBarDisplaySettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = 100000000000000000000B04 /* MenuBarDisplaySettings.swift */; };
+		100000000000000000000B02 /* MenuBarDisplaySettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = 100000000000000000000B04 /* MenuBarDisplaySettings.swift */; };
+		100000000000000000000B03 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 100000000000000000000B05 /* SettingsView.swift */; };
+		100000000000000000000B06 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 100000000000000000000B07 /* Assets.xcassets */; };
+		100000000000000000000C01 /* SettingsWindowOpener.swift in Sources */ = {isa = PBXBuildFile; fileRef = 100000000000000000000C03 /* SettingsWindowOpener.swift */; };
+		100000000000000000000C02 /* SettingsWindowOpener.swift in Sources */ = {isa = PBXBuildFile; fileRef = 100000000000000000000C03 /* SettingsWindowOpener.swift */; };
+		100000000000000000000C04 /* SettingsWindowPresenter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 100000000000000000000C06 /* SettingsWindowPresenter.swift */; };
+		100000000000000000000C05 /* SettingsWindowPresenter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 100000000000000000000C06 /* SettingsWindowPresenter.swift */; };
+		100000000000000000000C07 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 100000000000000000000B05 /* SettingsView.swift */; };
+		100000000000000000000D05 /* SettingsPanelLayout.swift in Sources */ = {isa = PBXBuildFile; fileRef = 100000000000000000000D01 /* SettingsPanelLayout.swift */; };
+		100000000000000000000D06 /* SettingsPanelLayout.swift in Sources */ = {isa = PBXBuildFile; fileRef = 100000000000000000000D01 /* SettingsPanelLayout.swift */; };
+		100000000000000000000D07 /* SettingsSections.swift in Sources */ = {isa = PBXBuildFile; fileRef = 100000000000000000000D02 /* SettingsSections.swift */; };
+		100000000000000000000D08 /* SettingsSections.swift in Sources */ = {isa = PBXBuildFile; fileRef = 100000000000000000000D02 /* SettingsSections.swift */; };
+		100000000000000000000D09 /* SettingsControls.swift in Sources */ = {isa = PBXBuildFile; fileRef = 100000000000000000000D03 /* SettingsControls.swift */; };
+		100000000000000000000D0A /* SettingsControls.swift in Sources */ = {isa = PBXBuildFile; fileRef = 100000000000000000000D03 /* SettingsControls.swift */; };
+		100000000000000000000D0B /* SettingsPreview.swift in Sources */ = {isa = PBXBuildFile; fileRef = 100000000000000000000D04 /* SettingsPreview.swift */; };
+		100000000000000000000D0C /* SettingsPreview.swift in Sources */ = {isa = PBXBuildFile; fileRef = 100000000000000000000D04 /* SettingsPreview.swift */; };
+		100000000000000000000F01 /* CodexHookActivity.swift in Sources */ = {isa = PBXBuildFile; fileRef = 100000000000000000000F02 /* CodexHookActivity.swift */; };
+		100000000000000000000F03 /* CodexHookActivityStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 100000000000000000000F04 /* CodexHookActivityStore.swift */; };
+		100000000000000000001011 /* CodexRadarModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 100000000000000000001001 /* CodexRadarModels.swift */; };
+		100000000000000000001012 /* CodexRadarSnapshotStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 100000000000000000001002 /* CodexRadarSnapshotStore.swift */; };
+		100000000000000000001013 /* CodexRadarClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 100000000000000000001003 /* CodexRadarClient.swift */; };
+		100000000000000000001014 /* CodexRadarStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 100000000000000000001004 /* CodexRadarStore.swift */; };
+		100000000000000000001015 /* CodexRadarView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 100000000000000000001005 /* CodexRadarView.swift */; };
+		100000000000000000001016 /* CodexRadarTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 100000000000000000001006 /* CodexRadarTests.swift */; };
+		100000000000000000001017 /* CodexRadarClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 100000000000000000001003 /* CodexRadarClient.swift */; };
+		100000000000000000001021 /* MenuBarPopoverLayout.swift in Sources */ = {isa = PBXBuildFile; fileRef = 100000000000000000001020 /* MenuBarPopoverLayout.swift */; };
+		100000000000000000001022 /* MenuBarPopoverLayout.swift in Sources */ = {isa = PBXBuildFile; fileRef = 100000000000000000001020 /* MenuBarPopoverLayout.swift */; };
+		100000000000000000001023 /* CodexRadarStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 100000000000000000001004 /* CodexRadarStore.swift */; };
+		200000000000000000000001 /* Sparkle in Frameworks */ = {isa = PBXBuildFile; productRef = 200000000000000000000003 /* Sparkle */; };
+		200000000000000000000004 /* Sparkle in Frameworks */ = {isa = PBXBuildFile; productRef = 200000000000000000000005 /* Sparkle */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		100000000000000000000031 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 100000000000000000000041 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 100000000000000000000051;
+			remoteInfo = CodexMeterShared;
+		};
+		100000000000000000000033 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 100000000000000000000041 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 100000000000000000000051;
+			remoteInfo = CodexMeterShared;
+		};
+		100000000000000000000034 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 100000000000000000000041 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 100000000000000000000051;
+			remoteInfo = CodexMeterShared;
+		};
+		100000000000000000000035 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 100000000000000000000041 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 100000000000000000000054;
+			remoteInfo = CodexMeterWidgetExtension;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXCopyFilesBuildPhase section */
+		100000000000000000000065 /* Embed Frameworks */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 10;
+			files = (
+				100000000000000000000010 /* CodexMeterShared.framework in Embed Frameworks */,
+			);
+			name = "Embed Frameworks";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		100000000000000000000066 /* Embed App Extensions */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 13;
+			files = (
+				100000000000000000000020 /* CodexMeterWidgetExtension.appex in Embed App Extensions */,
+			);
+			name = "Embed App Extensions";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		100000000000000000000067 /* Embed Frameworks */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 10;
+			files = (
+				100000000000000000000028 /* CodexMeterShared.framework in Embed Frameworks */,
+			);
+			name = "Embed Frameworks";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
+
+/* Begin PBXFileReference section */
+		100000000000000000000011 /* Empty.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Empty.swift; sourceTree = "<group>"; };
+		100000000000000000000012 /* UsageModelsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UsageModelsTests.swift; sourceTree = "<group>"; };
+		100000000000000000000013 /* UsageFormatterTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UsageFormatterTests.swift; sourceTree = "<group>"; };
+		100000000000000000000014 /* UsageSnapshotStoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UsageSnapshotStoreTests.swift; sourceTree = "<group>"; };
+		100000000000000000000015 /* DirectCodexUsageClientTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DirectCodexUsageClientTests.swift; sourceTree = "<group>"; };
+		100000000000000000000016 /* UsageModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UsageModels.swift; sourceTree = "<group>"; };
+		100000000000000000000017 /* UsageFormatter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UsageFormatter.swift; sourceTree = "<group>"; };
+		100000000000000000000018 /* UsageSnapshotStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UsageSnapshotStore.swift; sourceTree = "<group>"; };
+		100000000000000000000019 /* DirectCodexUsageClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DirectCodexUsageClient.swift; sourceTree = "<group>"; };
+		10000000000000000000001A /* CodexMeterApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CodexMeterApp.swift; sourceTree = "<group>"; };
+		10000000000000000000001B /* UsageViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UsageViewModel.swift; sourceTree = "<group>"; };
+		10000000000000000000001C /* MenuBarView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MenuBarView.swift; sourceTree = "<group>"; };
+		10000000000000000000001D /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		10000000000000000000001E /* CodexMeter.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = CodexMeter.entitlements; sourceTree = "<group>"; };
+		100000000000000000000021 /* CodexMeterShared.framework */ = {isa = PBXFileReference; explicitFileType = wrapper.framework; includeInIndex = 0; path = CodexMeterShared.framework; sourceTree = BUILT_PRODUCTS_DIR; };
+		100000000000000000000022 /* CodexMeterTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = CodexMeterTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		100000000000000000000023 /* CodexUsage.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = CodexUsage.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		100000000000000000000024 /* CodexMeterWidgetExtension.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = CodexMeterWidgetExtension.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+		10000000000000000000002A /* CodexMeterWidgetBundle.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CodexMeterWidgetBundle.swift; sourceTree = "<group>"; };
+		10000000000000000000002B /* CodexMeterWidget.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CodexMeterWidget.swift; sourceTree = "<group>"; };
+		10000000000000000000002C /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		10000000000000000000002D /* CodexMeterWidget.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = CodexMeterWidget.entitlements; sourceTree = "<group>"; };
+		10000000000000000000002E /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		100000000000000000000A03 /* UsageViewModelTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UsageViewModelTests.swift; sourceTree = "<group>"; };
+		100000000000000000000B04 /* MenuBarDisplaySettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MenuBarDisplaySettings.swift; sourceTree = "<group>"; };
+		100000000000000000000E02 /* MenuBarDisplaySettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MenuBarDisplaySettings.swift; sourceTree = "<group>"; };
+		100000000000000000000B05 /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
+		100000000000000000000B07 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		100000000000000000000C03 /* SettingsWindowOpener.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsWindowOpener.swift; sourceTree = "<group>"; };
+		100000000000000000000C06 /* SettingsWindowPresenter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsWindowPresenter.swift; sourceTree = "<group>"; };
+		100000000000000000000D01 /* SettingsPanelLayout.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsPanelLayout.swift; sourceTree = "<group>"; };
+		100000000000000000000D02 /* SettingsSections.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsSections.swift; sourceTree = "<group>"; };
+		100000000000000000000D03 /* SettingsControls.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsControls.swift; sourceTree = "<group>"; };
+		100000000000000000000D04 /* SettingsPreview.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsPreview.swift; sourceTree = "<group>"; };
+		100000000000000000000F02 /* CodexHookActivity.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CodexHookActivity.swift; sourceTree = "<group>"; };
+		100000000000000000000F04 /* CodexHookActivityStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CodexHookActivityStore.swift; sourceTree = "<group>"; };
+		100000000000000000001001 /* CodexRadarModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CodexRadarModels.swift; sourceTree = "<group>"; };
+		100000000000000000001002 /* CodexRadarSnapshotStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CodexRadarSnapshotStore.swift; sourceTree = "<group>"; };
+		100000000000000000001003 /* CodexRadarClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CodexRadarClient.swift; sourceTree = "<group>"; };
+		100000000000000000001004 /* CodexRadarStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CodexRadarStore.swift; sourceTree = "<group>"; };
+		100000000000000000001005 /* CodexRadarView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CodexRadarView.swift; sourceTree = "<group>"; };
+		100000000000000000001006 /* CodexRadarTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CodexRadarTests.swift; sourceTree = "<group>"; };
+		100000000000000000001020 /* MenuBarPopoverLayout.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MenuBarPopoverLayout.swift; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		100000000000000000000061 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		100000000000000000000062 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				100000000000000000000003 /* CodexMeterShared.framework in Frameworks */,
+				200000000000000000000004 /* Sparkle in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		100000000000000000000063 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				10000000000000000000000F /* CodexMeterShared.framework in Frameworks */,
+				200000000000000000000001 /* Sparkle in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		100000000000000000000064 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				100000000000000000000027 /* CodexMeterShared.framework in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		100000000000000000000071 = {
+			isa = PBXGroup;
+			children = (
+				100000000000000000000072 /* CodexMeterShared */,
+				100000000000000000000075 /* CodexMeter */,
+				100000000000000000000076 /* CodexMeterWidget */,
+				100000000000000000000073 /* CodexMeterTests */,
+				100000000000000000000074 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		100000000000000000000072 /* CodexMeterShared */ = {
+			isa = PBXGroup;
+			children = (
+				100000000000000000000011 /* Empty.swift */,
+				100000000000000000000016 /* UsageModels.swift */,
+				100000000000000000000017 /* UsageFormatter.swift */,
+				100000000000000000000018 /* UsageSnapshotStore.swift */,
+				100000000000000000000F02 /* CodexHookActivity.swift */,
+				100000000000000000000E02 /* MenuBarDisplaySettings.swift */,
+				100000000000000000001001 /* CodexRadarModels.swift */,
+				100000000000000000001002 /* CodexRadarSnapshotStore.swift */,
+			);
+			path = CodexMeterShared;
+			sourceTree = "<group>";
+		};
+		100000000000000000000073 /* CodexMeterTests */ = {
+			isa = PBXGroup;
+			children = (
+				100000000000000000000012 /* UsageModelsTests.swift */,
+				100000000000000000000013 /* UsageFormatterTests.swift */,
+				100000000000000000000014 /* UsageSnapshotStoreTests.swift */,
+				100000000000000000000015 /* DirectCodexUsageClientTests.swift */,
+				100000000000000000000A03 /* UsageViewModelTests.swift */,
+				100000000000000000001006 /* CodexRadarTests.swift */,
+				10000000000000000000002E /* Info.plist */,
+			);
+			path = CodexMeterTests;
+			sourceTree = "<group>";
+		};
+		100000000000000000000074 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				100000000000000000000021 /* CodexMeterShared.framework */,
+				100000000000000000000023 /* CodexUsage.app */,
+				100000000000000000000024 /* CodexMeterWidgetExtension.appex */,
+				100000000000000000000022 /* CodexMeterTests.xctest */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		100000000000000000000075 /* CodexMeter */ = {
+			isa = PBXGroup;
+			children = (
+				10000000000000000000001A /* CodexMeterApp.swift */,
+				100000000000000000000C03 /* SettingsWindowOpener.swift */,
+				100000000000000000000C06 /* SettingsWindowPresenter.swift */,
+				100000000000000000000F04 /* CodexHookActivityStore.swift */,
+				10000000000000000000001B /* UsageViewModel.swift */,
+				100000000000000000001004 /* CodexRadarStore.swift */,
+				100000000000000000001020 /* MenuBarPopoverLayout.swift */,
+				10000000000000000000001C /* MenuBarView.swift */,
+				100000000000000000001005 /* CodexRadarView.swift */,
+				100000000000000000000B04 /* MenuBarDisplaySettings.swift */,
+				100000000000000000000B05 /* SettingsView.swift */,
+				100000000000000000000D01 /* SettingsPanelLayout.swift */,
+				100000000000000000000D02 /* SettingsSections.swift */,
+				100000000000000000000D03 /* SettingsControls.swift */,
+				100000000000000000000D04 /* SettingsPreview.swift */,
+				100000000000000000000019 /* DirectCodexUsageClient.swift */,
+				100000000000000000001003 /* CodexRadarClient.swift */,
+				100000000000000000000B07 /* Assets.xcassets */,
+				10000000000000000000001D /* Info.plist */,
+				10000000000000000000001E /* CodexMeter.entitlements */,
+			);
+			path = CodexMeter;
+			sourceTree = "<group>";
+		};
+		100000000000000000000076 /* CodexMeterWidget */ = {
+			isa = PBXGroup;
+			children = (
+				10000000000000000000002A /* CodexMeterWidgetBundle.swift */,
+				10000000000000000000002B /* CodexMeterWidget.swift */,
+				10000000000000000000002C /* Info.plist */,
+				10000000000000000000002D /* CodexMeterWidget.entitlements */,
+			);
+			path = CodexMeterWidget;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		100000000000000000000051 /* CodexMeterShared */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 100000000000000000000091 /* Build configuration list for PBXNativeTarget "CodexMeterShared" */;
+			buildPhases = (
+				100000000000000000000081 /* Sources */,
+				100000000000000000000061 /* Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = CodexMeterShared;
+			productName = CodexMeterShared;
+			productReference = 100000000000000000000021 /* CodexMeterShared.framework */;
+			productType = "com.apple.product-type.framework";
+		};
+		100000000000000000000052 /* CodexMeterTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 100000000000000000000092 /* Build configuration list for PBXNativeTarget "CodexMeterTests" */;
+			buildPhases = (
+				100000000000000000000082 /* Sources */,
+				100000000000000000000062 /* Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				100000000000000000000032 /* PBXTargetDependency */,
+			);
+			name = CodexMeterTests;
+			packageProductDependencies = (
+				200000000000000000000005 /* Sparkle */,
+			);
+			productName = CodexMeterTests;
+			productReference = 100000000000000000000022 /* CodexMeterTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
+		100000000000000000000053 /* CodexMeter */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 100000000000000000000093 /* Build configuration list for PBXNativeTarget "CodexMeter" */;
+			buildPhases = (
+				100000000000000000000083 /* Sources */,
+				100000000000000000000063 /* Frameworks */,
+				100000000000000000000068 /* Resources */,
+				100000000000000000000065 /* Embed Frameworks */,
+				100000000000000000000066 /* Embed App Extensions */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				100000000000000000000036 /* PBXTargetDependency */,
+				100000000000000000000038 /* PBXTargetDependency */,
+			);
+			name = CodexMeter;
+			packageProductDependencies = (
+				200000000000000000000003 /* Sparkle */,
+			);
+			productName = CodexUsage;
+			productReference = 100000000000000000000023 /* CodexUsage.app */;
+			productType = "com.apple.product-type.application";
+		};
+		100000000000000000000054 /* CodexMeterWidgetExtension */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 100000000000000000000094 /* Build configuration list for PBXNativeTarget "CodexMeterWidgetExtension" */;
+			buildPhases = (
+				100000000000000000000084 /* Sources */,
+				100000000000000000000064 /* Frameworks */,
+				100000000000000000000069 /* Resources */,
+				100000000000000000000067 /* Embed Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				100000000000000000000037 /* PBXTargetDependency */,
+			);
+			name = CodexMeterWidgetExtension;
+			productName = CodexMeterWidgetExtension;
+			productReference = 100000000000000000000024 /* CodexMeterWidgetExtension.appex */;
+			productType = "com.apple.product-type.app-extension";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		100000000000000000000041 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = 1;
+				LastSwiftUpdateCheck = 2650;
+				LastUpgradeCheck = 2650;
+				TargetAttributes = {
+					100000000000000000000051 = {
+						CreatedOnToolsVersion = 26.5;
+					};
+					100000000000000000000052 = {
+						CreatedOnToolsVersion = 26.5;
+						TestTargetID = 100000000000000000000051;
+					};
+					100000000000000000000053 = {
+						CreatedOnToolsVersion = 26.5;
+						SystemCapabilities = {
+							com.apple.ApplicationGroups.iOS = {
+								enabled = 1;
+							};
+						};
+					};
+					100000000000000000000054 = {
+						CreatedOnToolsVersion = 26.5;
+						SystemCapabilities = {
+							com.apple.ApplicationGroups.iOS = {
+								enabled = 1;
+							};
+						};
+					};
+				};
+			};
+			buildConfigurationList = 100000000000000000000090 /* Build configuration list for PBXProject "CodexMeter" */;
+			compatibilityVersion = "Xcode 15.0";
+			developmentRegion = "zh-Hans";
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				en,
+				Base,
+				"zh-Hans",
+			);
+			mainGroup = 100000000000000000000071;
+			packageReferences = (
+				200000000000000000000002 /* XCRemoteSwiftPackageReference "Sparkle" */,
+			);
+			productRefGroup = 100000000000000000000074 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				100000000000000000000051 /* CodexMeterShared */,
+				100000000000000000000053 /* CodexMeter */,
+				100000000000000000000054 /* CodexMeterWidgetExtension */,
+				100000000000000000000052 /* CodexMeterTests */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		100000000000000000000068 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				100000000000000000000B06 /* Assets.xcassets in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		100000000000000000000069 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		200000000000000000000002 /* XCRemoteSwiftPackageReference "Sparkle" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/sparkle-project/Sparkle";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 2.9.2;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		200000000000000000000003 /* Sparkle */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 200000000000000000000002 /* XCRemoteSwiftPackageReference "Sparkle" */;
+			productName = Sparkle;
+		};
+		200000000000000000000005 /* Sparkle */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 200000000000000000000002 /* XCRemoteSwiftPackageReference "Sparkle" */;
+			productName = Sparkle;
+		};
+/* End XCSwiftPackageProductDependency section */
+
+/* Begin PBXSourcesBuildPhase section */
+		100000000000000000000081 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				100000000000000000000001 /* Empty.swift in Sources */,
+				100000000000000000000007 /* UsageModels.swift in Sources */,
+				100000000000000000000008 /* UsageFormatter.swift in Sources */,
+				100000000000000000000009 /* UsageSnapshotStore.swift in Sources */,
+				100000000000000000000F01 /* CodexHookActivity.swift in Sources */,
+				100000000000000000000E01 /* MenuBarDisplaySettings.swift in Sources */,
+				100000000000000000001011 /* CodexRadarModels.swift in Sources */,
+				100000000000000000001012 /* CodexRadarSnapshotStore.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		100000000000000000000082 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				100000000000000000000002 /* UsageModelsTests.swift in Sources */,
+				100000000000000000000004 /* UsageFormatterTests.swift in Sources */,
+				100000000000000000000005 /* UsageSnapshotStoreTests.swift in Sources */,
+				100000000000000000000006 /* DirectCodexUsageClientTests.swift in Sources */,
+				10000000000000000000000A /* DirectCodexUsageClient.swift in Sources */,
+				100000000000000000000A01 /* UsageViewModelTests.swift in Sources */,
+				100000000000000000000A02 /* UsageViewModel.swift in Sources */,
+				100000000000000000000B02 /* MenuBarDisplaySettings.swift in Sources */,
+				100000000000000000000C02 /* SettingsWindowOpener.swift in Sources */,
+				100000000000000000000C05 /* SettingsWindowPresenter.swift in Sources */,
+				100000000000000000000C07 /* SettingsView.swift in Sources */,
+				100000000000000000001022 /* MenuBarPopoverLayout.swift in Sources */,
+				100000000000000000000D06 /* SettingsPanelLayout.swift in Sources */,
+				100000000000000000000D08 /* SettingsSections.swift in Sources */,
+				100000000000000000000D0A /* SettingsControls.swift in Sources */,
+				100000000000000000000D0C /* SettingsPreview.swift in Sources */,
+				100000000000000000001016 /* CodexRadarTests.swift in Sources */,
+				100000000000000000001017 /* CodexRadarClient.swift in Sources */,
+				100000000000000000001023 /* CodexRadarStore.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		100000000000000000000083 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				10000000000000000000000B /* CodexMeterApp.swift in Sources */,
+				10000000000000000000000C /* UsageViewModel.swift in Sources */,
+				100000000000000000001014 /* CodexRadarStore.swift in Sources */,
+				100000000000000000001021 /* MenuBarPopoverLayout.swift in Sources */,
+				10000000000000000000000D /* MenuBarView.swift in Sources */,
+				100000000000000000001015 /* CodexRadarView.swift in Sources */,
+				10000000000000000000000E /* DirectCodexUsageClient.swift in Sources */,
+				100000000000000000001013 /* CodexRadarClient.swift in Sources */,
+				100000000000000000000F03 /* CodexHookActivityStore.swift in Sources */,
+				100000000000000000000B01 /* MenuBarDisplaySettings.swift in Sources */,
+				100000000000000000000B03 /* SettingsView.swift in Sources */,
+				100000000000000000000D05 /* SettingsPanelLayout.swift in Sources */,
+				100000000000000000000D07 /* SettingsSections.swift in Sources */,
+				100000000000000000000D09 /* SettingsControls.swift in Sources */,
+				100000000000000000000D0B /* SettingsPreview.swift in Sources */,
+				100000000000000000000C01 /* SettingsWindowOpener.swift in Sources */,
+				100000000000000000000C04 /* SettingsWindowPresenter.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		100000000000000000000084 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				100000000000000000000025 /* CodexMeterWidgetBundle.swift in Sources */,
+				100000000000000000000026 /* CodexMeterWidget.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		100000000000000000000032 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 100000000000000000000051 /* CodexMeterShared */;
+			targetProxy = 100000000000000000000031 /* PBXContainerItemProxy */;
+		};
+		100000000000000000000036 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 100000000000000000000051 /* CodexMeterShared */;
+			targetProxy = 100000000000000000000033 /* PBXContainerItemProxy */;
+		};
+		100000000000000000000037 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 100000000000000000000051 /* CodexMeterShared */;
+			targetProxy = 100000000000000000000034 /* PBXContainerItemProxy */;
+		};
+		100000000000000000000038 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 100000000000000000000054 /* CodexMeterWidgetExtension */;
+			targetProxy = 100000000000000000000035 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
+
+/* Begin XCBuildConfiguration section */
+		100000000000000000000101 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				CODE_SIGN_IDENTITY = "Apple Development";
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"DEBUG=1",
+					"$(inherited)",
+				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				SDKROOT = macosx;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+			};
+			name = Debug;
+		};
+		100000000000000000000102 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				CODE_SIGN_IDENTITY = "-";
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				SDKROOT = macosx;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+			};
+			name = Release;
+		};
+		100000000000000000000111 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				APPLICATION_EXTENSION_API_ONLY = YES;
+				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "-";
+				CODE_SIGN_STYLE = Manual;
+				DEFINES_MODULE = YES;
+				DEVELOPMENT_TEAM = "";
+				DYLIB_COMPATIBILITY_VERSION = 1;
+				DYLIB_CURRENT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				INSTALL_PATH = "@rpath";
+				LD_DYLIB_INSTALL_NAME = "@rpath/$(EXECUTABLE_PATH)";
+				PRODUCT_BUNDLE_IDENTIFIER = com.jinsihou.CodexUsageShared;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+				SWIFT_VERSION = 6.0;
+			};
+			name = Debug;
+		};
+		100000000000000000000112 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				APPLICATION_EXTENSION_API_ONLY = YES;
+				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "Apple Development";
+				CODE_SIGN_STYLE = Automatic;
+				DEFINES_MODULE = YES;
+				DEVELOPMENT_TEAM = Q53B3XSA9F;
+				DYLIB_COMPATIBILITY_VERSION = 1;
+				DYLIB_CURRENT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				INSTALL_PATH = "@rpath";
+				LD_DYLIB_INSTALL_NAME = "@rpath/$(EXECUTABLE_PATH)";
+				PRODUCT_BUNDLE_IDENTIFIER = com.jinsihou.CodexUsageShared;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+				SWIFT_VERSION = 6.0;
+			};
+			name = Release;
+		};
+		100000000000000000000121 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "";
+				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "Apple Development";
+				CODE_SIGN_STYLE = Automatic;
+				DEVELOPMENT_TEAM = Q53B3XSA9F;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = CodexMeterTests/Info.plist;
+				INFOPLIST_KEY_CODEX_USAGE_RUN_INTEGRATION = "$(CODEX_USAGE_RUN_INTEGRATION)";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+					"@loader_path/../Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.jinsihou.CodexUsageTests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_VERSION = 6.0;
+				TEST_HOST = "";
+			};
+			name = Debug;
+		};
+		100000000000000000000122 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "";
+				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "-";
+				CODE_SIGN_STYLE = Manual;
+				DEVELOPMENT_TEAM = "";
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = CodexMeterTests/Info.plist;
+				INFOPLIST_KEY_CODEX_USAGE_RUN_INTEGRATION = "$(CODEX_USAGE_RUN_INTEGRATION)";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+					"@loader_path/../Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.jinsihou.CodexUsageTests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_VERSION = 6.0;
+				TEST_HOST = "";
+			};
+			name = Release;
+		};
+		100000000000000000000131 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIconLight;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_ENTITLEMENTS = CodexMeter/CodexMeter.entitlements;
+				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "Apple Development";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 11;
+				DEVELOPMENT_TEAM = Q53B3XSA9F;
+				ENABLE_HARDENED_RUNTIME = YES;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = CodexMeter/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				MARKETING_VERSION = 1.0.3;
+				PRODUCT_BUNDLE_IDENTIFIER = com.jinsihou.CodexUsage;
+				PRODUCT_MODULE_NAME = CodexMeter;
+				PRODUCT_NAME = CodexUsage;
+				SKIP_INSTALL = NO;
+				SWIFT_VERSION = 6.0;
+			};
+			name = Debug;
+		};
+		100000000000000000000132 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+					ASSETCATALOG_COMPILER_APPICON_NAME = AppIconLight;
+					ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+					CODE_SIGN_ENTITLEMENTS = "";
+					"CODE_SIGN_IDENTITY[sdk=macosx*]" = "-";
+					CODE_SIGN_STYLE = Manual;
+					CURRENT_PROJECT_VERSION = 11;
+					DEVELOPMENT_TEAM = "";
+					ENABLE_HARDENED_RUNTIME = NO;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = CodexMeter/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				MARKETING_VERSION = 1.0.3;
+				PRODUCT_BUNDLE_IDENTIFIER = com.jinsihou.CodexUsage;
+				PRODUCT_MODULE_NAME = CodexMeter;
+				PRODUCT_NAME = CodexUsage;
+				SKIP_INSTALL = NO;
+				SWIFT_VERSION = 6.0;
+			};
+			name = Release;
+		};
+		100000000000000000000141 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				APPLICATION_EXTENSION_API_ONLY = YES;
+				CODE_SIGN_ENTITLEMENTS = CodexMeterWidget/CodexMeterWidget.entitlements;
+				"CODE_SIGN_IDENTITY[sdk=*]" = "Apple Development";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 11;
+				DEVELOPMENT_TEAM = Q53B3XSA9F;
+				ENABLE_APP_SANDBOX = YES;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = CodexMeterWidget/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+					"@executable_path/../../../../Frameworks",
+				);
+				MARKETING_VERSION = 1.0.3;
+				PRODUCT_BUNDLE_IDENTIFIER = com.jinsihou.CodexUsage.WidgetExtension;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+				SWIFT_VERSION = 6.0;
+			};
+			name = Debug;
+		};
+		100000000000000000000142 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				APPLICATION_EXTENSION_API_ONLY = YES;
+				CODE_SIGN_ENTITLEMENTS = "";
+				CODE_SIGN_IDENTITY = "-";
+				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "-";
+				CODE_SIGN_STYLE = Manual;
+				CURRENT_PROJECT_VERSION = 11;
+				DEVELOPMENT_TEAM = "";
+				ENABLE_APP_SANDBOX = YES;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = CodexMeterWidget/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+					"@executable_path/../../../../Frameworks",
+				);
+				MARKETING_VERSION = 1.0.3;
+				PRODUCT_BUNDLE_IDENTIFIER = com.jinsihou.CodexUsage.WidgetExtension;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+				SWIFT_VERSION = 6.0;
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		100000000000000000000090 /* Build configuration list for PBXProject "CodexMeter" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				100000000000000000000101 /* Debug */,
+				100000000000000000000102 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		100000000000000000000091 /* Build configuration list for PBXNativeTarget "CodexMeterShared" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				100000000000000000000111 /* Debug */,
+				100000000000000000000112 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		100000000000000000000092 /* Build configuration list for PBXNativeTarget "CodexMeterTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				100000000000000000000121 /* Debug */,
+				100000000000000000000122 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		100000000000000000000093 /* Build configuration list for PBXNativeTarget "CodexMeter" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				100000000000000000000131 /* Debug */,
+				100000000000000000000132 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		100000000000000000000094 /* Build configuration list for PBXNativeTarget "CodexMeterWidgetExtension" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				100000000000000000000141 /* Debug */,
+				100000000000000000000142 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+/* End XCConfigurationList section */
+	};
+	rootObject = 100000000000000000000041 /* Project object */;
+}
