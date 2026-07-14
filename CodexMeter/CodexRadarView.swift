@@ -28,7 +28,7 @@ struct CodexRadarSection: View {
                         .controlSize(.small)
                         .frame(maxWidth: .infinity, minHeight: 72)
                 } else {
-                    ContentUnavailableView("暂无雷达数据", systemImage: "waveform.path.ecg")
+                    ContentUnavailableView(AppLocalization.string("暂无雷达数据"), systemImage: "waveform.path.ecg")
                         .frame(maxWidth: .infinity, minHeight: 92)
                 }
 
@@ -47,7 +47,7 @@ struct CodexRadarSection: View {
 
     private var header: some View {
         HStack(spacing: 8) {
-            Label("降智雷达", systemImage: "brain.head.profile")
+            Label(AppLocalization.string("降智雷达"), systemImage: "brain.head.profile")
                 .font(.caption.weight(.semibold))
                 .foregroundStyle(.secondary)
             Spacer()
@@ -60,7 +60,7 @@ struct CodexRadarSection: View {
             }
             .buttonStyle(.plain)
             .imageScale(.small)
-            .help("打开 Codex Radar")
+            .help(AppLocalization.string("打开 Codex Radar"))
             Button {
                 Task { await store.refresh() }
             } label: {
@@ -69,14 +69,14 @@ struct CodexRadarSection: View {
             .buttonStyle(.plain)
             .imageScale(.small)
             .disabled(store.isRefreshing)
-            .help("刷新降智雷达")
+            .help(AppLocalization.string("刷新降智雷达"))
         }
     }
 
     /// 生成底部同步文案；模型 IQ 更新时间优先，缺失时回退到本地抓取时间。
     private func footer(snapshot: CodexRadarSnapshot) -> some View {
         HStack(alignment: .firstTextBaseline, spacing: 8) {
-            Text("常态 90-110")
+            Text(AppLocalization.string("常态 90-110"))
                 .foregroundStyle(.secondary)
             Spacer(minLength: 8)
             Text(syncText(snapshot: snapshot))
@@ -90,9 +90,10 @@ struct CodexRadarSection: View {
     /// 格式化同步时间，避免把 ISO 字符串原样塞进紧凑弹窗。
     private func syncText(snapshot: CodexRadarSnapshot) -> String {
         if let updatedAt = snapshot.modelIQ?.quotaRadarUpdatedAt.flatMap(CodexRadarDateFormatter.shortDateTime) {
-            return "模型IQ更新 \(updatedAt)"
+            return AppLocalization.usesEnglish() ? "Model IQ updated \(updatedAt)" : "模型IQ更新 \(updatedAt)"
         }
-        return "抓取 \(CodexRadarDateFormatter.shortTime(snapshot.fetchedAt))"
+        let time = CodexRadarDateFormatter.shortTime(snapshot.fetchedAt)
+        return AppLocalization.usesEnglish() ? "Fetched \(time)" : "抓取 \(time)"
     }
 }
 
@@ -187,7 +188,7 @@ private struct CodexRadarLineChart: View {
             Canvas { context, size in
                 drawChart(context: &context, size: size)
             }
-            .accessibilityLabel("降智雷达 IQ 曲线")
+            .accessibilityLabel(AppLocalization.string("降智雷达 IQ 曲线"))
 
             GeometryReader { proxy in
                 Color.clear
@@ -482,10 +483,12 @@ private enum CodexRadarDetailFormatter {
     static func text(for run: CodexRadarIQRun) -> String {
         var details = [
             CodexRadarScoreCardText.fullLabel(model: run.model, effort: run.reasoningEffort),
-            "分数 \(CodexRadarNumberFormatter.compactScore(run.score))"
+            AppLocalization.usesEnglish()
+                ? "Score \(CodexRadarNumberFormatter.compactScore(run.score))"
+                : "分数 \(CodexRadarNumberFormatter.compactScore(run.score))"
         ]
         if let passed = run.passed, let tasks = run.tasks {
-            details.append("通过 \(passed)/\(tasks)")
+            details.append(AppLocalization.usesEnglish() ? "Passed \(passed)/\(tasks)" : "通过 \(passed)/\(tasks)")
         }
         return details.joined(separator: "\n")
     }
@@ -525,28 +528,31 @@ private extension View {
 
 /// 雷达时间格式化工具；支持远端 ISO 字符串和本地 Date 两种来源。
 private enum CodexRadarDateFormatter {
-    private static let displayFormatter: DateFormatter = {
+    /// 创建跟随应用语言的日期时间格式器，避免静态缓存锁定首次语言。
+    private static func displayFormatter() -> DateFormatter {
         let formatter = DateFormatter()
-        formatter.locale = Locale(identifier: "zh_Hans_CN")
-        formatter.dateFormat = "M月d日 HH:mm"
+        let english = AppLocalization.usesEnglish()
+        formatter.locale = Locale(identifier: english ? "en_US_POSIX" : "zh_Hans_CN")
+        formatter.dateFormat = english ? "MMM d, HH:mm" : "M月d日 HH:mm"
         return formatter
-    }()
+    }
 
-    private static let timeFormatter: DateFormatter = {
+    /// 创建只显示时间的格式器，地区设置与当前应用语言保持一致。
+    private static func timeFormatter() -> DateFormatter {
         let formatter = DateFormatter()
-        formatter.locale = Locale(identifier: "zh_Hans_CN")
+        formatter.locale = Locale(identifier: AppLocalization.usesEnglish() ? "en_US_POSIX" : "zh_Hans_CN")
         formatter.dateFormat = "HH:mm"
         return formatter
-    }()
+    }
 
     /// 将 ISO 时间压缩成中文短日期；解析失败时返回 nil 交给调用方回退。
     static func shortDateTime(_ value: String) -> String? {
-        parseISODate(value).map { displayFormatter.string(from: $0) }
+        parseISODate(value).map { displayFormatter().string(from: $0) }
     }
 
     /// 格式化本地抓取时间，适合没有远端 monitored_at 时兜底。
     static func shortTime(_ value: Date) -> String {
-        timeFormatter.string(from: value)
+        timeFormatter().string(from: value)
     }
 
     /// 把雷达日期压成横轴标签；am/pm 后缀保留为早/晚，帮助区分同一天多次跑分。
@@ -560,9 +566,9 @@ private enum CodexRadarDateFormatter {
         }
         let suffix: String
         if parts.dropFirst(3).first == "am" {
-            suffix = "早"
+            suffix = AppLocalization.usesEnglish() ? " AM" : "早"
         } else if parts.dropFirst(3).first == "pm" {
-            suffix = "晚"
+            suffix = AppLocalization.usesEnglish() ? " PM" : "晚"
         } else {
             suffix = ""
         }

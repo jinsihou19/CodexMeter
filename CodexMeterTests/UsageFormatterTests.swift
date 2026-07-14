@@ -43,6 +43,25 @@ final class UsageFormatterTests: XCTestCase {
         XCTAssertEqual(formatter.resetRemainingText(window: nil, now: now), "--")
     }
 
+    /// 验证英文格式器使用英文倒计时和 Token 单位，不混入中文量词。
+    func testEnglishFormatterLocalizesDynamicValues() {
+        let formatter = UsageFormatter(
+            locale: Locale(identifier: "en_US_POSIX"),
+            timeZone: .gmt,
+            language: .english
+        )
+        let window = RateLimitWindow(
+            usedPercent: 40,
+            windowDurationMins: 300,
+            resetsAt: nil,
+            resetAfterSeconds: 9_290
+        )
+
+        XCTAssertEqual(formatter.resetRemainingText(window: window), "in 2h 34m")
+        XCTAssertEqual(formatter.tokenCount(1_860_000_000), "1.9B")
+        XCTAssertEqual(formatter.reasoningEffort("xhigh"), "Extra High")
+    }
+
     func testCreditsStatusCoversUnlimitedBalanceAndNoCredits() {
         let formatter = UsageFormatter(locale: Locale(identifier: "en_US_POSIX"), timeZone: .gmt)
 

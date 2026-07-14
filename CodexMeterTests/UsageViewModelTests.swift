@@ -11,17 +11,27 @@ final class UsageViewModelTests: XCTestCase {
             AppVersionDisplay.text(infoDictionary: [
                 "CFBundleShortVersionString": "1.0.1",
                 "CFBundleVersion": "2"
-            ]),
+            ], language: .chineseSimplified),
             "版本 1.0.1 (2)"
         )
         XCTAssertEqual(
-            AppVersionDisplay.text(infoDictionary: ["CFBundleShortVersionString": "1.0.1"]),
+            AppVersionDisplay.text(
+                infoDictionary: ["CFBundleShortVersionString": "1.0.1"],
+                language: .chineseSimplified
+            ),
             "版本 1.0.1"
+        )
+        XCTAssertEqual(
+            AppVersionDisplay.text(
+                infoDictionary: ["CFBundleShortVersionString": "1.0.1"],
+                language: .english
+            ),
+            "Version 1.0.1"
         )
     }
 
-    /// 验证设置侧栏常驻使用 Bundle 版本文案，而不是硬编码某次发布版本。
-    func testSettingsSidebarDisplaysCurrentAppVersion() throws {
+    /// 验证设置页使用七个稳定入口和原生分组控件，并把高级内容并入 Codex。
+    func testSettingsUsesSimplifiedNativeStructure() throws {
         let testFileURL = URL(fileURLWithPath: #filePath)
         let projectRoot = testFileURL
             .deletingLastPathComponent()
@@ -29,7 +39,154 @@ final class UsageViewModelTests: XCTestCase {
         let sourceURL = projectRoot.appendingPathComponent("CodexMeter/SettingsView.swift")
         let source = try String(contentsOf: sourceURL, encoding: .utf8)
 
-        XCTAssertTrue(source.contains("Text(AppVersionDisplay.text())"))
+        XCTAssertTrue(source.contains("List(selection:"))
+        XCTAssertTrue(source.contains(".formStyle(.grouped)"))
+        XCTAssertTrue(source.contains("DisclosureGroup(AppLocalization.string(\"更多选项\")"))
+        XCTAssertTrue(source.contains("DisclosureGroup(AppLocalization.string(\"连接详情\")"))
+        XCTAssertTrue(source.contains("case notifications"))
+        XCTAssertTrue(source.contains("private var notificationsPane: some View"))
+        XCTAssertTrue(source.contains("title: \"重置时播放彩带\""))
+        XCTAssertTrue(source.contains("title: \"播放彩带\""))
+        XCTAssertTrue(source.contains(".playUsageResetConfettiPreview"))
+        XCTAssertTrue(source.contains("title: \"语言\""))
+        XCTAssertFalse(source.contains("case advanced"))
+        XCTAssertFalse(source.contains("private var header:"))
+        XCTAssertFalse(source.contains("SettingsInfoRow(title: \"缓存文件\""))
+
+        let activityToggle = try XCTUnwrap(source.range(of: "title: \"显示活动指示\""))
+        let activityStyle = try XCTUnwrap(source.range(of: "title: \"活动样式\""))
+        let layoutSection = try XCTUnwrap(source.range(of: "Section(AppLocalization.string(\"布局\"))"))
+        XCTAssertLessThan(activityToggle.lowerBound, activityStyle.lowerBound)
+        XCTAssertLessThan(activityStyle.lowerBound, layoutSection.lowerBound)
+        XCTAssertTrue(source.contains("if showsHookActivityLight"))
+
+        let sidebarStart = try XCTUnwrap(source.range(of: "private var sidebar: some View"))
+        let sidebarEnd = try XCTUnwrap(source.range(of: "private var sidebarSelection"))
+        let sidebarSource = source[sidebarStart.lowerBound..<sidebarEnd.lowerBound]
+        XCTAssertTrue(sidebarSource.contains("Image(nsImage: settingsApplicationIcon)"))
+        XCTAssertTrue(sidebarSource.contains("Text(AppVersionDisplay.text())"))
+        XCTAssertTrue(sidebarSource.contains("selectedPane = .about"))
+
+        let menuBarStart = try XCTUnwrap(source.range(of: "private var menuBarPane: some View"))
+        let widgetStart = try XCTUnwrap(source.range(of: "private var widgetPane: some View"))
+        let popoverStart = try XCTUnwrap(source.range(of: "private var popoverPane: some View"))
+        let codexStart = try XCTUnwrap(source.range(of: "private var codexPane: some View"))
+        let codexEnd = try XCTUnwrap(source.range(of: "private var currentAppBehaviorSettings"))
+        let menuBarSource = source[menuBarStart.lowerBound..<widgetStart.lowerBound]
+        let widgetSource = source[widgetStart.lowerBound..<popoverStart.lowerBound]
+        let popoverSource = source[popoverStart.lowerBound..<codexStart.lowerBound]
+        let codexSource = source[codexStart.lowerBound..<codexEnd.lowerBound]
+
+        XCTAssertTrue(menuBarSource.contains("if contentMode == MenuBarContentMode.paceComparison.rawValue"))
+        XCTAssertTrue(menuBarSource.contains("title: \"工作日刻度线\""))
+        XCTAssertFalse(menuBarSource.contains("title: \"恢复菜单栏默认\""))
+        XCTAssertFalse(widgetSource.contains("title: \"恢复小组件默认\""))
+        XCTAssertFalse(popoverSource.contains("title: \"恢复下拉面板默认\""))
+        XCTAssertTrue(codexSource.contains("Section(AppLocalization.string(\"连接\"))"))
+        XCTAssertTrue(codexSource.contains("DisclosureGroup(AppLocalization.string(\"诊断与维护\")"))
+        XCTAssertFalse(codexSource.contains("Section(\"目录\")"))
+        XCTAssertFalse(codexSource.contains("Section(\"用量计算\")"))
+        XCTAssertFalse(codexSource.contains("title: \"恢复菜单栏默认\""))
+        XCTAssertFalse(codexSource.contains("title: \"恢复小组件默认\""))
+        XCTAssertFalse(codexSource.contains("title: \"恢复下拉面板默认\""))
+    }
+
+    /// 验证通知事件只在额度向下跨过阈值时触发，并优先把耗尽归为更明确的事件。
+    func testUsageNotificationEventsTriggerOnlyWhenCrossingDownward() {
+        let settings = UsageNotificationSettings(
+            notifiesWhenDepleted: true,
+            notifiesWhenLow: true,
+            lowRemainingThreshold: 10
+        )
+        let previous = RateLimitSnapshot(
+            limitId: "codex",
+            limitName: nil,
+            primary: RateLimitWindow(usedPercent: 80, windowDurationMins: 300, resetsAt: 2_000),
+            secondary: RateLimitWindow(usedPercent: 85, windowDurationMins: 10_080, resetsAt: 3_000),
+            credits: nil,
+            planType: nil,
+            rateLimitReachedType: nil
+        )
+        let current = RateLimitSnapshot(
+            limitId: "codex",
+            limitName: nil,
+            primary: RateLimitWindow(usedPercent: 90, windowDurationMins: 300, resetsAt: 2_000),
+            secondary: RateLimitWindow(usedPercent: 100, windowDurationMins: 10_080, resetsAt: 3_000),
+            credits: nil,
+            planType: nil,
+            rateLimitReachedType: nil
+        )
+
+        XCTAssertEqual(
+            UsageNotificationEventResolver.events(previous: previous, current: current, settings: settings),
+            [
+                .lowRemaining(windowTitle: "5 小时", remainingPercent: 10),
+                .depleted(windowTitle: "7 天")
+            ]
+        )
+        XCTAssertTrue(
+            UsageNotificationEventResolver.events(previous: current, current: previous, settings: settings).isEmpty
+        )
+    }
+
+    /// 验证彩带只在用量回落且重置边界前移时触发，并遵守短窗口与周窗口选项。
+    func testUsageResetCelebrationRequiresBoundaryAdvance() {
+        let previous = RateLimitSnapshot(
+            limitId: "codex",
+            limitName: nil,
+            primary: RateLimitWindow(usedPercent: 62, windowDurationMins: 300, resetsAt: 2_000),
+            secondary: RateLimitWindow(usedPercent: 48, windowDurationMins: 10_080, resetsAt: 3_000),
+            credits: nil,
+            planType: nil,
+            rateLimitReachedType: nil
+        )
+        let reset = RateLimitSnapshot(
+            limitId: "codex",
+            limitName: nil,
+            primary: RateLimitWindow(usedPercent: 1, windowDurationMins: 300, resetsAt: 4_000),
+            secondary: RateLimitWindow(usedPercent: 48, windowDurationMins: 10_080, resetsAt: 3_000),
+            credits: nil,
+            planType: nil,
+            rateLimitReachedType: nil
+        )
+        let transientDrop = RateLimitSnapshot(
+            limitId: "codex",
+            limitName: nil,
+            primary: RateLimitWindow(usedPercent: 0, windowDurationMins: 300, resetsAt: 2_000),
+            secondary: previous.secondary,
+            credits: nil,
+            planType: nil,
+            rateLimitReachedType: nil
+        )
+
+        XCTAssertTrue(
+            UsageResetCelebrationResolver.shouldCelebrate(previous: previous, current: reset, option: .session)
+        )
+        XCTAssertFalse(
+            UsageResetCelebrationResolver.shouldCelebrate(previous: previous, current: reset, option: .weekly)
+        )
+        XCTAssertFalse(
+            UsageResetCelebrationResolver.shouldCelebrate(previous: previous, current: transientDrop, option: .both)
+        )
+    }
+
+    /// 验证语言偏好能覆盖下一次启动使用的 AppleLanguages，并能恢复跟随系统。
+    func testAppLanguageAppliesAndClearsLaunchOverride() {
+        let suiteName = "UsageViewModelTests.AppLanguage.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        AppLanguage.english.apply(to: defaults)
+        XCTAssertEqual(defaults.stringArray(forKey: "AppleLanguages"), ["en"])
+        defaults.set(AppLanguage.english.rawValue, forKey: AppLanguagePreferenceKeys.selectedLanguage)
+        XCTAssertEqual(AppLocalization.string("通用", defaults: defaults), "General")
+
+        AppLanguage.system.apply(to: defaults)
+        XCTAssertNil(defaults.persistentDomain(forName: suiteName)?["AppleLanguages"])
+        XCTAssertEqual(AppLocalization.string("通用", language: .english), "General")
+        XCTAssertEqual(AppLocalization.string("正常", language: .english), "Normal")
+        XCTAssertEqual(AppLocalization.string("CodexMeter 设置", language: .english), "CodexMeter Settings")
+        XCTAssertEqual(AppLocalization.string("通用", language: .chineseSimplified), "通用")
     }
 
     /// 验证设置窗口提供独立“关于”页面，并在其中承载自动更新、手动检查与项目链接。
@@ -45,6 +202,31 @@ final class UsageViewModelTests: XCTestCase {
         XCTAssertTrue(source.contains("title: \"自动检查更新\""))
         XCTAssertTrue(source.contains("CheckForUpdatesView(updater: updater)"))
         XCTAssertTrue(source.contains("https://github.com/jinsihou19/CodexMeter"))
+
+        let aboutStart = try XCTUnwrap(source.range(of: "private var aboutPane: some View"))
+        let aboutEnd = try XCTUnwrap(source.range(of: "private var automaticallyChecksForUpdatesBinding"))
+        let aboutSource = source[aboutStart.lowerBound..<aboutEnd.lowerBound]
+        XCTAssertTrue(aboutSource.contains("ScrollView"))
+        XCTAssertTrue(aboutSource.contains("SettingsToggleRow("))
+        XCTAssertTrue(aboutSource.contains("subtitle: \"\""))
+        XCTAssertFalse(aboutSource.contains("subtitle: automaticUpdateHelpText"))
+        XCTAssertFalse(aboutSource.contains("Form {"))
+    }
+
+    /// 验证发现新版后，下拉面板底部提供更新按钮，用户主动点击才唤起更新界面。
+    func testMenuBarFooterIncludesDeferredUpdateButton() throws {
+        let testFileURL = URL(fileURLWithPath: #filePath)
+        let projectRoot = testFileURL
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        let source = try String(
+            contentsOf: projectRoot.appendingPathComponent("CodexMeter/MenuBarView.swift"),
+            encoding: .utf8
+        )
+
+        XCTAssertTrue(source.contains("if updater.isUpdateAvailable"))
+        XCTAssertTrue(source.contains("updater.showAvailableUpdate()"))
+        XCTAssertTrue(source.contains("Label(AppLocalization.string(\"更新\")"))
     }
 
     func testSettingsWindowPresenterCreatesAndReusesSettingsWindow() {
@@ -522,22 +704,6 @@ final class UsageViewModelTests: XCTestCase {
         wait(for: [expectation], timeout: 1)
     }
 
-    func testSettingsResetActionRemainsVisibleAtDefaults() {
-        let defaultState = SettingsResetActionState(settings: MenuBarDisplaySettings())
-        let customState = SettingsResetActionState(settings: MenuBarDisplaySettings(numberFontSize: 11))
-        let customLightState = SettingsResetActionState(settings: MenuBarDisplaySettings(showsHookActivityLight: false))
-        let customStyleState = SettingsResetActionState(settings: MenuBarDisplaySettings(
-            hookActivityIndicatorStyle: .fanHead
-        ))
-
-        XCTAssertTrue(defaultState.isVisible)
-        XCTAssertFalse(defaultState.isEnabled)
-        XCTAssertTrue(customState.isVisible)
-        XCTAssertTrue(customState.isEnabled)
-        XCTAssertTrue(customLightState.isEnabled)
-        XCTAssertTrue(customStyleState.isEnabled)
-    }
-
     func testWidgetDisplayUsesMenuBarDisplaySettings() {
         let snapshot = UsageSnapshot(
             fetchedAt: Date(timeIntervalSince1970: 1_779_940_000),
@@ -569,6 +735,20 @@ final class UsageViewModelTests: XCTestCase {
         XCTAssertEqual(display.lines.first?.resetText, "2 小时 34 分后")
         XCTAssertEqual(display.lines.first?.tone, .warning)
         XCTAssertEqual(settings.colorHex(for: display.lines.first?.tone ?? .unavailable), "#FFB000")
+
+        let englishDisplay = CodexMeterWidgetDisplay(
+            snapshot: snapshot,
+            settings: settings,
+            formatter: UsageFormatter(
+                locale: Locale(identifier: "en_US_POSIX"),
+                timeZone: .gmt,
+                language: .english
+            ),
+            language: .english,
+            now: Date(timeIntervalSince1970: 1_779_940_000)
+        )
+        XCTAssertEqual(englishDisplay.lines.map(\.title), ["5 Hours"])
+        XCTAssertEqual(englishDisplay.lines.first?.resetText, "in 2h 34m")
     }
 
     func testWidgetDisplayCanOverrideMenuBarWindowSelectionAndHideResetTime() {
@@ -669,6 +849,16 @@ final class UsageViewModelTests: XCTestCase {
         XCTAssertNil(MenuBarDisplayPreset.matchingPreset(for: custom))
     }
 
+    /// 验证简化后的布局选择能映射现有预设，并把其他历史配置安全显示为自定义。
+    func testMenuBarLayoutChoiceMapsExistingSettingsWithoutMigration() {
+        XCTAssertEqual(MenuBarLayoutChoice.matching(settings: MenuBarDisplayPreset.compact.settings), .compact)
+        XCTAssertEqual(MenuBarLayoutChoice.matching(settings: MenuBarDisplayPreset.balanced.settings), .standard)
+        XCTAssertEqual(MenuBarLayoutChoice.matching(settings: MenuBarDisplayPreset.relaxed.settings), .custom)
+        XCTAssertEqual(MenuBarLayoutChoice.compact.preset, .compact)
+        XCTAssertEqual(MenuBarLayoutChoice.standard.preset, .balanced)
+        XCTAssertNil(MenuBarLayoutChoice.custom.preset)
+    }
+
     func testMenuBarColorPresetAppliesHighContrastColors() {
         let highContrast = MenuBarColorPreset.highContrast.colors
 
@@ -700,21 +890,13 @@ final class UsageViewModelTests: XCTestCase {
         )
     }
 
-    func testSettingsPanelLayoutUsesSingleAlignedColumn() {
-        XCTAssertTrue(SettingsPanelLayout.usesSingleContentColumn)
-        XCTAssertFalse(SettingsPanelLayout.usesTrailingFooterAction)
-        XCTAssertEqual(SettingsPanelLayout.previewAppearanceColumns, 3)
-        XCTAssertEqual(SettingsPanelLayout.displayPresetColumns, 3)
-        XCTAssertEqual(SettingsPanelLayout.colorPresetColumns, 3)
-        XCTAssertEqual(SettingsPanelLayout.sectionSpacing, 10)
-        XCTAssertEqual(SettingsPanelLayout.sectionContentPadding, 10)
+    /// 验证设置窗口采用适合原生侧栏与分组表单的稳定尺寸。
+    func testSettingsPanelLayoutUsesNativeWindowSizing() {
+        XCTAssertEqual(SettingsPanelLayout.windowWidth, 880)
+        XCTAssertEqual(SettingsPanelLayout.windowHeight, 620)
+        XCTAssertEqual(SettingsPanelLayout.sidebarWidth, 190)
         XCTAssertEqual(SettingsPanelLayout.cardSpacing, 8)
-        XCTAssertFalse(SettingsPanelLayout.previewUsesContentFrame)
         XCTAssertEqual(SettingsPanelLayout.previewChipVerticalPadding, 9)
-        XCTAssertEqual(SettingsPanelLayout.presetCardMinimumHeight, 32)
-        XCTAssertEqual(SettingsPanelLayout.presetCardVerticalPadding, 6)
-        XCTAssertEqual(SettingsPanelLayout.contentMaxWidth, 720)
-        XCTAssertEqual(SettingsPanelLayout.sidebarWidth, 148)
     }
 
     func testCodexConfigurationInfoHidesAuthSnapshotAndRecentDetails() throws {
@@ -747,8 +929,13 @@ final class UsageViewModelTests: XCTestCase {
         XCTAssertFalse(displayText.contains("App Group"))
     }
 
+    /// 验证默认客户端类型时注入隔离存储，避免单元测试读取用户正在写入的真实快照。
     func testDefaultClientUsesDirectUsageClientOnly() {
-        let viewModel = UsageViewModel()
+        let viewModel = UsageViewModel(store: UsageSnapshotStore(
+            appGroupIdentifier: "",
+            fallbackDirectory: FileManager.default.temporaryDirectory
+                .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        ))
 
         let client = Mirror(reflecting: viewModel).children.first { child in
             child.label == "client"
@@ -1173,6 +1360,7 @@ final class UsageViewModelTests: XCTestCase {
         XCTAssertEqual(display?.valueText, "98% · -10%")
         XCTAssertEqual(display?.compactValueText, "98%·-10%")
         XCTAssertEqual(display?.detailText, "有余量 10% · 可持续到重置")
+        XCTAssertEqual(display?.detailText(language: .english), "10% headroom · Lasts until reset")
         XCTAssertEqual(display?.tone, .good)
     }
 

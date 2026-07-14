@@ -117,16 +117,22 @@ public struct RateLimitWindow: Codable, Equatable, Sendable {
 
     /// 按接口返回的实际窗口时长生成中文标题，未返回时长时使用通用名称。
     public var durationLabel: String {
+        localizedDurationLabel(language: .chineseSimplified)
+    }
+
+    /// 按指定应用语言生成窗口标题；英文使用紧凑的 hour/day 单位。
+    public func localizedDurationLabel(language: AppLanguage) -> String {
+        let english = AppLocalization.usesEnglish(language: language)
         guard let minutes = windowDurationMins, minutes > 0 else {
-            return "用量窗口"
+            return english ? "Usage Window" : "用量窗口"
         }
         if minutes % 1_440 == 0 {
-            return "\(minutes / 1_440) 天"
+            return english ? "\(minutes / 1_440) Days" : "\(minutes / 1_440) 天"
         }
         if minutes % 60 == 0 {
-            return "\(minutes / 60) 小时"
+            return english ? "\(minutes / 60) Hours" : "\(minutes / 60) 小时"
         }
-        return "\(minutes) 分钟"
+        return english ? "\(minutes) Minutes" : "\(minutes) 分钟"
     }
 
     /// 生成适合状态栏窄宽度的实际窗口时长标签。
@@ -461,15 +467,20 @@ public struct ResetCreditSnapshot: Codable, Equatable, Sendable {
     }
 
     public var localizedStatus: String {
+        localizedStatus(language: .chineseSimplified)
+    }
+
+    /// 按指定应用语言返回重置卡状态，未知服务端值保持原样。
+    public func localizedStatus(language: AppLanguage) -> String {
         switch status.lowercased() {
         case "available", "active":
-            return "可用"
+            return AppLocalization.string("可用", language: language)
         case "used", "consumed":
-            return "已使用"
+            return AppLocalization.string("已使用", language: language)
         case "expired":
-            return "已过期"
+            return AppLocalization.string("已过期", language: language)
         default:
-            return status.isEmpty ? "未知" : status
+            return status.isEmpty ? AppLocalization.string("未知", language: language) : status
         }
     }
 

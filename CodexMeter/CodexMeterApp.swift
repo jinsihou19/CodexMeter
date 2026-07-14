@@ -1,6 +1,7 @@
 import AppKit
 import Combine
 import CodexMeterShared
+import QuartzCore
 import Sparkle
 import SwiftUI
 
@@ -19,19 +20,162 @@ enum CodexMeterMain {
     }
 }
 
+/// 在每块屏幕上展示不抢焦点、可穿透点击的原生彩带粒子层。
+@MainActor
+final class ScreenConfettiOverlayController {
+    private var panels: [NSPanel] = []
+    private var dismissalTask: Task<Void, Never>?
+
+    /// 播放一次全屏彩带；已有动画尚未结束时忽略重复触发。
+    func play() {
+        guard panels.isEmpty else { return }
+        panels = NSScreen.screens.map { screen in
+            let panel = ConfettiOverlayPanel(
+                contentRect: screen.frame,
+                styleMask: [.borderless, .nonactivatingPanel],
+                backing: .buffered,
+                defer: false,
+                screen: screen
+            )
+            panel.contentView = ConfettiEmitterView(
+                frame: NSRect(origin: .zero, size: screen.frame.size)
+            )
+            panel.level = .statusBar
+            panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .ignoresCycle, .stationary]
+            panel.backgroundColor = .clear
+            panel.isOpaque = false
+            panel.hasShadow = false
+            panel.ignoresMouseEvents = true
+            panel.isReleasedWhenClosed = false
+            return panel
+        }
+        panels.forEach { $0.orderFrontRegardless() }
+        dismissalTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .seconds(5))
+            self?.dismiss()
+        }
+    }
+
+    /// 关闭所有屏幕上的覆盖层并释放粒子视图。
+    func dismiss() {
+        dismissalTask?.cancel()
+        dismissalTask = nil
+        panels.forEach {
+            $0.orderOut(nil)
+            $0.close()
+        }
+        panels.removeAll()
+    }
+}
+
+/// 彩带覆盖面板永不成为主窗口，避免预览时打断键盘输入。
+private final class ConfettiOverlayPanel: NSPanel {
+    override var canBecomeKey: Bool { false }
+    override var canBecomeMain: Bool { false }
+}
+
+/// 使用 Core Animation 自带粒子发射器绘制彩带，不引入额外动画依赖。
+private final class ConfettiEmitterView: NSView {
+    private let emitter = CAEmitterLayer()
+
+    /// 创建透明粒子视图并立即准备短促喷发。
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        wantsLayer = true
+        layer?.backgroundColor = NSColor.clear.cgColor
+        configureEmitter()
+    }
+
+    /// 该视图只由代码创建，不支持归档恢复。
+    required init?(coder: NSCoder) {
+        nil
+    }
+
+    /// 屏幕尺寸变化时让发射线始终覆盖屏幕顶部。
+    override func layout() {
+        super.layout()
+        emitter.frame = bounds
+        emitter.emitterPosition = CGPoint(x: bounds.midX, y: bounds.maxY + 8)
+        emitter.emitterSize = CGSize(width: bounds.width, height: 1)
+    }
+
+    /// 配置一次短促喷发，粒子随后依靠重力自然飘落。
+    private func configureEmitter() {
+        emitter.emitterShape = .line
+        emitter.emitterMode = .surface
+        emitter.renderMode = .unordered
+        emitter.emitterCells = [
+            NSColor.systemRed,
+            .systemOrange,
+            .systemYellow,
+            .systemGreen,
+            .systemBlue,
+            .systemPurple
+        ].map(Self.makeCell(color:))
+        layer?.addSublayer(emitter)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.45) { [weak emitter] in
+            emitter?.birthRate = 0
+        }
+    }
+
+    /// 为指定颜色创建一类矩形彩带粒子。
+    private static func makeCell(color: NSColor) -> CAEmitterCell {
+        let cell = CAEmitterCell()
+        cell.contents = particleImage
+        cell.color = color.cgColor
+        cell.birthRate = 22
+        cell.lifetime = 4.5
+        cell.lifetimeRange = 0.8
+        cell.velocity = 170
+        cell.velocityRange = 90
+        cell.emissionLongitude = -.pi / 2
+        cell.emissionRange = .pi / 5
+        cell.yAcceleration = -120
+        cell.spin = 4
+        cell.spinRange = 8
+        cell.scale = 0.7
+        cell.scaleRange = 0.35
+        return cell
+    }
+
+    /// 生成可由粒子颜色着色的白色圆角矩形位图。
+    private static let particleImage: CGImage? = {
+        let image = NSImage(size: NSSize(width: 10, height: 18))
+        image.lockFocus()
+        NSColor.white.setFill()
+        NSBezierPath(roundedRect: NSRect(x: 0, y: 0, width: 10, height: 18), xRadius: 2, yRadius: 2).fill()
+        image.unlockFocus()
+        return image.cgImage(forProposedRect: nil, context: nil, hints: nil)
+    }()
+}
+
 /// 应用委托负责组装用量、雷达、菜单栏和设置窗口等长期存活对象。
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private var viewModel: UsageViewModel?
     private var radarStore: CodexRadarStore?
     private var statusBarController: StatusBarController?
+    private let confettiOverlayController = ScreenConfettiOverlayController()
+    private lazy var usageNotificationController = UsageNotificationController { [weak self] in
+        self?.confettiOverlayController.play()
+    }
     private let updater = AppUpdater.shared
     private let settingsWindowOpener = SettingsWindowOpener()
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         MenuBarDisplaySettings.migrateStandardDefaultsToSharedDefaults()
         MenuBarDisplaySettings.migrateLegacyDisplayDefaults()
-        let viewModel = UsageViewModel()
+        updater.start()
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(playConfettiPreview),
+            name: .playUsageResetConfettiPreview,
+            object: nil
+        )
+        let viewModel = UsageViewModel(processUsageNotifications: { [usageNotificationController] snapshot in
+            usageNotificationController.process(snapshot)
+        })
+        usageNotificationController.seed(with: viewModel.snapshot)
         let radarStore = CodexRadarStore()
         self.viewModel = viewModel
         self.radarStore = radarStore
@@ -41,6 +185,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if AppBehaviorSettings(defaults: MenuBarDisplaySettings.sharedDefaults).opensSettingsAtLaunch {
             settingsWindowOpener.open()
         }
+    }
+
+    /// 响应设置页临时预览按钮，不读取或改写正式庆祝偏好。
+    @objc private func playConfettiPreview() {
+        confettiOverlayController.play()
     }
 
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
@@ -196,7 +345,11 @@ final class StatusBarController: NSObject {
 
     private func makePopoverContentController() -> NSViewController {
         let controller = NSHostingController(
-            rootView: MenuBarView(viewModel: viewModel, radarStore: radarStore) { [weak self] size in
+            rootView: MenuBarView(
+                viewModel: viewModel,
+                radarStore: radarStore,
+                updater: AppUpdater.shared
+            ) { [weak self] size in
                 self?.updatePopoverSize(for: size)
             }
         )

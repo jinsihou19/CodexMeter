@@ -34,15 +34,28 @@ private enum TokenActivityMode: String, CaseIterable, Identifiable {
     }
 }
 
+/// 从共享偏好解析当前应用语言，供下拉面板中的独立子视图复用。
+private func currentAppLanguage() -> AppLanguage {
+    AppLanguage(
+        rawValue: MenuBarDisplaySettings.sharedDefaults.string(
+            forKey: AppLanguagePreferenceKeys.selectedLanguage
+        ) ?? ""
+    ) ?? .system
+}
+
 struct MenuBarView: View {
     @ObservedObject var viewModel: UsageViewModel
     @ObservedObject var radarStore: CodexRadarStore
+    @ObservedObject var updater: AppUpdater
     let onSizeChange: ((CGSize) -> Void)?
     @State private var activityMode = TokenActivityMode.daily
     @State private var measuredScrollContentHeight: CGFloat = 0
     @State private var usesScrollableContent = false
     @State private var activePaceHelpText: String?
-    private let formatter = UsageFormatter()
+    @AppStorage(AppLanguagePreferenceKeys.selectedLanguage, store: MenuBarDisplaySettings.sharedDefaults) private var selectedLanguage = AppLanguage.system.rawValue
+    private var formatter: UsageFormatter {
+        UsageFormatter(language: currentAppLanguage())
+    }
     private var settings: MenuBarDisplaySettings {
         MenuBarDisplaySettings(defaults: MenuBarDisplaySettings.sharedDefaults)
     }
@@ -56,10 +69,12 @@ struct MenuBarView: View {
     init(
         viewModel: UsageViewModel,
         radarStore: CodexRadarStore,
+        updater: AppUpdater = .shared,
         onSizeChange: ((CGSize) -> Void)? = nil
     ) {
         self.viewModel = viewModel
         self.radarStore = radarStore
+        self.updater = updater
         self.onSizeChange = onSizeChange
     }
 
@@ -70,7 +85,9 @@ struct MenuBarView: View {
     /// 将弹窗内容包在全局外观层中，确保设置页的明暗和透明度立即影响下拉框。
     @ViewBuilder private var themedBody: some View {
         let activeAppearance = appearanceSettings
+        let language = AppLanguage(rawValue: selectedLanguage) ?? .system
         let baseContent = contentBody
+            .environment(\.locale, language.locale)
             .background(
                 PopoverSurfaceBackground(
                     appearanceMode: activeAppearance.appearanceMode,
@@ -101,14 +118,32 @@ struct MenuBarView: View {
                 Button {
                     Task { await viewModel.refresh() }
                 } label: {
-                    Label("刷新", systemImage: "arrow.clockwise")
+                    Label(AppLocalization.string("刷新"), systemImage: "arrow.clockwise")
                 }
                 .disabled(viewModel.isRefreshing)
 
                 Button {
                     SettingsWindowPresenter.shared.show()
                 } label: {
-                    Label("设置", systemImage: "gearshape")
+                    Label(AppLocalization.string("设置"), systemImage: "gearshape")
+                }
+
+                Spacer()
+
+                if updater.isUpdateAvailable {
+                    Button {
+                        updater.showAvailableUpdate()
+                    } label: {
+                        Label(AppLocalization.string("更新"), systemImage: "arrow.down.circle.fill")
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.regular)
+                    .help(updater.availableVersion.map {
+                        AppLocalization.usesEnglish()
+                            ? "Install CodexMeter \($0)"
+                            : "安装 CodexMeter \($0)"
+                    } ?? AppLocalization.string("安装 CodexMeter 新版本"))
+                    .accessibilityLabel(AppLocalization.string("更新 CodexMeter"))
                 }
 
                 Spacer()
@@ -116,7 +151,7 @@ struct MenuBarView: View {
                 Button {
                     NSApplication.shared.terminate(nil)
                 } label: {
-                    Label("退出", systemImage: "power")
+                    Label(AppLocalization.string("退出"), systemImage: "power")
                 }
             }
         }
@@ -302,7 +337,7 @@ struct MenuBarView: View {
             if let snapshot = viewModel.snapshot {
                 usageContent(snapshot)
             } else {
-                ContentUnavailableView("暂无用量数据", systemImage: "clock")
+                ContentUnavailableView(AppLocalization.string("暂无用量数据"), systemImage: "clock")
                     .frame(width: 320)
                     .padding(.vertical, 24)
             }
@@ -402,11 +437,12 @@ private struct QuotaSummaryGrid: View {
 
     /// 用接口的实际时长生成额度卡，避免把主次窗口误当成固定的 5 小时和 7 天。
     private func quotaCard(id: String, window: RateLimitWindow) -> some View {
-        QuotaSummaryCard(
-            title: window.durationLabel,
-            display: UsageMetricDisplay(title: window.durationLabel, window: window),
+        let title = window.localizedDurationLabel(language: currentAppLanguage())
+        return QuotaSummaryCard(
+            title: title,
+            display: UsageMetricDisplay(title: title, window: window, language: currentAppLanguage()),
             resetText: resetText(for: window),
-            paceDisplay: paceDisplay(id: id, title: window.durationLabel, window: window),
+            paceDisplay: paceDisplay(id: id, title: title, window: window),
             tone: UsageRemainingTone(remainingPercent: window.remainingPercent),
             settings: settings,
             workdayMarkers: weeklyWorkdayMarkerPercents(
@@ -452,9 +488,11 @@ private struct QuotaSummaryGrid: View {
         return ProgressPaceMarker(
             percent: 100 - pace.expectedUsedPercent,
             color: pace.deltaPercent <= 0 ? .green : .red,
-            helpText: pace.deltaPercent <= 0
-                ? "绿色线：按当前时间进度推算的理论剩余位置；绿色表示实际用得比理论慢，有余量。"
-                : "红色线：按当前时间进度推算的理论剩余位置；红色表示实际用得比理论快，可能提前耗尽。"
+            helpText: AppLocalization.string(
+                pace.deltaPercent <= 0
+                    ? "绿色线：按当前时间进度推算的理论剩余位置；绿色表示实际用得比理论慢，有余量。"
+                    : "红色线：按当前时间进度推算的理论剩余位置；红色表示实际用得比理论快，可能提前耗尽。"
+            )
         )
     }
 
@@ -510,11 +548,11 @@ private struct QuotaSummaryCard: View {
             )
 
             HStack(spacing: 4) {
-                Text(display.usedText.replacingOccurrences(of: "已用 ", with: "用 "))
+                Text(usedText)
                     .lineLimit(1)
                     .minimumScaleFactor(0.82)
                 Spacer(minLength: 4)
-                Text("重置 \(resetText)")
+                Text("\(AppLocalization.string("重置")) \(resetText)")
                     .lineLimit(1)
                     .minimumScaleFactor(0.82)
             }
@@ -528,16 +566,24 @@ private struct QuotaSummaryCard: View {
         .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
     }
 
+    /// 将共享用量文案压缩为卡片底部短标签，并按当前语言切换前缀。
+    private var usedText: String {
+        if AppLocalization.usesEnglish() {
+            return display.usedText
+        }
+        return display.usedText.replacingOccurrences(of: "已用 ", with: "用 ")
+    }
+
     /// 在剩余额度下方展示完整 Pace 说明，让“有余量/偏快”和持续时间保持在同一行可读。
     @ViewBuilder private var paceDetailRow: some View {
         if let paceDisplay {
-            Text(paceDisplay.detailText)
+            Text(paceDisplay.detailText(language: currentAppLanguage()))
                 .font(.caption2.weight(.semibold))
                 .foregroundStyle(paceDisplay.tone.statusBarColor(settings: settings))
                 .lineLimit(1)
                 .minimumScaleFactor(0.68)
                 .frame(maxWidth: .infinity, alignment: .trailing)
-                .help(paceDisplay.detailText)
+                .help(paceDisplay.detailText(language: currentAppLanguage()))
         }
     }
 }
@@ -590,7 +636,7 @@ private struct WorkdayMarkedProgressView: View {
             drawProgress(context: &context, size: size)
         }
             .frame(height: 6)
-            .accessibilityLabel("用量进度")
+            .accessibilityLabel(AppLocalization.string("用量进度"))
             .accessibilityValue("\(Int(min(max(value, 0), 100)))%")
     }
 
@@ -723,7 +769,7 @@ private struct SectionTitle: View {
     }
 
     var body: some View {
-        Text(title)
+        Text(AppLocalization.string(title))
             .font(.caption.weight(.semibold))
             .foregroundStyle(.secondary)
     }
@@ -734,7 +780,7 @@ private struct PaceComparisonSection: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Label("用量速度", systemImage: "speedometer")
+            Label(AppLocalization.string("用量速度"), systemImage: "speedometer")
                 .foregroundStyle(.secondary)
             ForEach(displays) { paceDisplay in
                 PaceComparisonLine(display: paceDisplay)
@@ -762,7 +808,7 @@ private struct PaceComparisonLine: View {
                 .monospacedDigit()
                 .foregroundStyle(display.display.tone.statusBarColor(settings: settings))
             Spacer(minLength: 6)
-            Text(display.display.detailText)
+            Text(display.display.detailText(language: currentAppLanguage()))
                 .lineLimit(1)
                 .minimumScaleFactor(0.8)
                 .foregroundStyle(.secondary)
@@ -790,10 +836,10 @@ private struct AdditionalRateLimitView: View {
 
     /// 按额外额度的实际窗口时长生成卡片，并跳过接口未返回的窗口。
     private func quotaCard(window: RateLimitWindow) -> some View {
-        let title = "\(displayName) \(window.durationLabel)"
+        let title = "\(displayName) \(window.localizedDurationLabel(language: currentAppLanguage()))"
         return QuotaSummaryCard(
             title: title,
-            display: UsageMetricDisplay(title: title, window: window),
+            display: UsageMetricDisplay(title: title, window: window, language: currentAppLanguage()),
             resetText: resetText(for: window),
             paceDisplay: nil,
             tone: UsageRemainingTone(remainingPercent: window.remainingPercent),
@@ -834,9 +880,11 @@ private struct AdditionalRateLimitView: View {
         return ProgressPaceMarker(
             percent: 100 - pace.expectedUsedPercent,
             color: pace.deltaPercent <= 0 ? .green : .red,
-            helpText: pace.deltaPercent <= 0
-                ? "绿色线：按当前时间进度推算的理论剩余位置；绿色表示实际用得比理论慢，有余量。"
-                : "红色线：按当前时间进度推算的理论剩余位置；红色表示实际用得比理论快，可能提前耗尽。"
+            helpText: AppLocalization.string(
+                pace.deltaPercent <= 0
+                    ? "绿色线：按当前时间进度推算的理论剩余位置；绿色表示实际用得比理论慢，有余量。"
+                    : "红色线：按当前时间进度推算的理论剩余位置；红色表示实际用得比理论快，可能提前耗尽。"
+            )
         )
     }
 
@@ -856,11 +904,11 @@ private struct ResetCreditsSection: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 6) {
-                Label("额度重置卡", systemImage: "creditcard")
+                Label(AppLocalization.string("额度重置卡"), systemImage: "creditcard")
                     .foregroundStyle(.secondary)
                 Spacer()
                 if let snapshot {
-                    Text("\(snapshot.availableCount) 张可用")
+                    Text(availableCountText(snapshot.availableCount))
                         .font(.caption.monospacedDigit().weight(.semibold))
                 }
                 if isRefreshing {
@@ -873,7 +921,7 @@ private struct ResetCreditsSection: View {
 
             if let snapshot {
                 if snapshot.creditsSortedByExpiration.isEmpty {
-                    Text("暂无到期明细")
+                    Text(AppLocalization.string("暂无到期明细"))
                         .font(.caption2)
                         .foregroundStyle(.secondary)
                 } else {
@@ -882,7 +930,7 @@ private struct ResetCreditsSection: View {
                     }
                 }
             } else {
-                Text(isRefreshing ? "正在读取重置卡..." : "暂无重置卡信息")
+                Text(AppLocalization.string(isRefreshing ? "正在读取重置卡..." : "暂无重置卡信息"))
                     .font(.caption2)
                     .foregroundStyle(.secondary)
             }
@@ -900,8 +948,13 @@ private struct ResetCreditsSection: View {
         .buttonStyle(.plain)
         .imageScale(.small)
         .disabled(isRefreshing)
-        .help("刷新额度重置卡")
-        .accessibilityLabel("刷新额度重置卡")
+        .help(AppLocalization.string("刷新额度重置卡"))
+        .accessibilityLabel(AppLocalization.string("刷新额度重置卡"))
+    }
+
+    /// 格式化可用重置卡数量，英文不沿用中文量词。
+    private func availableCountText(_ count: Int) -> String {
+        AppLocalization.usesEnglish() ? "\(count) available" : "\(count) 张可用"
     }
 }
 
@@ -917,7 +970,7 @@ private struct ResetCreditRow: View {
                 .font(.caption2.monospacedDigit().weight(.semibold))
                 .foregroundStyle(.secondary)
                 .frame(width: 24, alignment: .leading)
-            Text(credit.localizedStatus)
+            Text(credit.localizedStatus(language: currentAppLanguage()))
                 .font(.caption2.weight(.medium))
                 .foregroundStyle(statusColor)
                 .frame(width: 42, alignment: .leading)
@@ -995,8 +1048,12 @@ private struct ProfileStatsSection: View {
     }
 
     private var streakText: String {
-        let current = stats.currentStreakDays.map { "\($0) 天" } ?? "--"
-        let longest = stats.longestStreakDays.map { "\($0) 天最长" }
+        let current = stats.currentStreakDays.map {
+            AppLocalization.usesEnglish() ? "\($0) days" : "\($0) 天"
+        } ?? "--"
+        let longest = stats.longestStreakDays.map {
+            AppLocalization.usesEnglish() ? "\($0) days longest" : "\($0) 天最长"
+        }
         return [current, longest].compactMap(\.self).joined(separator: " · ")
     }
 }
@@ -1007,7 +1064,7 @@ private struct ProfileMetric: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 1) {
-            Text(title)
+            Text(AppLocalization.string(title))
                 .font(.caption2)
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
@@ -1029,12 +1086,12 @@ private struct TokenActivitySection: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             HStack {
-                Text("Token 活动")
+                Text(AppLocalization.string("Token 活动"))
                     .font(.caption.weight(.semibold))
                 Spacer()
                 Picker("", selection: $activityMode) {
                     ForEach(TokenActivityMode.allCases) { mode in
-                        Text(mode.title).tag(mode)
+                        Text(AppLocalization.string(mode.title)).tag(mode)
                     }
                 }
                 .labelsHidden()
@@ -1062,7 +1119,7 @@ private struct TokenActivitySummary: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 2) {
-            Text(title)
+            Text(AppLocalization.string(title))
                 .font(.caption2)
                 .foregroundStyle(.secondary)
             Text(value)
@@ -1174,7 +1231,11 @@ private struct TopInvocationsSection: View {
                     Text(invocation.displayName)
                         .lineLimit(1)
                     Spacer()
-                    Text("\(invocation.usageCount) 次")
+                    Text(
+                        AppLocalization.usesEnglish()
+                            ? "\(invocation.usageCount) uses"
+                            : "\(invocation.usageCount) 次"
+                    )
                         .font(.caption.monospacedDigit())
                         .foregroundStyle(.secondary)
                 }
@@ -1211,9 +1272,9 @@ private struct DetailChip: View {
 
     var body: some View {
         HStack(spacing: 4) {
-            Text(title)
+            Text(AppLocalization.string(title))
                 .foregroundStyle(.secondary)
-            Text(value)
+            Text(AppLocalization.string(value))
                 .lineLimit(1)
                 .minimumScaleFactor(0.72)
         }
@@ -1228,10 +1289,10 @@ private struct InfoRow: View {
 
     var body: some View {
         HStack(alignment: .firstTextBaseline) {
-            Text(title)
+            Text(AppLocalization.string(title))
                 .foregroundStyle(.secondary)
             Spacer()
-            Text(value)
+            Text(AppLocalization.string(value))
                 .multilineTextAlignment(.trailing)
         }
         .font(.caption)

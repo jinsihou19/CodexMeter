@@ -11,6 +11,8 @@ final class UsageModelsTests: XCTestCase {
         XCTAssertEqual(hourly.compactDurationLabel, "3h")
         XCTAssertEqual(daily.durationLabel, "30 天")
         XCTAssertEqual(daily.compactDurationLabel, "30d")
+        XCTAssertEqual(hourly.localizedDurationLabel(language: .english), "3 Hours")
+        XCTAssertEqual(daily.localizedDurationLabel(language: .english), "30 Days")
     }
 
     func testRemainingPercentClampsUsedPercentIntoDisplayRange() {

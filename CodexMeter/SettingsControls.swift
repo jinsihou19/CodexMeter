@@ -1,58 +1,6 @@
 import CodexMeterShared
 import SwiftUI
 
-struct SettingsPresetCard: View {
-    let title: String
-    let subtitle: String
-    let systemImage: String
-    let isSelected: Bool
-    let action: () -> Void
-
-    var body: some View {
-        Button(action: action) {
-            HStack(spacing: 10) {
-                Image(systemName: systemImage)
-                    .font(.system(size: 14, weight: .medium))
-                    .foregroundStyle(.tint)
-                    .frame(width: 20)
-
-                Text(title)
-                    .font(.callout.weight(.medium))
-                    .foregroundStyle(.primary)
-                    .lineLimit(1)
-
-                SettingsHelpButton(text: subtitle, accessibilityLabel: "\(title)说明")
-
-                Spacer(minLength: 8)
-
-                if isSelected {
-                    Image(systemName: "checkmark.circle.fill")
-                        .font(.system(size: 13, weight: .semibold))
-                        .foregroundStyle(Color.accentColor)
-                }
-            }
-            .frame(maxWidth: .infinity, minHeight: SettingsPanelLayout.presetCardMinimumHeight)
-            .padding(.horizontal, 10)
-            .padding(.vertical, SettingsPanelLayout.presetCardVerticalPadding)
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .help(subtitle)
-        .frame(maxWidth: .infinity)
-        .background(
-            Color.accentColor.opacity(isSelected ? 0.10 : 0)
-                .overlay(Color(nsColor: .windowBackgroundColor).opacity(isSelected ? 0.58 : 0.72))
-        )
-        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .stroke(isSelected ? Color.accentColor.opacity(0.72) : Color.primary.opacity(0.08), lineWidth: 1)
-        )
-        .accessibilityLabel("\(title)，\(subtitle)")
-        .accessibilityValue(isSelected ? "已选中" : "")
-    }
-}
-
 struct DensitySettingRow: View {
     @Binding var layoutDensity: String
 
@@ -61,7 +9,7 @@ struct DensitySettingRow: View {
             SettingsInlineTitle(title: "显示密度", detail: "切换菜单栏项目在紧凑和常规布局之间的显示节奏。")
             Picker("", selection: $layoutDensity) {
                 ForEach(MenuBarLayoutDensity.allCases) { density in
-                    Text(density.title).tag(density.rawValue)
+                    Text(AppLocalization.string(density.title)).tag(density.rawValue)
                 }
             }
             .labelsHidden()
@@ -131,19 +79,16 @@ struct ColorHexPicker: View {
     }
 }
 
-/// 自定义设置控件左侧标题，保证滑杆、分段选择和颜色选择也有统一说明入口。
+/// 自定义设置控件左侧标题；详细范围由控件数值本身表达，避免每行重复说明按钮。
 private struct SettingsInlineTitle: View {
     let title: String
     let detail: String
 
     var body: some View {
-        HStack(spacing: 8) {
-            Text(title)
-                .font(.callout.weight(.medium))
-                .lineLimit(1)
-
-            SettingsHelpButton(text: detail, accessibilityLabel: "\(title)说明")
-        }
+        Text(AppLocalization.string(title))
+            .font(.callout.weight(.medium))
+            .lineLimit(1)
+            .help(AppLocalization.string(detail))
         .frame(width: 118, alignment: .leading)
     }
 }

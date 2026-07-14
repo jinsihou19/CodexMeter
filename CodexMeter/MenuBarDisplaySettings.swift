@@ -86,6 +86,51 @@ enum MenuBarDisplayPreset: String, CaseIterable, Identifiable {
     }
 }
 
+/// 把多个排版字段收敛成常用布局选择；无法匹配两档公开预设时保留为自定义，不改写历史配置。
+enum MenuBarLayoutChoice: String, CaseIterable, Identifiable {
+    case compact
+    case standard
+    case custom
+
+    var id: String {
+        rawValue
+    }
+
+    var title: String {
+        switch self {
+        case .compact:
+            return "紧凑"
+        case .standard:
+            return "标准"
+        case .custom:
+            return "自定义"
+        }
+    }
+
+    var preset: MenuBarDisplayPreset? {
+        switch self {
+        case .compact:
+            return .compact
+        case .standard:
+            return .balanced
+        case .custom:
+            return nil
+        }
+    }
+
+    /// 将当前排版字段映射到公开布局；宽松预设与任意微调值都按自定义展示以保留原值。
+    static func matching(settings: MenuBarDisplaySettings) -> Self {
+        switch MenuBarDisplayPreset.matchingPreset(for: settings) {
+        case .compact:
+            return .compact
+        case .balanced:
+            return .standard
+        case .relaxed, .none:
+            return .custom
+        }
+    }
+}
+
 enum MenuBarColorPreset: String, CaseIterable, Identifiable {
     case standard
     case soft
@@ -208,26 +253,31 @@ enum MenuBarPreviewAppearance: CaseIterable, Identifiable {
 struct UsageMetricDisplay: Equatable {
     let title: String
     let window: RateLimitWindow?
+    var language: AppLanguage = .chineseSimplified
 
     var remainingText: String {
         window.map { "\($0.remainingPercent)%" } ?? "--"
     }
 
     var usedText: String {
-        window.map { "已用 \(Int($0.usedPercent.rounded()))%" } ?? "已用 --"
+        if AppLocalization.usesEnglish(language: language) {
+            return window.map { "Used \(Int($0.usedPercent.rounded()))%" } ?? "Used --"
+        }
+        return window.map { "已用 \(Int($0.usedPercent.rounded()))%" } ?? "已用 --"
     }
 
     var windowDurationText: String {
+        let english = AppLocalization.usesEnglish(language: language)
         guard let minutes = window?.windowDurationMins else {
-            return "窗口 --"
+            return english ? "Window --" : "窗口 --"
         }
         if minutes % 1_440 == 0 {
-            return "窗口 \(minutes / 1_440) 天"
+            return english ? "Window \(minutes / 1_440) days" : "窗口 \(minutes / 1_440) 天"
         }
         if minutes % 60 == 0 {
-            return "窗口 \(minutes / 60) 小时"
+            return english ? "Window \(minutes / 60) hours" : "窗口 \(minutes / 60) 小时"
         }
-        return "窗口 \(minutes) 分钟"
+        return english ? "Window \(minutes) minutes" : "窗口 \(minutes) 分钟"
     }
 
     var progressValue: Double {

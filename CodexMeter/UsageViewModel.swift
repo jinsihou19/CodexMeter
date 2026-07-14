@@ -1,7 +1,162 @@
 import CodexMeterShared
 import Foundation
 import OSLog
+import UserNotifications
 import WidgetKit
+
+/// 描述一次需要交付给系统通知中心的额度变化。
+enum UsageNotificationEvent: Equatable, Sendable {
+    case depleted(windowTitle: String)
+    case lowRemaining(windowTitle: String, remainingPercent: Int)
+}
+
+/// 只在额度向下跨过边界时生成事件，避免每次轮询重复通知。
+enum UsageNotificationEventResolver {
+    /// 比较相邻快照并返回需要发送的通知；额度恢复或边界内波动不会重复触发。
+    static func events(
+        previous: RateLimitSnapshot,
+        current: RateLimitSnapshot,
+        settings: UsageNotificationSettings
+    ) -> [UsageNotificationEvent] {
+        let windows = [
+            (previous.primary, current.primary),
+            (previous.secondary, current.secondary)
+        ]
+
+        return windows.compactMap { previousWindow, currentWindow in
+            guard let previousWindow, let currentWindow else {
+                return nil
+            }
+            let previousRemaining = previousWindow.remainingPercent
+            let currentRemaining = currentWindow.remainingPercent
+            guard currentRemaining < previousRemaining else {
+                return nil
+            }
+            if settings.notifiesWhenDepleted, previousRemaining > 0, currentRemaining == 0 {
+                return .depleted(windowTitle: currentWindow.durationLabel)
+            }
+            if settings.notifiesWhenLow,
+               previousRemaining > settings.lowRemainingThreshold,
+               currentRemaining <= settings.lowRemainingThreshold
+            {
+                return .lowRemaining(
+                    windowTitle: currentWindow.durationLabel,
+                    remainingPercent: currentRemaining
+                )
+            }
+            return nil
+        }
+    }
+}
+
+/// 识别可信的额度重置：用量回落到近零且接口给出的下一次重置边界已经前移。
+enum UsageResetCelebrationResolver {
+    /// 返回本次快照是否应播放彩带；选项决定检查短窗口、周窗口或两者。
+    static func shouldCelebrate(
+        previous: RateLimitSnapshot,
+        current: RateLimitSnapshot,
+        option: UsageResetCelebrationOption
+    ) -> Bool {
+        let sessionReset = option.celebratesSessionReset && didReset(previous.primary, current.primary)
+        let weeklyReset = option.celebratesWeeklyReset && didReset(previous.secondary, current.secondary)
+        return sessionReset || weeklyReset
+    }
+
+    /// 边界校验用于过滤接口抖动，1% 容差允许重置后立即产生的极少量用量。
+    private static func didReset(_ previous: RateLimitWindow?, _ current: RateLimitWindow?) -> Bool {
+        guard let previous,
+              let current,
+              previous.usedPercent > 1,
+              current.usedPercent <= 1,
+              let previousReset = previous.resetsAt,
+              let currentReset = current.resetsAt
+        else {
+            return false
+        }
+        return currentReset > previousReset
+    }
+}
+
+/// 把用量边界事件交给 macOS 通知中心；权限请求只由用户主动开启设置时触发。
+@MainActor
+final class UsageNotificationController {
+    private var previousRateLimits: RateLimitSnapshot?
+    private let playConfetti: () -> Void
+
+    /// 注入彩带播放动作，使重置判断保持可测试且不依赖窗口实现。
+    init(playConfetti: @escaping () -> Void = {}) {
+        self.playConfetti = playConfetti
+    }
+
+    /// 用已有缓存建立比较基线，避免应用启动后的第一次刷新被误判为额度下降。
+    func seed(with snapshot: UsageSnapshot?) {
+        previousRateLimits = snapshot?.rateLimits
+    }
+
+    /// 处理新快照并异步投递系统通知；无跨界事件时不访问通知中心。
+    func process(_ snapshot: UsageSnapshot) {
+        let current = snapshot.rateLimits
+        defer { previousRateLimits = current }
+        guard let previousRateLimits else {
+            return
+        }
+        let celebrationOption = UsageResetCelebrationOption(
+            rawValue: MenuBarDisplaySettings.sharedDefaults.string(
+                forKey: UsageCelebrationPreferenceKeys.resetOption
+            ) ?? ""
+        ) ?? .off
+        if UsageResetCelebrationResolver.shouldCelebrate(
+            previous: previousRateLimits,
+            current: current,
+            option: celebrationOption
+        ) {
+            playConfetti()
+        }
+        let settings = UsageNotificationSettings(defaults: MenuBarDisplaySettings.sharedDefaults)
+        let events = UsageNotificationEventResolver.events(
+            previous: previousRateLimits,
+            current: current,
+            settings: settings
+        )
+        guard !events.isEmpty else {
+            return
+        }
+
+        Task {
+            let center = UNUserNotificationCenter.current()
+            let authorization = await center.notificationSettings().authorizationStatus
+            guard authorization == .authorized || authorization == .provisional else {
+                return
+            }
+            for event in events {
+                let content = UNMutableNotificationContent()
+                switch event {
+                case let .depleted(windowTitle):
+                    content.title = "Codex 额度已耗尽"
+                    content.body = "\(windowTitle)窗口已无剩余额度。"
+                case let .lowRemaining(windowTitle, remainingPercent):
+                    content.title = "Codex 额度偏低"
+                    content.body = "\(windowTitle)窗口剩余 \(remainingPercent)%。"
+                }
+                content.sound = .default
+                let request = UNNotificationRequest(
+                    identifier: "CodexMeter.usage.\(UUID().uuidString)",
+                    content: content,
+                    trigger: nil
+                )
+                try? await center.add(request)
+            }
+        }
+    }
+
+    /// 用户开启任一提醒时请求 alert 与 sound 权限，拒绝后不反复弹窗。
+    static func requestAuthorization() {
+        Task {
+            try? await UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound])
+        }
+    }
+
+}
 
 @MainActor
 final class UsageViewModel: ObservableObject {
@@ -14,6 +169,7 @@ final class UsageViewModel: ObservableObject {
     private let reloadWidgetTimelines: () -> Void
     private let refreshCadenceProvider: @MainActor @Sendable () -> UsageRefreshCadence
     private let resetCreditsVisibilityProvider: @MainActor @Sendable () -> Bool
+    private let processUsageNotifications: @MainActor @Sendable (UsageSnapshot) -> Void
     private let logger = Logger(subsystem: "com.jinsihou.CodexUsage", category: "Usage")
     private var refreshTask: Task<Void, Never>?
     private var hasStartedRefreshLoop = false
@@ -32,13 +188,15 @@ final class UsageViewModel: ObservableObject {
         },
         resetCreditsVisibilityProvider: @escaping @MainActor @Sendable () -> Bool = {
             PopoverDisplaySettings(defaults: MenuBarDisplaySettings.sharedDefaults).showsResetCredits
-        }
+        },
+        processUsageNotifications: @escaping @MainActor @Sendable (UsageSnapshot) -> Void = { _ in }
     ) {
         self.client = client
         self.store = store
         self.reloadWidgetTimelines = reloadWidgetTimelines
         self.refreshCadenceProvider = refreshCadenceProvider
         self.resetCreditsVisibilityProvider = resetCreditsVisibilityProvider
+        self.processUsageNotifications = processUsageNotifications
         self.lastShowsResetCredits = resetCreditsVisibilityProvider()
         self.snapshot = try? store.load()
     }
@@ -172,6 +330,7 @@ final class UsageViewModel: ObservableObject {
             let updatedSnapshot = try await client.fetchUsageSnapshot(forceRefreshResetCredits: forceRefreshResetCredits)
             try store.save(updatedSnapshot)
             snapshot = updatedSnapshot
+            processUsageNotifications(updatedSnapshot)
             errorMessage = nil
             logger.info("Refresh saved snapshot")
             reloadWidgetTimelines()

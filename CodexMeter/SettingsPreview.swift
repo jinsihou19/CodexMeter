@@ -31,14 +31,16 @@ private struct MenuBarPreviewChip: View {
                 data: data
             )
 
-            Text(appearance.title)
+            Text(AppLocalization.string(appearance.title))
                 .font(.subheadline.weight(.semibold))
                 .lineLimit(1)
         }
         .frame(maxWidth: .infinity)
         .padding(.horizontal, 8)
         .padding(.vertical, SettingsPanelLayout.previewChipVerticalPadding)
-        .accessibilityLabel("\(appearance.title)，\(appearance.summary)")
+        .accessibilityLabel(
+            "\(AppLocalization.string(appearance.title)), \(AppLocalization.string(appearance.summary))"
+        )
     }
 }
 

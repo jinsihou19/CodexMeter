@@ -12,7 +12,7 @@ struct CodexMeterWidget: Widget {
             CodexMeterWidgetView(entry: entry)
         }
         .configurationDisplayName("CodexMeter")
-        .description("显示 Codex 5 小时与 7 天窗口的最近同步余量。")
+        .description(AppLocalization.string("显示 Codex 5 小时与 7 天窗口的最近同步余量。"))
         .supportedFamilies([.systemSmall, .systemMedium])
     }
 }
@@ -72,7 +72,13 @@ struct CodexMeterTimelineProvider: TimelineProvider {
 struct CodexMeterWidgetView: View {
     let entry: CodexMeterEntry
     @Environment(\.widgetFamily) private var family
-    private let formatter = UsageFormatter()
+    @AppStorage(AppLanguagePreferenceKeys.selectedLanguage, store: MenuBarDisplaySettings.sharedDefaults) private var selectedLanguage = AppLanguage.system.rawValue
+    private var language: AppLanguage {
+        AppLanguage(rawValue: selectedLanguage) ?? .system
+    }
+    private var formatter: UsageFormatter {
+        UsageFormatter(language: language)
+    }
     private var settings: MenuBarDisplaySettings {
         MenuBarDisplaySettings(defaults: MenuBarDisplaySettings.sharedDefaults)
     }
@@ -91,6 +97,7 @@ struct CodexMeterWidgetView: View {
     @ViewBuilder private var themedContent: some View {
         let activeAppearance = appearanceSettings
         let baseContent = content
+            .environment(\.locale, language.locale)
             .containerBackground(for: .widget) {
                 WidgetCardBackground(appearanceMode: activeAppearance.appearanceMode, opacity: activeAppearance.cardOpacity)
             }
@@ -120,9 +127,9 @@ struct CodexMeterWidgetView: View {
                 snapshotContent(snapshot, display: display)
             } else {
                 Spacer(minLength: 0)
-                Text("暂无数据")
+                Text(AppLocalization.string("暂无数据", language: language))
                     .font(.title3.weight(.semibold))
-                Text("打开菜单栏 App 后自动同步")
+                Text(AppLocalization.string("打开菜单栏 App 后自动同步", language: language))
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 Spacer(minLength: 0)
@@ -161,6 +168,7 @@ struct CodexMeterWidgetView: View {
             settings: settings,
             widgetSettings: widgetSettings,
             formatter: formatter,
+            language: language,
             now: entry.date
         )
     }
@@ -202,6 +210,9 @@ struct CodexMeterWidgetView: View {
 
     private func syncText(_ snapshot: UsageSnapshot) -> String {
         let time = formatter.fetchedAt(snapshot.fetchedAt)
+        if AppLocalization.usesEnglish(language: language) {
+            return family == .systemSmall ? "Synced \(time)" : "Last synced \(time)"
+        }
         return family == .systemSmall ? "同步 \(time)" : "最近同步 \(time)"
     }
 }
@@ -259,7 +270,9 @@ private struct WidgetAccountSummary: View {
         guard let resetCredits = snapshot.resetCredits else {
             return nil
         }
-        return "\(resetCredits.availableCount)次重置"
+        return AppLocalization.usesEnglish()
+            ? "\(resetCredits.availableCount) resets"
+            : "\(resetCredits.availableCount)次重置"
     }
 }
 
@@ -357,7 +370,10 @@ private struct WidgetBalanceRow: View {
 
     /// 小号小组件去掉中文时间里的空格，避免同一信息被迫缩小到不可读。
     private var resetText: String {
-        isSmallFamily ? display.resetText.replacingOccurrences(of: " ", with: "") : display.resetText
+        guard isSmallFamily, !AppLocalization.usesEnglish() else {
+            return display.resetText
+        }
+        return display.resetText.replacingOccurrences(of: " ", with: "")
     }
 }
 
@@ -395,12 +411,18 @@ private struct WidgetPaceRow: View {
 
     /// 小号宽度优先展示判断结果，去掉空格让“超额 25%”不再被压成单字。
     private var paceStatusText: String {
-        isSmallFamily ? display.paceStatusText.replacingOccurrences(of: " ", with: "") : display.paceStatusText
+        guard isSmallFamily, !AppLocalization.usesEnglish() else {
+            return display.paceStatusText
+        }
+        return display.paceStatusText.replacingOccurrences(of: " ", with: "")
     }
 
     /// 小号里用更短的预测文案，完整文案仍保留给中号小组件和弹窗。
     private var paceProjectionText: String {
         guard isSmallFamily else {
+            return display.paceProjectionText
+        }
+        guard !AppLocalization.usesEnglish() else {
             return display.paceProjectionText
         }
         return display.paceProjectionText

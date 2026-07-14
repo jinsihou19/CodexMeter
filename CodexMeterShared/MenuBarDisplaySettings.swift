@@ -52,6 +52,378 @@ public enum AppBehaviorPreferenceKeys {
     ]
 }
 
+public enum AppLanguagePreferenceKeys {
+    public static let selectedLanguage = "app.selectedLanguage"
+}
+
+/// 应用语言沿用系统语言代码；空值表示不覆盖 macOS 的语言选择。
+public enum AppLanguage: String, CaseIterable, Identifiable, Sendable {
+    case system = ""
+    case chineseSimplified = "zh-Hans"
+    case english = "en"
+
+    public var id: String { rawValue }
+
+    public var locale: Locale {
+        rawValue.isEmpty ? .autoupdatingCurrent : Locale(identifier: rawValue)
+    }
+
+    public var title: String {
+        switch self {
+        case .system:
+            return "跟随系统"
+        case .chineseSimplified:
+            return "简体中文"
+        case .english:
+            return "English"
+        }
+    }
+
+    /// 写入下一次进程启动使用的语言覆盖；跟随系统时删除旧覆盖。
+    public func apply(to defaults: UserDefaults = .standard) {
+        if rawValue.isEmpty {
+            defaults.removeObject(forKey: "AppleLanguages")
+        } else {
+            defaults.set([rawValue], forKey: "AppleLanguages")
+        }
+    }
+}
+
+/// 为现有硬编码中文提供进程内英文映射；未翻译项安全回退到中文原文。
+public enum AppLocalization {
+    /// 判断当前偏好是否使用英文，供带数字插值的动态文案选择格式。
+    public static func usesEnglish(
+        language: AppLanguage? = nil,
+        defaults: UserDefaults = MenuBarDisplaySettings.sharedDefaults
+    ) -> Bool {
+        let selected = language ?? AppLanguage(
+            rawValue: defaults.string(forKey: AppLanguagePreferenceKeys.selectedLanguage) ?? ""
+        ) ?? .system
+        return selected == .english
+            || selected == .system && Locale.preferredLanguages.first?.hasPrefix("en") == true
+    }
+
+    /// 按用户选择或系统首选语言返回文案；显式语言和偏好容器用于测试与预览。
+    public static func string(
+        _ key: String,
+        language: AppLanguage? = nil,
+        defaults: UserDefaults = MenuBarDisplaySettings.sharedDefaults
+    ) -> String {
+        usesEnglish(language: language, defaults: defaults) ? english[key] ?? key : key
+    }
+
+    private static let english: [String: String] = [
+        "通用": "General",
+        "通知": "Notifications",
+        "菜单栏": "Menu Bar",
+        "下拉面板": "Popover",
+        "小组件": "Widget",
+        "关于": "About",
+        "CodexMeter 设置": "CodexMeter Settings",
+        "版本": "Version",
+        "系统": "System",
+        "语言": "Language",
+        "更改后立即应用；部分系统文案在重新启动后生效。": "Applies immediately; some system text updates after restarting the app.",
+        "登录时启动": "Launch at Login",
+        "登录 macOS 后自动启动菜单栏用量组件。": "Launch the menu bar usage app automatically after signing in to macOS.",
+        "刷新频率": "Refresh Frequency",
+        "手动模式只在点击下拉面板里的刷新按钮时请求接口。": "Manual mode only requests usage when you click Refresh in the popover.",
+        "界面外观": "Appearance",
+        "自动会跟随系统；浅色和深色会强制所有浮层使用对应配色。": "Automatic follows the system; Light and Dark override all surfaces.",
+        "外观": "Appearance",
+        "状态颜色": "Status Colors",
+        "选择三档余量状态的配色方案。": "Choose colors for the three remaining-quota states.",
+        "自定义": "Custom",
+        "更多选项": "More Options",
+        "启动时打开设置": "Open Settings at Launch",
+        "应用启动后自动显示设置窗口；关闭后仍可从菜单栏进入。": "Show Settings when the app launches; it remains available from the menu bar.",
+        "卡片不透明度": "Card Opacity",
+        "统一影响菜单栏下拉面板和小组件的卡片背景。": "Controls card backgrounds in the popover and widget.",
+        "充足": "Healthy",
+        "偏低": "Low",
+        "紧张": "Critical",
+        "用量提醒": "Usage Alerts",
+        "额度耗尽提醒": "Quota Depleted",
+        "5 小时或 7 天窗口剩余降至 0% 时发送系统通知。": "Notify when the 5-hour or 7-day window reaches 0% remaining.",
+        "低额度提醒": "Low Quota",
+        "剩余额度首次降到设定阈值时发送一次系统通知。": "Notify once when remaining quota first crosses the threshold.",
+        "提醒阈值": "Alert Threshold",
+        "额度恢复到阈值以上后，下一次下降会再次提醒。": "After quota recovers above the threshold, the next drop can alert again.",
+        "庆祝": "Celebrations",
+        "重置时播放彩带": "Confetti on Reset",
+        "额度重置时播放全屏彩带。": "Play full-screen confetti when quota resets.",
+        "关闭": "Off",
+        "5 小时重置": "5-Hour Resets",
+        "7 天重置": "7-Day Resets",
+        "两者": "Both",
+        "播放彩带": "Play Confetti",
+        "临时入口：立即预览一次全屏彩带。": "Temporary: preview full-screen confetti now.",
+        "预览": "Preview",
+        "系统浅色菜单栏": "System Light Menu Bar",
+        "深色或高对比背景": "Dark or High-Contrast Background",
+        "桌面壁纸透出的半透明状态": "Translucent Desktop Background",
+        "半透明": "Translucent",
+        "显示内容": "Content",
+        "菜单栏内容": "Menu Bar Content",
+        "选择显示剩余额度或相对预期的用量节奏。": "Show remaining quota or usage pace against expectations.",
+        "工作日刻度线": "Workday Scale",
+        "用于每周用量条刻度和节奏计算。": "Used for weekly scale marks and pace calculations.",
+        "显示 5 小时窗口": "Show 5-Hour Window",
+        "在菜单栏显示短窗口剩余额度；至少会保留一个窗口。": "Show the short-window quota; at least one window remains visible.",
+        "显示 7 天窗口": "Show 7-Day Window",
+        "在菜单栏显示周窗口剩余额度；至少会保留一个窗口。": "Show the weekly quota; at least one window remains visible.",
+        "显示 Codex 图标": "Show Codex Icon",
+        "在数字左侧显示 Codex 图标，便于和其他菜单栏项目区分。": "Show the Codex icon before values for easier identification.",
+        "显示活动指示": "Show Activity Indicator",
+        "Codex 运行、思考、需确认或刚完成时显示状态符号；空闲时自动隐藏。": "Show a status symbol while Codex runs, thinks, waits, or completes; hide it when idle.",
+        "活动样式": "Activity Style",
+        "自动会按状态切换；固定样式会一直使用选中的系统符号。": "Automatic changes with status; a fixed style always uses the selected symbol.",
+        "布局": "Layout",
+        "布局模式": "Layout Mode",
+        "紧凑和标准会应用稳定预设，自定义保留所有细调能力。": "Compact and Standard apply stable presets; Custom exposes fine tuning.",
+        "显示百分号": "Show Percent Sign",
+        "关闭后只显示数字，适合菜单栏空间很紧张时使用。": "Show only numbers when menu bar space is limited.",
+        "数字字重": "Number Weight",
+        "控制菜单栏读数的视觉重量。": "Control the visual weight of menu bar values.",
+        "显示密度": "Display Density",
+        "项目间距": "Item Spacing",
+        "两行行距": "Row Spacing",
+        "数字字号": "Number Size",
+        "小组件内容": "Widget Content",
+        "跟随菜单栏会复用菜单栏的 5 小时 / 7 天窗口选择。": "Follow Menu Bar reuses its 5-hour and 7-day window selection.",
+        "显示重置时间": "Show Reset Time",
+        "在每行额度旁显示距离窗口重置还有多久。": "Show the time remaining until reset beside each quota.",
+        "显示预期消耗速度": "Show Expected Pace",
+        "在每个窗口下显示节奏偏差，以及预计耗尽或持续到重置。": "Show pace variance and whether quota will last until reset.",
+        "显示最近同步": "Show Last Sync",
+        "在底部显示最近一次成功读取的时间。": "Show the latest successful sync time at the bottom.",
+        "显示账户摘要": "Show Account Summary",
+        "在标题栏右侧显示账户邮箱和可读套餐标签。": "Show the account email and plan label in the header.",
+        "用量": "Usage",
+        "显示用量速度": "Show Usage Pace",
+        "展示当前用量相对预期节奏是偏快还是有余量。": "Show whether usage is ahead of or below the expected pace.",
+        "显示额外额度": "Show Additional Limits",
+        "显示 Codex Spark 等接口返回的额外 rate limit。": "Show additional rate limits such as Codex Spark.",
+        "活动": "Activity",
+        "显示 Profile 概览": "Show Profile Overview",
+        "展示累计 Token、峰值、最长任务和连续天数。": "Show lifetime tokens, peak usage, longest task, and streak.",
+        "显示 Token 活动": "Show Token Activity",
+        "展示每日、每周和累计 Token 活动柱状图。": "Show daily, weekly, and lifetime token activity charts.",
+        "显示额度重置卡": "Show Reset Credits",
+        "在 Token 活动下方显示可用重置卡数量和到期时间。": "Show available reset credits and expiry below token activity.",
+        "洞察": "Insights",
+        "显示活动洞察": "Show Activity Insights",
+        "展示快速模式、推理强度、技能和会话统计。": "Show fast mode, reasoning effort, skills, and session statistics.",
+        "显示最常用插件": "Show Top Plugins",
+        "展示最近统计里最常用的插件或技能。": "Show the most-used plugins or skills from recent statistics.",
+        "降智雷达": "Model Radar",
+        "开启降智雷达": "Enable Model Radar",
+        "读取 codexradar.com/current.json 并展示模型 IQ。": "Read codexradar.com/current.json and show model IQ.",
+        "显示分值折线图": "Show Score Chart",
+        "只绘制 IQ 90 及以上的历史分值。": "Plot historical scores with IQ 90 or higher.",
+        "显示": "Display",
+        "显示同步详情": "Show Sync Details",
+        "展示限制状态和最近同步时间。": "Show limit status and the latest sync time.",
+        "重置时间": "Reset Time",
+        "倒计时适合快速扫读，具体时间适合规划任务开始时间。": "Countdowns scan quickly; clock times help plan task starts.",
+        "连接": "Connection",
+        "打开 Codex 目录": "Open Codex Folder",
+        "在 Finder 中打开 Codex 配置目录。": "Open the Codex configuration folder in Finder.",
+        "连接详情": "Connection Details",
+        "读取方式": "Source",
+        "数据来源": "Data Source",
+        "接口": "API",
+        "登录信息": "Sign-In Information",
+        "已找到": "Found",
+        "未找到": "Not Found",
+        "CODEX_HOME/auth.json 或 ~/.codex/auth.json": "CODEX_HOME/auth.json or ~/.codex/auth.json",
+        "诊断与维护": "Diagnostics & Maintenance",
+        "打开缓存目录": "Open Cache Folder",
+        "在 Finder 中打开快照缓存目录。": "Open the snapshot cache folder in Finder.",
+        "打开状态目录": "Open Status Folder",
+        "在 Finder 中打开 hook 活动状态目录。": "Open the hook activity status folder in Finder.",
+        "状态文件": "Status File",
+        "Hook 配置": "Hook Config",
+        "Hook 脚本": "Hook Script",
+        "清除最近同步缓存": "Clear Recent Sync Cache",
+        "删除本地最新快照，下次刷新会重新保存。": "Delete the latest local snapshot; the next refresh saves a new one.",
+        "最近同步缓存已清除。": "Recent sync cache cleared.",
+        "清除失败：": "Failed to clear:",
+        "更新": "Updates",
+        "自动检查更新": "Automatically Check for Updates",
+        "链接": "Links",
+        "GitHub 项目主页": "GitHub Project",
+        "版本发布记录": "Release Notes",
+        "反馈问题": "Report an Issue",
+        "打开关于": "Open About",
+        "让 Codex 剩余额度、重置时间和使用节奏一眼可见。": "Keep Codex quota, reset times, and usage pace visible at a glance.",
+        "已连接本机登录信息": "Connected to Local Sign-In",
+        "未找到本机登录信息": "Local Sign-In Not Found",
+        "重新读取 Codex 配置": "Reload Codex Configuration",
+        "发现新版本": "New Version Available",
+        "4 天": "4 Days",
+        "5 天": "5 Days",
+        "7 天": "7 Days",
+        "立即检测": "Check Now",
+        "跟随系统": "System",
+        "简体中文": "Simplified Chinese",
+        "预期消耗对比": "Expected Pace",
+        "剩余额度": "Remaining Quota",
+        "手动": "Manual",
+        "30 秒": "30 Seconds",
+        "1 分钟": "1 Minute",
+        "5 分钟": "5 Minutes",
+        "自动": "Automatic",
+        "浅色": "Light",
+        "深色": "Dark",
+        "跟随菜单栏": "Follow Menu Bar",
+        "5 小时 + 7 天": "5 Hours + 7 Days",
+        "仅 5 小时": "5 Hours Only",
+        "仅 7 天": "7 Days Only",
+        "倒计时": "Countdown",
+        "具体时间": "Clock Time",
+        "紧凑": "Compact",
+        "正常": "Normal",
+        "标准": "Standard",
+        "默认": "Default",
+        "柔和": "Soft",
+        "高对比": "High Contrast",
+        "偏细": "Light",
+        "适中": "Medium",
+        "偏粗": "Bold",
+        "竖向省略号": "Vertical Ellipsis",
+        "目标指针": "Target Pointer",
+        "空气波纹": "Air Ripple",
+        "刷新": "Refresh",
+        "设置": "Settings",
+        "退出": "Quit",
+        "安装 CodexMeter 新版本": "Install the New CodexMeter Version",
+        "更新 CodexMeter": "Update CodexMeter",
+        "额外额度": "Additional Limits",
+        "暂无用量数据": "No Usage Data",
+        "每日": "Daily",
+        "每周": "Weekly",
+        "累计": "Cumulative",
+        "重置": "Resets",
+        "用量进度": "Usage Progress",
+        "用量速度": "Usage Pace",
+        "绿色线：按当前时间进度推算的理论剩余位置；绿色表示实际用得比理论慢，有余量。": "Green line: expected remaining quota at the current time; usage is slower than expected.",
+        "红色线：按当前时间进度推算的理论剩余位置；红色表示实际用得比理论快，可能提前耗尽。": "Red line: expected remaining quota at the current time; usage is faster and may run out early.",
+        "额度重置卡": "Reset Credits",
+        "暂无到期明细": "No Expiration Details",
+        "正在读取重置卡...": "Loading Reset Credits...",
+        "暂无重置卡信息": "No Reset Credit Information",
+        "刷新额度重置卡": "Refresh Reset Credits",
+        "累计 Token": "Lifetime Tokens",
+        "峰值 Token": "Peak Tokens",
+        "最长任务": "Longest Task",
+        "连续天数": "Streak",
+        "Token 活动": "Token Activity",
+        "最近日": "Latest Day",
+        "近 30 天": "Last 30 Days",
+        "快速": "Fast",
+        "推理": "Reasoning",
+        "技能": "Skills",
+        "技能次数": "Skill Uses",
+        "会话": "Sessions",
+        "最常用的插件": "Top Plugins",
+        "限制": "Limit",
+        "未触发": "Not Triggered",
+        "同步": "Synced",
+        "常态 90-110": "Normal 90–110",
+        "暂无雷达数据": "No Radar Data",
+        "打开 Codex Radar": "Open Codex Radar",
+        "刷新降智雷达": "Refresh Model Radar",
+        "降智雷达 IQ 曲线": "Model Radar IQ Chart",
+        "可用": "Available",
+        "已使用": "Used",
+        "已过期": "Expired",
+        "未知": "Unknown",
+        "已重置": "Reset",
+        "最小": "Minimal",
+        "低": "Low",
+        "中": "Medium",
+        "高": "High",
+        "超高": "Extra High",
+        "显示 Codex 5 小时与 7 天窗口的最近同步余量。": "Show the latest synced Codex quota for the 5-hour and 7-day windows.",
+        "暂无数据": "No Data",
+        "打开菜单栏 App 后自动同步": "Open the menu bar app to sync automatically"
+    ]
+}
+
+public enum UsageNotificationPreferenceKeys {
+    public static let notifiesWhenDepleted = "notifications.quotaDepleted"
+    public static let notifiesWhenLow = "notifications.lowRemaining"
+    public static let lowRemainingThreshold = "notifications.lowRemainingThreshold"
+}
+
+public enum UsageCelebrationPreferenceKeys {
+    public static let resetOption = "celebrations.resetOption"
+}
+
+public extension Notification.Name {
+    static let playUsageResetConfettiPreview = Notification.Name("CodexMeter.playUsageResetConfettiPreview")
+}
+
+/// 定义哪些额度窗口重置时播放彩带；默认关闭，避免应用升级后突然出现全屏效果。
+public enum UsageResetCelebrationOption: String, CaseIterable, Identifiable, Sendable {
+    case off
+    case session
+    case weekly
+    case both
+
+    public var id: String { rawValue }
+
+    public var title: String {
+        switch self {
+        case .off: "关闭"
+        case .session: "5 小时重置"
+        case .weekly: "7 天重置"
+        case .both: "两者"
+        }
+    }
+
+    public var celebratesSessionReset: Bool {
+        self == .session || self == .both
+    }
+
+    public var celebratesWeeklyReset: Bool {
+        self == .weekly || self == .both
+    }
+}
+
+/// 保存系统通知偏好；默认关闭，只有用户主动开启后才请求通知权限。
+public struct UsageNotificationSettings: Equatable, Sendable {
+    public static let defaultNotifiesWhenDepleted = false
+    public static let defaultNotifiesWhenLow = false
+    public static let defaultLowRemainingThreshold = 10
+
+    public let notifiesWhenDepleted: Bool
+    public let notifiesWhenLow: Bool
+    public let lowRemainingThreshold: Int
+
+    public init(
+        notifiesWhenDepleted: Bool = Self.defaultNotifiesWhenDepleted,
+        notifiesWhenLow: Bool = Self.defaultNotifiesWhenLow,
+        lowRemainingThreshold: Int = Self.defaultLowRemainingThreshold
+    ) {
+        self.notifiesWhenDepleted = notifiesWhenDepleted
+        self.notifiesWhenLow = notifiesWhenLow
+        self.lowRemainingThreshold = max(1, min(50, lowRemainingThreshold))
+    }
+
+    public init(defaults: UserDefaults) {
+        self.init(
+            notifiesWhenDepleted: defaults.object(forKey: UsageNotificationPreferenceKeys.notifiesWhenDepleted)
+                as? Bool ?? Self.defaultNotifiesWhenDepleted,
+            notifiesWhenLow: defaults.object(forKey: UsageNotificationPreferenceKeys.notifiesWhenLow)
+                as? Bool ?? Self.defaultNotifiesWhenLow,
+            lowRemainingThreshold: defaults.object(forKey: UsageNotificationPreferenceKeys.lowRemainingThreshold)
+                as? Int ?? Self.defaultLowRemainingThreshold
+        )
+    }
+}
+
 public enum SurfaceAppearancePreferenceKeys {
     public static let appearanceMode = "surface.appearanceMode"
     public static let cardOpacity = "surface.cardOpacity"
@@ -943,57 +1315,77 @@ public struct UsagePaceDisplay: Equatable, Sendable {
     }
 
     public var detailText: String {
+        detailText(language: .chineseSimplified)
+    }
+
+    /// 按指定语言生成完整速度判断和预计耗尽文案。
+    public func detailText(language: AppLanguage) -> String {
+        let english = AppLocalization.usesEnglish(language: language)
         let leftText: String
         if deltaPercent == 0 {
-            leftText = "按正常节奏"
+            leftText = english ? "On pace" : "按正常节奏"
         } else if deltaPercent > 0 {
-            leftText = "用得偏快 \(deltaPercent)%"
+            leftText = english ? "Using \(deltaPercent)% faster" : "用得偏快 \(deltaPercent)%"
         } else {
-            leftText = "有余量 \(abs(deltaPercent))%"
+            leftText = english ? "\(abs(deltaPercent))% headroom" : "有余量 \(abs(deltaPercent))%"
         }
 
-        guard let rightText else {
+        guard let rightText = rightText(language: language) else {
             return leftText
         }
         return "\(leftText) · \(rightText)"
     }
 
     public var widgetStatusText: String {
+        widgetStatusText(language: .chineseSimplified)
+    }
+
+    /// 按指定语言生成小组件的短速度状态。
+    public func widgetStatusText(language: AppLanguage) -> String {
+        let english = AppLocalization.usesEnglish(language: language)
         if abs(deltaPercent) <= 2 {
-            return "节奏正常"
+            return english ? "On pace" : "节奏正常"
         }
         if deltaPercent > 0 {
-            return "超额 \(deltaPercent)%"
+            return english ? "\(deltaPercent)% over" : "超额 \(deltaPercent)%"
         }
-        return "有余量 \(abs(deltaPercent))%"
+        return english ? "\(abs(deltaPercent))% headroom" : "有余量 \(abs(deltaPercent))%"
     }
 
     public var widgetProjectionText: String? {
-        if willLastToReset {
-            return "持续到重置"
-        }
-        guard let etaSeconds else {
-            return nil
-        }
-        let duration = Self.durationText(seconds: etaSeconds)
-        if duration == "现在" {
-            return "额度已耗尽"
-        }
-        return "预计 \(duration)后耗尽"
+        widgetProjectionText(language: .chineseSimplified)
     }
 
-    private var rightText: String? {
+    /// 按指定语言生成小组件的重置或耗尽预测。
+    public func widgetProjectionText(language: AppLanguage) -> String? {
+        let english = AppLocalization.usesEnglish(language: language)
         if willLastToReset {
-            return "可持续到重置"
+            return english ? "Lasts until reset" : "持续到重置"
         }
         guard let etaSeconds else {
             return nil
         }
-        let duration = Self.durationText(seconds: etaSeconds)
-        if duration == "现在" {
-            return "额度已耗尽"
+        let duration = Self.durationText(seconds: etaSeconds, language: language)
+        if duration == (english ? "Now" : "现在") {
+            return english ? "Quota depleted" : "额度已耗尽"
         }
-        return "预计 \(duration)后用完"
+        return english ? "Depletes in \(duration)" : "预计 \(duration)后耗尽"
+    }
+
+    /// 生成弹窗速度行右侧的预测文案。
+    private func rightText(language: AppLanguage) -> String? {
+        let english = AppLocalization.usesEnglish(language: language)
+        if willLastToReset {
+            return english ? "Lasts until reset" : "可持续到重置"
+        }
+        guard let etaSeconds else {
+            return nil
+        }
+        let duration = Self.durationText(seconds: etaSeconds, language: language)
+        if duration == (english ? "Now" : "现在") {
+            return english ? "Quota depleted" : "额度已耗尽"
+        }
+        return english ? "Runs out in \(duration)" : "预计 \(duration)后用完"
     }
 
     public var deltaText: String {
@@ -1010,10 +1402,11 @@ public struct UsagePaceDisplay: Equatable, Sendable {
         return .danger
     }
 
-    /// 将 ETA 秒数压缩成适合菜单栏和小组件扫读的中文短文本。
-    private static func durationText(seconds: TimeInterval) -> String {
+    /// 将 ETA 秒数压缩成适合菜单栏和小组件扫读的短文本。
+    private static func durationText(seconds: TimeInterval, language: AppLanguage) -> String {
+        let english = AppLocalization.usesEnglish(language: language)
         guard seconds > 60 else {
-            return "现在"
+            return english ? "Now" : "现在"
         }
 
         let totalMinutes = max(1, Int((seconds / 60).rounded()))
@@ -1022,18 +1415,18 @@ public struct UsagePaceDisplay: Equatable, Sendable {
         let minutes = totalMinutes % 60
 
         if days > 0, hours > 0 {
-            return "\(days)天\(hours)小时"
+            return english ? "\(days)d \(hours)h" : "\(days)天\(hours)小时"
         }
         if days > 0 {
-            return "\(days)天"
+            return english ? "\(days)d" : "\(days)天"
         }
         if hours > 0, minutes > 0 {
-            return "\(hours)小时\(minutes)分"
+            return english ? "\(hours)h \(minutes)m" : "\(hours)小时\(minutes)分"
         }
         if hours > 0 {
-            return "\(hours)小时"
+            return english ? "\(hours)h" : "\(hours)小时"
         }
-        return "\(minutes)分"
+        return english ? "\(minutes)m" : "\(minutes)分"
     }
 }
 
@@ -1127,6 +1520,7 @@ public struct CodexMeterWidgetDisplay: Equatable, Sendable {
         settings: MenuBarDisplaySettings,
         widgetSettings: WidgetDisplaySettings = WidgetDisplaySettings(),
         formatter: UsageFormatter = UsageFormatter(),
+        language: AppLanguage = .chineseSimplified,
         now: Date = Date()
     ) {
         var lines: [Line] = []
@@ -1134,7 +1528,7 @@ public struct CodexMeterWidgetDisplay: Equatable, Sendable {
         if windows.showsPrimary, let primary = snapshot.rateLimits.primary {
             lines.append(Self.line(
                 id: "primary",
-                title: primary.durationLabel,
+                title: primary.localizedDurationLabel(language: language),
                 window: primary,
                 resetText: widgetSettings.showsResetTime
                     ? formatter.resetRemainingText(window: primary, now: now)
@@ -1142,19 +1536,20 @@ public struct CodexMeterWidgetDisplay: Equatable, Sendable {
                 paceDisplay: widgetSettings.showsPaceComparison
                     ? UsageWindowPaceDisplay(
                         id: "primary",
-                        title: primary.durationLabel,
+                        title: primary.localizedDurationLabel(language: language),
                         window: primary,
                         now: now,
                         weeklyProgressWorkDays: settings.weeklyProgressWorkDays
                     )?.display
                     : nil,
-                settings: settings
+                settings: settings,
+                language: language
             ))
         }
         if windows.showsSecondary, let secondary = snapshot.rateLimits.secondary {
             lines.append(Self.line(
                 id: "secondary",
-                title: secondary.durationLabel,
+                title: secondary.localizedDurationLabel(language: language),
                 window: secondary,
                 resetText: widgetSettings.showsResetTime
                     ? formatter.resetRemainingText(window: secondary, now: now)
@@ -1162,19 +1557,20 @@ public struct CodexMeterWidgetDisplay: Equatable, Sendable {
                 paceDisplay: widgetSettings.showsPaceComparison
                     ? UsageWindowPaceDisplay(
                         id: "secondary",
-                        title: secondary.durationLabel,
+                        title: secondary.localizedDurationLabel(language: language),
                         window: secondary,
                         now: now,
                         weeklyProgressWorkDays: settings.weeklyProgressWorkDays
                     )?.display
                     : nil,
-                settings: settings
+                settings: settings,
+                language: language
             ))
         }
         if lines.isEmpty, let fallback = snapshot.rateLimits.primary ?? snapshot.rateLimits.secondary {
             lines.append(Self.line(
                 id: "fallback",
-                title: fallback.durationLabel,
+                title: fallback.localizedDurationLabel(language: language),
                 window: fallback,
                 resetText: widgetSettings.showsResetTime
                     ? formatter.resetRemainingText(window: fallback, now: now)
@@ -1182,13 +1578,14 @@ public struct CodexMeterWidgetDisplay: Equatable, Sendable {
                 paceDisplay: widgetSettings.showsPaceComparison
                     ? UsageWindowPaceDisplay(
                         id: "fallback",
-                        title: fallback.durationLabel,
+                        title: fallback.localizedDurationLabel(language: language),
                         window: fallback,
                         now: now,
                         weeklyProgressWorkDays: settings.weeklyProgressWorkDays
                     )?.display
                     : nil,
-                settings: settings
+                settings: settings,
+                language: language
             ))
         }
         self.lines = lines
@@ -1217,7 +1614,8 @@ public struct CodexMeterWidgetDisplay: Equatable, Sendable {
         window: RateLimitWindow?,
         resetText: String,
         paceDisplay: UsagePaceDisplay?,
-        settings: MenuBarDisplaySettings
+        settings: MenuBarDisplaySettings,
+        language: AppLanguage
     ) -> Line {
         let remainingPercent = window?.remainingPercent
         return Line(
@@ -1225,8 +1623,8 @@ public struct CodexMeterWidgetDisplay: Equatable, Sendable {
             title: title,
             value: Self.value(for: remainingPercent, settings: settings),
             resetText: resetText,
-            paceStatusText: paceDisplay?.widgetStatusText ?? "",
-            paceProjectionText: paceDisplay?.widgetProjectionText ?? "",
+            paceStatusText: paceDisplay?.widgetStatusText(language: language) ?? "",
+            paceProjectionText: paceDisplay?.widgetProjectionText(language: language) ?? "",
             paceTone: paceDisplay?.tone ?? .unavailable,
             progressValue: Double(remainingPercent ?? 0),
             tone: UsageRemainingTone(remainingPercent: remainingPercent)

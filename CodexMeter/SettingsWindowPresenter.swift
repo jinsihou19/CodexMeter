@@ -70,15 +70,20 @@ final class SettingsWindowPresenter {
     func applyCurrentAppearance() {
         let mode = SurfaceAppearanceSettings(defaults: MenuBarDisplaySettings.sharedDefaults).appearanceMode
         window?.appearance = mode.appKitAppearance
+        window?.title = AppLocalization.string("CodexMeter 设置")
     }
 
+    /// 创建一次可复用的设置窗口；尺寸与 SwiftUI 根视图保持一致，关闭时不释放。
     private func makeWindow() -> NSWindow {
         let settingsWindow = NSWindow(contentViewController: makeContentViewController())
-        settingsWindow.title = "CodexMeter 设置"
+        settingsWindow.title = AppLocalization.string("CodexMeter 设置")
         settingsWindow.styleMask = [.titled, .closable, .miniaturizable, .resizable]
         settingsWindow.isReleasedWhenClosed = false
-        settingsWindow.setContentSize(NSSize(width: 820, height: 600))
-        settingsWindow.minSize = NSSize(width: 780, height: 560)
+        settingsWindow.setContentSize(NSSize(
+            width: SettingsPanelLayout.windowWidth,
+            height: SettingsPanelLayout.windowHeight
+        ))
+        settingsWindow.minSize = NSSize(width: 800, height: 560)
         settingsWindow.center()
         return settingsWindow
     }

@@ -3,10 +3,16 @@ import Foundation
 public struct UsageFormatter: Sendable {
     private let localeIdentifier: String
     private let secondsFromGMT: Int
+    private let language: AppLanguage
 
-    public init(locale: Locale = .autoupdatingCurrent, timeZone: TimeZone = .autoupdatingCurrent) {
+    public init(
+        locale: Locale = .autoupdatingCurrent,
+        timeZone: TimeZone = .autoupdatingCurrent,
+        language: AppLanguage = .chineseSimplified
+    ) {
         self.localeIdentifier = locale.identifier
         self.secondsFromGMT = timeZone.secondsFromGMT()
+        self.language = language
     }
 
     public func resetTime(epochSeconds: Int?) -> String {
@@ -23,9 +29,10 @@ public struct UsageFormatter: Sendable {
             return "--"
         }
         if seconds <= 0 {
-            return "已重置"
+            return AppLocalization.string("已重置", language: language)
         }
-        return "\(compactDuration(seconds: seconds))后"
+        let duration = compactDuration(seconds: seconds)
+        return AppLocalization.usesEnglish(language: language) ? "in \(duration)" : "\(duration)后"
     }
 
     /// 返回窗口重置倒计时秒数；无重置信息时返回 nil，已经到期时返回 0。
@@ -55,7 +62,10 @@ public struct UsageFormatter: Sendable {
             return "--"
         }
 
-        return format(epochSeconds: epochSeconds, dateFormat: "M月d日")
+        return format(
+            epochSeconds: epochSeconds,
+            dateFormat: AppLocalization.usesEnglish(language: language) ? "MMM d" : "M月d日"
+        )
     }
 
     private func format(epochSeconds: Int, dateFormat: String) -> String {
@@ -83,18 +93,18 @@ public struct UsageFormatter: Sendable {
 
     public func creditsStatus(_ credits: CreditsSnapshot?) -> String {
         guard let credits else {
-            return "无 credits 信息"
+            return AppLocalization.usesEnglish(language: language) ? "No credits information" : "无 credits 信息"
         }
         if credits.unlimited {
-            return "无限 credits"
+            return AppLocalization.usesEnglish(language: language) ? "Unlimited credits" : "无限 credits"
         }
         if credits.hasCredits, let balance = credits.balance {
-            return "credits 余额 \(balance)"
+            return AppLocalization.usesEnglish(language: language) ? "Credits balance \(balance)" : "credits 余额 \(balance)"
         }
         if credits.hasCredits {
-            return "有 credits"
+            return AppLocalization.usesEnglish(language: language) ? "Credits available" : "有 credits"
         }
-        return "无 credits"
+        return AppLocalization.usesEnglish(language: language) ? "No credits" : "无 credits"
     }
 
     /// 将重置卡到期时间格式化为本地绝对时间；缺失时间用占位符，避免误报到期点。
@@ -112,9 +122,10 @@ public struct UsageFormatter: Sendable {
         }
         let seconds = Int(date.timeIntervalSince(now).rounded())
         guard seconds > 0 else {
-            return "已过期"
+            return AppLocalization.string("已过期", language: language)
         }
-        return "\(compactDuration(seconds: seconds))后"
+        let duration = compactDuration(seconds: seconds)
+        return AppLocalization.usesEnglish(language: language) ? "in \(duration)" : "\(duration)后"
     }
 
     public func tokenCount(_ tokens: Int64?) -> String {
@@ -123,6 +134,18 @@ public struct UsageFormatter: Sendable {
         }
 
         let absoluteTokens = abs(tokens)
+        if AppLocalization.usesEnglish(language: language) {
+            if absoluteTokens >= 1_000_000_000 {
+                return decimal(Double(tokens) / 1_000_000_000) + "B"
+            }
+            if absoluteTokens >= 1_000_000 {
+                return decimal(Double(tokens) / 1_000_000) + "M"
+            }
+            if absoluteTokens >= 1_000 {
+                return decimal(Double(tokens) / 1_000) + "K"
+            }
+            return "\(tokens)"
+        }
         if absoluteTokens >= 100_000_000 {
             return decimal(Double(tokens) / 100_000_000) + "亿"
         }
@@ -142,12 +165,16 @@ public struct UsageFormatter: Sendable {
         let minutes = (seconds % 3_600) / 60
 
         if days > 0 {
-            return "\(days) 天 \(hours) 小时"
+            return AppLocalization.usesEnglish(language: language)
+                ? "\(days)d \(hours)h"
+                : "\(days) 天 \(hours) 小时"
         }
         if hours > 0 {
-            return "\(hours) 小时 \(minutes) 分"
+            return AppLocalization.usesEnglish(language: language)
+                ? "\(hours)h \(minutes)m"
+                : "\(hours) 小时 \(minutes) 分"
         }
-        return "\(minutes) 分"
+        return AppLocalization.usesEnglish(language: language) ? "\(minutes)m" : "\(minutes) 分"
     }
 
     public func percent(_ value: Double?) -> String {
@@ -163,15 +190,15 @@ public struct UsageFormatter: Sendable {
         }
         switch effort.lowercased() {
         case "minimal":
-            return "最小"
+            return AppLocalization.string("最小", language: language)
         case "low":
-            return "低"
+            return AppLocalization.string("低", language: language)
         case "medium":
-            return "中"
+            return AppLocalization.string("中", language: language)
         case "high":
-            return "高"
+            return AppLocalization.string("高", language: language)
         case "xhigh":
-            return "超高"
+            return AppLocalization.string("超高", language: language)
         default:
             return effort
         }
