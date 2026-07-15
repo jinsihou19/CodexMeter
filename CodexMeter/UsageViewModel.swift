@@ -1,7 +1,7 @@
 import CodexMeterShared
 import Foundation
 import OSLog
-import UserNotifications
+@preconcurrency import UserNotifications
 import WidgetKit
 
 /// 描述一次需要交付给系统通知中心的额度变化。
@@ -193,9 +193,9 @@ final class UsageNotificationController {
             return
         }
 
-        Task {
-            let center = UNUserNotificationCenter.current()
-            let authorization = await center.notificationSettings().authorizationStatus
+        let center = UNUserNotificationCenter.current()
+        center.getNotificationSettings { settings in
+            let authorization = settings.authorizationStatus
             guard authorization == .authorized || authorization == .provisional else {
                 return
             }
@@ -215,7 +215,7 @@ final class UsageNotificationController {
                     content: content,
                     trigger: nil
                 )
-                try? await center.add(request)
+                center.add(request, withCompletionHandler: nil)
             }
         }
     }

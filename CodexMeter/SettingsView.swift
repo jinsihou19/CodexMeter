@@ -7,7 +7,7 @@ import WidgetKit
 
 /// 统一管理静默检测和用户主动安装；定时检测只更新应用内提示，不主动弹出窗口。
 @MainActor
-final class AppUpdater: NSObject, ObservableObject, SPUUpdaterDelegate, @MainActor SPUStandardUserDriverDelegate {
+final class AppUpdater: NSObject, ObservableObject, SPUUpdaterDelegate, @preconcurrency SPUStandardUserDriverDelegate {
     static let shared = AppUpdater()
 
     @Published private(set) var isUpdateAvailable = false

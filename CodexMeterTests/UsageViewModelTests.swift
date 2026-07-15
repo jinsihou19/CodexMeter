@@ -221,6 +221,27 @@ final class UsageViewModelTests: XCTestCase {
         XCTAssertFalse(aboutSource.contains("Form {"))
     }
 
+    /// 验证更新委托和通知查询不依赖 Swift 6.2 或新 SDK 的并发标注。
+    func testConcurrencyBridgesRemainCompatibleWithXcode16() throws {
+        let projectRoot = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        let settingsSource = try String(
+            contentsOf: projectRoot.appendingPathComponent("CodexMeter/SettingsView.swift"),
+            encoding: .utf8
+        )
+        let usageSource = try String(
+            contentsOf: projectRoot.appendingPathComponent("CodexMeter/UsageViewModel.swift"),
+            encoding: .utf8
+        )
+
+        XCTAssertTrue(settingsSource.contains("@preconcurrency SPUStandardUserDriverDelegate"))
+        XCTAssertFalse(settingsSource.contains("@MainActor SPUStandardUserDriverDelegate"))
+        XCTAssertTrue(usageSource.contains("center.getNotificationSettings"))
+        XCTAssertTrue(usageSource.contains("@preconcurrency import UserNotifications"))
+        XCTAssertFalse(usageSource.contains("await center.notificationSettings()"))
+    }
+
     /// 验证发现新版后，下拉面板底部提供更新按钮，用户主动点击才唤起更新界面。
     func testMenuBarFooterIncludesDeferredUpdateButton() throws {
         let testFileURL = URL(fileURLWithPath: #filePath)
