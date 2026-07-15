@@ -52,7 +52,7 @@ enum MenuBarDisplayPreset: String, CaseIterable, Identifiable {
                 layoutDensity: .compact,
                 itemSpacing: 1,
                 rowSpacing: -2,
-                numberFontSize: 9,
+                numberFontSize: 10,
                 numberFontWeight: .medium
             )
         case .balanced:
@@ -60,7 +60,7 @@ enum MenuBarDisplayPreset: String, CaseIterable, Identifiable {
                 layoutDensity: .compact,
                 itemSpacing: 2,
                 rowSpacing: -1,
-                numberFontSize: 9.5,
+                numberFontSize: 10,
                 numberFontWeight: .medium
             )
         case .relaxed:
@@ -286,6 +286,7 @@ struct UsageMetricDisplay: Equatable {
 }
 
 struct SettingsPreviewData: Equatable {
+    let snapshot: UsageSnapshot?
     let primaryValue: String
     let secondaryValue: String
     let primaryTone: UsageRemainingTone
@@ -298,6 +299,7 @@ struct SettingsPreviewData: Equatable {
     let paceTone: UsageRemainingTone
 
     init(snapshot: UsageSnapshot?) {
+        self.snapshot = snapshot
         self.primaryValue = Self.value(for: snapshot?.rateLimits.primary)
         self.secondaryValue = Self.value(for: snapshot?.rateLimits.secondary)
         self.primaryTone = Self.tone(for: snapshot?.rateLimits.primary?.remainingPercent)
@@ -338,34 +340,39 @@ struct StatusLineDisplay: Identifiable, Equatable {
     /// 根据当前设置和快照生成菜单栏两行内容；Pace 和剩余额度各自走自己的展示模型。
     @MainActor
     static func lines(viewModel: UsageViewModel, settings: MenuBarDisplaySettings) -> [StatusLineDisplay] {
+        lines(snapshot: viewModel.snapshot, settings: settings)
+    }
+
+    /// 统一生成真实菜单栏与设置预览的内容；Pace 无法计算时回退到当前可见额度窗口。
+    static func lines(snapshot: UsageSnapshot?, settings: MenuBarDisplaySettings) -> [StatusLineDisplay] {
         if settings.contentMode == .paceComparison,
-           let paceDisplay = UsagePaceDisplay(rateLimits: viewModel.snapshot?.rateLimits) {
+           let paceDisplay = UsagePaceDisplay(rateLimits: snapshot?.rateLimits) {
             return paceLines(paceDisplay: paceDisplay, settings: settings)
         }
 
         var lines: [StatusLineDisplay] = []
-        if settings.showsPrimaryWindow, viewModel.snapshot?.rateLimits.primary != nil {
+        if let primary = snapshot?.rateLimits.primary, settings.showsQuotaWindow(primary) {
             lines.append(StatusLineDisplay(
                 id: "primary",
-                label: viewModel.menuBarPrimaryLabel,
-                value: formattedValue(viewModel.menuBarPrimaryValue, settings: settings),
-                tone: viewModel.menuBarPrimaryTone
+                label: primary.compactDurationLabel,
+                value: formattedValue("\(primary.remainingPercent)%", settings: settings),
+                tone: UsageRemainingTone(remainingPercent: primary.remainingPercent)
             ))
         }
-        if settings.showsSecondaryWindow, viewModel.snapshot?.rateLimits.secondary != nil {
+        if let secondary = snapshot?.rateLimits.secondary, settings.showsQuotaWindow(secondary) {
             lines.append(StatusLineDisplay(
                 id: "secondary",
-                label: viewModel.menuBarSecondaryLabel,
-                value: formattedValue(viewModel.menuBarSecondaryValue, settings: settings),
-                tone: viewModel.menuBarSecondaryTone
+                label: secondary.compactDurationLabel,
+                value: formattedValue("\(secondary.remainingPercent)%", settings: settings),
+                tone: UsageRemainingTone(remainingPercent: secondary.remainingPercent)
             ))
         }
-        if lines.isEmpty, viewModel.snapshot == nil {
+        if lines.isEmpty, snapshot == nil {
             lines.append(StatusLineDisplay(
                 id: "fallback-primary",
-                label: viewModel.menuBarPrimaryLabel,
-                value: formattedValue(viewModel.menuBarPrimaryValue, settings: settings),
-                tone: viewModel.menuBarPrimaryTone
+                label: "quota",
+                value: "--",
+                tone: .unavailable
             ))
         }
         return lines
@@ -398,6 +405,60 @@ struct StatusLineDisplay: Identifiable, Equatable {
     }
 }
 
+/// 单行菜单栏交给 NSStatusBarButton 原生标题渲染，与 CodexBar 保持相同的 13pt Regular 系统排版。
+enum NativeStatusBarTitle {
+    static let fontSize = NSFont.systemFontSize
+
+    /// 只有一行时返回原生标题；双行仍由 SwiftUI 负责排版。
+    static func text(for lines: [StatusLineDisplay]) -> String? {
+        guard let line = lines.only else { return nil }
+        return line.label.isEmpty ? line.value : "\(line.label) \(line.value)"
+    }
+
+    /// 保留原生状态栏字体，仅对数值片段应用用户的状态颜色。
+    static func attributedText(
+        for line: StatusLineDisplay,
+        settings: MenuBarDisplaySettings,
+        font: NSFont
+    ) -> NSAttributedString {
+        let result = NSMutableAttributedString()
+        if !line.label.isEmpty {
+            result.append(NSAttributedString(
+                string: "\(line.label) ",
+                attributes: [.font: font, .foregroundColor: NSColor.labelColor]
+            ))
+        }
+        let valueColor = line.tone == .unavailable
+            ? NSColor.secondaryLabelColor
+            : NSColor(settings.color(for: line.tone))
+        result.append(NSAttributedString(
+            string: line.value,
+            attributes: [.font: font, .foregroundColor: valueColor]
+        ))
+        return result
+    }
+
+    /// 稳定预设跟随 NSStatusBarButton 的原生字体；自定义布局才应用用户调整的字号和字重。
+    static func font(
+        settings: MenuBarDisplaySettings,
+        nativeFont: NSFont = NSFont.systemFont(ofSize: fontSize)
+    ) -> NSFont {
+        guard MenuBarLayoutChoice.matching(settings: settings) == .custom else {
+            return nativeFont
+        }
+        return NSFont.systemFont(
+            ofSize: settings.numberFontSize,
+            weight: settings.numberFontWeight.nsFontWeight
+        )
+    }
+}
+
+private extension Collection {
+    var only: Element? {
+        count == 1 ? first : nil
+    }
+}
+
 enum StatusBarDisplayMetrics {
     /// 按当前两行文字真实宽度计算菜单栏项目宽度，避免 Pace 和剩余额度共用同一块空白。
     static func statusItemWidth(
@@ -405,6 +466,14 @@ enum StatusBarDisplayMetrics {
         settings: MenuBarDisplaySettings,
         activityDisplay: CodexHookActivityDisplay = CodexHookActivityDisplay(snapshot: nil)
     ) -> CGFloat {
+        if let title = NativeStatusBarTitle.text(for: lines) {
+            let textWidth = textWidth(title, font: NativeStatusBarTitle.font(settings: settings))
+            let iconWidth = showsCodexIcon(settings: settings, activityDisplay: activityDisplay)
+                ? MenuBarDisplaySettings.menuBarIconWidth + MenuBarDisplaySettings.menuBarIconTextSpacing
+                : 0
+            let activityWidth = settings.showsHookActivityLight ? activityDisplay.statusItemWidth : 0
+            return ceil(textWidth + iconWidth + activityWidth)
+        }
         let textWidth = lines
             .map { lineWidth(for: $0, settings: settings) }
             .max() ?? minimumTextWidth(settings: settings)
@@ -421,8 +490,14 @@ enum StatusBarDisplayMetrics {
     }
 
     /// 根据标签和值分别测量单行宽度，只有剩余额度模式会因为 label 额外变宽。
-    static func lineWidth(for line: StatusLineDisplay, settings: MenuBarDisplaySettings) -> CGFloat {
-        let font = NSFont.systemFont(ofSize: settings.numberFontSize, weight: settings.numberFontWeight.nsFontWeight)
+    static func lineWidth(
+        for line: StatusLineDisplay,
+        settings: MenuBarDisplaySettings
+    ) -> CGFloat {
+        let font = NSFont.monospacedDigitSystemFont(
+            ofSize: settings.numberFontSize,
+            weight: settings.numberFontWeight.nsFontWeight
+        )
         let valueWidth = textWidth(line.value, font: font)
         guard !line.label.isEmpty else {
             return valueWidth

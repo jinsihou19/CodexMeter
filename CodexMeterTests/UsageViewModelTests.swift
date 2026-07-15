@@ -49,6 +49,9 @@ final class UsageViewModelTests: XCTestCase {
         XCTAssertTrue(source.contains("title: \"播放彩带\""))
         XCTAssertTrue(source.contains(".playUsageResetConfettiPreview"))
         XCTAssertTrue(source.contains("title: \"语言\""))
+        XCTAssertTrue(source.contains("if showsCustomColorControls"))
+        XCTAssertTrue(source.contains("ForEach(detectedMenuBarWindows"))
+        XCTAssertTrue(source.contains("windowVisibilityBinding(window)"))
         XCTAssertFalse(source.contains("case advanced"))
         XCTAssertFalse(source.contains("private var header:"))
         XCTAssertFalse(source.contains("SettingsInfoRow(title: \"缓存文件\""))
@@ -88,6 +91,10 @@ final class UsageViewModelTests: XCTestCase {
         XCTAssertFalse(codexSource.contains("Section(\"用量计算\")"))
         XCTAssertFalse(codexSource.contains("title: \"恢复菜单栏默认\""))
         XCTAssertFalse(codexSource.contains("title: \"恢复小组件默认\""))
+
+        let customColors = try XCTUnwrap(source.range(of: "if showsCustomColorControls"))
+        let moreOptions = try XCTUnwrap(source.range(of: "DisclosureGroup(AppLocalization.string(\"更多选项\")"))
+        XCTAssertLessThan(customColors.lowerBound, moreOptions.lowerBound)
         XCTAssertFalse(codexSource.contains("title: \"恢复下拉面板默认\""))
     }
 
@@ -431,7 +438,7 @@ final class UsageViewModelTests: XCTestCase {
         XCTAssertEqual(settings.layoutDensity, .compact)
         XCTAssertEqual(settings.itemSpacing, 2)
         XCTAssertEqual(settings.rowSpacing, -1)
-        XCTAssertEqual(settings.numberFontSize, 9.5)
+        XCTAssertEqual(settings.numberFontSize, 10)
         XCTAssertEqual(settings.numberFontWeight, .medium)
         XCTAssertEqual(settings.goodColorHex, "#1AB85C")
         XCTAssertEqual(settings.warningColorHex, "#F5931A")
@@ -440,7 +447,7 @@ final class UsageViewModelTests: XCTestCase {
         XCTAssertFalse(settings.showsMenuBarIcon)
         XCTAssertTrue(settings.showsHookActivityLight)
         XCTAssertEqual(settings.hookActivityIndicatorStyle, .automatic)
-        XCTAssertEqual(settings.statusItemWidth, 42)
+        XCTAssertEqual(settings.statusItemWidth, 48)
         XCTAssertEqual(MenuBarDisplayPreset.matchingPreset(for: settings), .balanced)
     }
 
@@ -504,7 +511,7 @@ final class UsageViewModelTests: XCTestCase {
         XCTAssertEqual(settings.goodColorHex, "#33AA77")
         XCTAssertEqual(settings.warningColorHex, "#F5931A")
         XCTAssertEqual(settings.dangerColorHex, "#CC2222")
-        XCTAssertEqual(settings.statusItemWidth, 61)
+        XCTAssertEqual(settings.statusItemWidth, 67)
         XCTAssertTrue(settings.showsPrimaryWindow)
         XCTAssertFalse(settings.showsSecondaryWindow)
         XCTAssertFalse(settings.showsPercentSymbol)
@@ -537,6 +544,46 @@ final class UsageViewModelTests: XCTestCase {
         XCTAssertEqual(MenuBarDisplaySettings.menuBarIconTextSpacing, 2)
         XCTAssertEqual(width, expectedWidth, accuracy: 0.001)
         XCTAssertLessThan(width, settings.statusItemWidth)
+    }
+
+    /// 单行生成原生按钮标题，双行保留自定义排版。
+    func testNativeStatusBarTitleOnlyHandlesSingleLine() {
+        let singleLine = [StatusLineDisplay(id: "weekly", label: "7d", value: "97%", tone: .good)]
+        let doubleLines = singleLine + [
+            StatusLineDisplay(id: "session", label: "5h", value: "80%", tone: .good)
+        ]
+
+        XCTAssertEqual(NativeStatusBarTitle.text(for: singleLine), "7d 97%")
+        XCTAssertNil(NativeStatusBarTitle.text(for: doubleLines))
+        XCTAssertEqual(NativeStatusBarTitle.fontSize, 13)
+
+        let attributedTitle = NativeStatusBarTitle.attributedText(
+            for: singleLine[0],
+            settings: MenuBarDisplaySettings(goodColorHex: "#12AB34"),
+            font: NativeStatusBarTitle.font(settings: MenuBarDisplayPreset.balanced.settings)
+        )
+        XCTAssertEqual(attributedTitle.string, "7d 97%")
+        XCTAssertEqual(
+            attributedTitle.attribute(.foregroundColor, at: 0, effectiveRange: nil) as? NSColor,
+            .labelColor
+        )
+        let valueColor = attributedTitle.attribute(
+            .foregroundColor,
+            at: attributedTitle.length - 1,
+            effectiveRange: nil
+        ) as? NSColor
+        XCTAssertEqual(valueColor?.usingColorSpace(.sRGB)?.redComponent ?? 0, 18.0 / 255.0, accuracy: 0.001)
+        XCTAssertEqual(valueColor?.usingColorSpace(.sRGB)?.greenComponent ?? 0, 171.0 / 255.0, accuracy: 0.001)
+        XCTAssertEqual(valueColor?.usingColorSpace(.sRGB)?.blueComponent ?? 0, 52.0 / 255.0, accuracy: 0.001)
+
+        let customSettings = MenuBarDisplaySettings(
+            itemSpacing: 4,
+            numberFontSize: 12,
+            numberFontWeight: .semibold
+        )
+        let customFont = NativeStatusBarTitle.font(settings: customSettings)
+        XCTAssertEqual(customFont.pointSize, 12)
+        XCTAssertEqual(NativeStatusBarTitle.font(settings: MenuBarDisplayPreset.balanced.settings).pointSize, 13)
     }
 
     func testStatusBarWidthKeepsRemainingModeWiderThanPaceWhenLabelsAreShown() {
@@ -625,6 +672,36 @@ final class UsageViewModelTests: XCTestCase {
         XCTAssertEqual(storedSettings.layoutDensity, .normal)
     }
 
+    /// 验证动态窗口选择支持 30 天时长，并始终拒绝隐藏最后一个已检测窗口。
+    func testDynamicWindowVisibilityKeepsOneDetectedWindowVisible() {
+        let available: Set<Int> = [300, 10_080, 43_200]
+        var hidden: Set<Int> = []
+        hidden = MenuBarDisplaySettings.updatingHiddenWindowDurationMins(
+            hidden,
+            duration: 300,
+            isVisible: false,
+            availableDurations: available
+        )
+        hidden = MenuBarDisplaySettings.updatingHiddenWindowDurationMins(
+            hidden,
+            duration: 10_080,
+            isVisible: false,
+            availableDurations: available
+        )
+        let refused = MenuBarDisplaySettings.updatingHiddenWindowDurationMins(
+            hidden,
+            duration: 43_200,
+            isVisible: false,
+            availableDurations: available
+        )
+        let settings = MenuBarDisplaySettings(hiddenWindowDurationMins: refused)
+
+        XCTAssertEqual(refused, [300, 10_080])
+        XCTAssertTrue(settings.showsQuotaWindow(
+            RateLimitWindow(usedPercent: 0, windowDurationMins: 43_200, resetsAt: nil)
+        ))
+    }
+
     func testMenuBarDisplaySettingsMigratesStandardDefaultsToSharedDefaults() {
         let standardSuiteName = "CodexMeterTests.standard.\(UUID().uuidString)"
         let sharedSuiteName = "CodexMeterTests.shared.\(UUID().uuidString)"
@@ -671,7 +748,7 @@ final class UsageViewModelTests: XCTestCase {
         XCTAssertEqual(settings.layoutDensity, .compact)
         XCTAssertEqual(settings.itemSpacing, 2)
         XCTAssertEqual(settings.rowSpacing, -1)
-        XCTAssertEqual(settings.numberFontSize, 9.5)
+        XCTAssertEqual(settings.numberFontSize, 10)
         XCTAssertEqual(settings.numberFontWeight, .medium)
         XCTAssertFalse(settings.showsMenuBarIcon)
         XCTAssertTrue(settings.showsHookActivityLight)
@@ -680,6 +757,33 @@ final class UsageViewModelTests: XCTestCase {
             defaults.integer(forKey: MenuBarPreferenceKeys.displayDefaultsVersion),
             MenuBarDisplaySettings.currentDisplayDefaultsVersion
         )
+    }
+
+    /// 验证 v3 只迁移完整预设的字号，不覆盖用户手工调整的 11pt。
+    func testMenuBarDisplaySettingsMigratesVersion3PresetFontWithoutChangingCustomFont() {
+        let presetSuiteName = "CodexMeterTests.v3Preset.\(UUID().uuidString)"
+        let customSuiteName = "CodexMeterTests.v3Custom.\(UUID().uuidString)"
+        let presetDefaults = UserDefaults(suiteName: presetSuiteName)!
+        let customDefaults = UserDefaults(suiteName: customSuiteName)!
+        defer {
+            presetDefaults.removePersistentDomain(forName: presetSuiteName)
+            customDefaults.removePersistentDomain(forName: customSuiteName)
+        }
+        for defaults in [presetDefaults, customDefaults] {
+            defaults.set(3, forKey: MenuBarPreferenceKeys.displayDefaultsVersion)
+            defaults.set(MenuBarLayoutDensity.compact.rawValue, forKey: MenuBarPreferenceKeys.layoutDensity)
+            defaults.set(11.0, forKey: MenuBarPreferenceKeys.numberFontSize)
+            defaults.set(MenuBarNumberFontWeight.medium.rawValue, forKey: MenuBarPreferenceKeys.numberFontWeight)
+            defaults.set(-1.0, forKey: MenuBarPreferenceKeys.rowSpacing)
+        }
+        presetDefaults.set(2.0, forKey: MenuBarPreferenceKeys.itemSpacing)
+        customDefaults.set(4.0, forKey: MenuBarPreferenceKeys.itemSpacing)
+
+        MenuBarDisplaySettings.migrateLegacyDisplayDefaults(defaults: presetDefaults)
+        MenuBarDisplaySettings.migrateLegacyDisplayDefaults(defaults: customDefaults)
+
+        XCTAssertEqual(presetDefaults.double(forKey: MenuBarPreferenceKeys.numberFontSize), 10)
+        XCTAssertEqual(customDefaults.double(forKey: MenuBarPreferenceKeys.numberFontSize), 11)
     }
 
     func testMenuBarDisplaySettingsPostsImmediateChangeNotification() {
@@ -827,6 +931,8 @@ final class UsageViewModelTests: XCTestCase {
     }
 
     func testMenuBarDisplayPresetAppliesReadableDefaults() {
+        XCTAssertEqual(MenuBarDisplayPreset.compact.settings.numberFontSize, 10)
+        XCTAssertEqual(MenuBarDisplayPreset.balanced.settings.numberFontSize, 10)
         let relaxed = MenuBarDisplayPreset.relaxed.settings
 
         XCTAssertEqual(relaxed.layoutDensity, .normal)
@@ -1425,6 +1531,38 @@ final class UsageViewModelTests: XCTestCase {
         XCTAssertEqual(lines.map(\.value), ["90%", "94%"])
     }
 
+    /// 验证只有 primary 周窗口时，菜单栏和跟随模式小组件仍按 7 天开关而不是返回顺序过滤。
+    func testWindowVisibilityUsesDurationWhenWeeklyWindowIsPrimary() async throws {
+        let viewModel = UsageViewModel(
+            client: StubRateLimitClient(
+                snapshot: RateLimitSnapshot(
+                    limitId: "codex",
+                    limitName: nil,
+                    primary: RateLimitWindow(usedPercent: 48, windowDurationMins: 10_080, resetsAt: 2_000),
+                    secondary: nil,
+                    credits: nil,
+                    planType: nil,
+                    rateLimitReachedType: nil
+                )
+            ),
+            store: UsageSnapshotStore(
+                appGroupIdentifier: "",
+                fallbackDirectory: FileManager.default.temporaryDirectory
+                    .appendingPathComponent(UUID().uuidString, isDirectory: true)
+            ),
+            reloadWidgetTimelines: {}
+        )
+        await viewModel.refresh()
+        let snapshot = try XCTUnwrap(viewModel.snapshot)
+        let weeklyOnly = MenuBarDisplaySettings(showsPrimaryWindow: false, showsSecondaryWindow: true)
+        let sessionOnly = MenuBarDisplaySettings(showsPrimaryWindow: true, showsSecondaryWindow: false)
+
+        XCTAssertEqual(StatusLineDisplay.lines(viewModel: viewModel, settings: weeklyOnly).map(\.label), ["7d"])
+        XCTAssertTrue(StatusLineDisplay.lines(viewModel: viewModel, settings: sessionOnly).isEmpty)
+        XCTAssertEqual(CodexMeterWidgetDisplay(snapshot: snapshot, settings: weeklyOnly).lines.map(\.title), ["7 天"])
+        XCTAssertTrue(CodexMeterWidgetDisplay(snapshot: snapshot, settings: sessionOnly).lines.isEmpty)
+    }
+
     func testWindowPaceDisplaysIncludeFiveHourPaceAndHideEarlyWeeklyPace() {
         let displays = UsageWindowPaceDisplay.displays(
             rateLimits: RateLimitSnapshot(
@@ -1524,6 +1662,28 @@ final class UsageViewModelTests: XCTestCase {
         XCTAssertEqual(previewData.paceRemainingValue, "--")
         XCTAssertEqual(previewData.paceDeltaValue, "--")
         XCTAssertEqual(previewData.paceRemainingTone, .unavailable)
+    }
+
+    /// Pace 缺少重置时间无法计算时，预览与真实菜单栏都应回退到实际可见窗口。
+    func testStatusLinesFallBackToVisibleQuotaWhenPaceIsUnavailable() {
+        let snapshot = UsageSnapshot(
+            fetchedAt: Date(timeIntervalSince1970: 1_779_940_000),
+            rateLimits: RateLimitSnapshot(
+                limitId: "codex",
+                limitName: nil,
+                primary: nil,
+                secondary: RateLimitWindow(usedPercent: 2, windowDurationMins: 10_080, resetsAt: nil),
+                credits: nil,
+                planType: nil,
+                rateLimitReachedType: nil
+            )
+        )
+        let settings = MenuBarDisplaySettings(contentMode: .paceComparison)
+
+        XCTAssertEqual(
+            StatusLineDisplay.lines(snapshot: snapshot, settings: settings),
+            [StatusLineDisplay(id: "secondary", label: "7d", value: "98%", tone: .good)]
+        )
     }
 }
 

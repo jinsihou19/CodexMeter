@@ -82,60 +82,11 @@ private struct MenuBarPreviewSample: View {
     }
 
     private var previewLines: [StatusLineDisplay] {
-        if settings.contentMode == .paceComparison {
-            return [
-                StatusLineDisplay(
-                    id: "pace-remaining",
-                    label: "",
-                    value: formattedValue(data.paceRemainingValue),
-                    tone: data.paceRemainingTone
-                ),
-                StatusLineDisplay(
-                    id: "pace-delta",
-                    label: "",
-                    value: data.paceDeltaValue,
-                    tone: data.paceTone
-                )
-            ]
-        }
-
-        var lines: [StatusLineDisplay] = []
-        if settings.showsPrimaryWindow {
-            lines.append(StatusLineDisplay(
-                id: "primary",
-                label: "5h",
-                value: formattedValue(data.primaryValue),
-                tone: data.primaryTone
-            ))
-        }
-        if settings.showsSecondaryWindow {
-            lines.append(StatusLineDisplay(
-                id: "secondary",
-                label: "7d",
-                value: formattedValue(data.secondaryValue),
-                tone: data.secondaryTone
-            ))
-        }
-        if lines.isEmpty {
-            lines.append(StatusLineDisplay(
-                id: "fallback-primary",
-                label: "5h",
-                value: formattedValue(data.primaryValue),
-                tone: data.primaryTone
-            ))
-        }
-        return lines
+        StatusLineDisplay.lines(snapshot: data.snapshot, settings: settings)
     }
 
     private var sampleWidth: CGFloat {
         StatusBarDisplayMetrics.statusItemWidth(for: previewLines, settings: settings)
-    }
-
-    private func formattedValue(_ value: String) -> String {
-        guard !settings.showsPercentSymbol, value.hasSuffix("%") else {
-            return value
-        }
-        return String(value.dropLast())
     }
 
     private var sampleBackground: some View {
@@ -177,13 +128,19 @@ private struct MenuBarPreviewSample: View {
         settings.rowSpacing
     }
 
-    /// 预览字号完全跟随设置页，确保预览和菜单栏真实显示一致。
+    /// 预览直接使用当前真实字号，保证自定义控件和菜单栏显示一致。
     private var previewFontSize: Double {
-        settings.numberFontSize
+        guard previewLines.count == 1 else { return settings.numberFontSize }
+        return NativeStatusBarTitle.font(settings: settings).pointSize
     }
 
     private var previewFontWeight: Font.Weight {
-        settings.numberFontWeight.fontWeight
+        guard previewLines.count == 1,
+              MenuBarLayoutChoice.matching(settings: settings) != .custom
+        else {
+            return settings.numberFontWeight.fontWeight
+        }
+        return .regular
     }
 
     private var textColumnAlignment: HorizontalAlignment {
@@ -199,10 +156,9 @@ private struct MenuBarPreviewSample: View {
             Text(value)
                 .foregroundStyle(tone.statusBarColor(settings: settings))
         }
-        .font(.system(size: previewFontSize, weight: previewFontWeight))
-        .monospacedDigit()
+        .font(.system(size: previewFontSize, weight: previewFontWeight).monospacedDigit())
+        .fixedSize(horizontal: true, vertical: false)
         .lineLimit(1)
-        .minimumScaleFactor(0.78)
     }
 }
 

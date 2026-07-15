@@ -207,6 +207,10 @@ struct SettingsView: View {
     @State private var launchAtLoginError: String?
     @State private var cacheActionMessage: String?
     @State private var menuBarLayoutChoice = MenuBarLayoutChoice.custom
+    @State private var explicitlyUsesCustomColors = false
+    @State private var hiddenWindowDurationMins = MenuBarDisplaySettings(
+        defaults: MenuBarDisplaySettings.sharedDefaults
+    ).hiddenWindowDurationMins
     @Environment(\.colorScheme) private var systemColorScheme
     private let hookActivityURL = CodexHookActivityLocation.activityURL()
 
@@ -402,6 +406,12 @@ struct SettingsView: View {
                     .pickerStyle(.menu)
                 }
 
+                if showsCustomColorControls {
+                    ColorHexPicker(title: "充足", hex: menuBarBinding($goodColorHex, key: MenuBarPreferenceKeys.goodColorHex))
+                    ColorHexPicker(title: "偏低", hex: menuBarBinding($warningColorHex, key: MenuBarPreferenceKeys.warningColorHex))
+                    ColorHexPicker(title: "紧张", hex: menuBarBinding($dangerColorHex, key: MenuBarPreferenceKeys.dangerColorHex))
+                }
+
                 DisclosureGroup(AppLocalization.string("更多选项")) {
                     SettingsToggleRow(
                         title: "启动时打开设置",
@@ -433,9 +443,6 @@ struct SettingsView: View {
                         .frame(width: 180)
                     }
 
-                    ColorHexPicker(title: "充足", hex: menuBarBinding($goodColorHex, key: MenuBarPreferenceKeys.goodColorHex))
-                    ColorHexPicker(title: "偏低", hex: menuBarBinding($warningColorHex, key: MenuBarPreferenceKeys.warningColorHex))
-                    ColorHexPicker(title: "紧张", hex: menuBarBinding($dangerColorHex, key: MenuBarPreferenceKeys.dangerColorHex))
                 }
             }
         }
@@ -625,16 +632,13 @@ struct SettingsView: View {
                         .pickerStyle(.menu)
                     }
                 }
-                SettingsToggleRow(
-                    title: "显示 5 小时窗口",
-                    subtitle: "在菜单栏显示短窗口剩余额度；至少会保留一个窗口。",
-                    isOn: primaryWindowBinding
-                )
-                SettingsToggleRow(
-                    title: "显示 7 天窗口",
-                    subtitle: "在菜单栏显示周窗口剩余额度；至少会保留一个窗口。",
-                    isOn: secondaryWindowBinding
-                )
+                ForEach(detectedMenuBarWindows, id: \.windowDurationMins) { window in
+                    SettingsToggleRow(
+                        title: windowVisibilityTitle(window),
+                        subtitle: "在菜单栏显示此窗口剩余额度；至少会保留一个窗口。",
+                        isOn: windowVisibilityBinding(window)
+                    )
+                }
                 SettingsToggleRow(
                     title: "显示 Codex 图标",
                     subtitle: "在数字左侧显示 Codex 图标，便于和其他菜单栏项目区分。",
@@ -675,21 +679,23 @@ struct SettingsView: View {
                         subtitle: "关闭后只显示数字，适合菜单栏空间很紧张时使用。",
                         isOn: menuBarBinding($showsPercentSymbol, key: MenuBarPreferenceKeys.showsPercentSymbol)
                     )
-                    DensitySettingRow(layoutDensity: menuBarBinding($layoutDensity, key: MenuBarPreferenceKeys.layoutDensity))
-                    SliderSettingRow(
-                        title: "项目间距",
-                        value: menuBarBinding($itemSpacing, key: MenuBarPreferenceKeys.itemSpacing),
-                        range: 0...8,
-                        step: 0.5,
-                        suffix: "pt"
-                    )
-                    SliderSettingRow(
-                        title: "两行行距",
-                        value: menuBarBinding($rowSpacing, key: MenuBarPreferenceKeys.rowSpacing),
-                        range: -5...6,
-                        step: 0.5,
-                        suffix: "pt"
-                    )
+                    if usesMultilineMenuBarDisplay {
+                        DensitySettingRow(layoutDensity: menuBarBinding($layoutDensity, key: MenuBarPreferenceKeys.layoutDensity))
+                        SliderSettingRow(
+                            title: "项目间距",
+                            value: menuBarBinding($itemSpacing, key: MenuBarPreferenceKeys.itemSpacing),
+                            range: 0...8,
+                            step: 0.5,
+                            suffix: "pt"
+                        )
+                        SliderSettingRow(
+                            title: "两行行距",
+                            value: menuBarBinding($rowSpacing, key: MenuBarPreferenceKeys.rowSpacing),
+                            range: -5...6,
+                            step: 0.5,
+                            suffix: "pt"
+                        )
+                    }
                     SliderSettingRow(
                         title: "数字字号",
                         value: menuBarBinding($numberFontSize, key: MenuBarPreferenceKeys.numberFontSize),
@@ -982,6 +988,7 @@ struct SettingsView: View {
             dangerColorHex: dangerColorHex,
             showsPrimaryWindow: showsPrimaryWindow,
             showsSecondaryWindow: showsSecondaryWindow,
+            hiddenWindowDurationMins: hiddenWindowDurationMins,
             showsPercentSymbol: showsPercentSymbol,
             showsAdditionalLimits: MenuBarDisplaySettings.defaultShowsAdditionalLimits,
             showsMenuBarIcon: showsMenuBarIcon,
@@ -1026,13 +1033,21 @@ struct SettingsView: View {
         )
     }
 
-    /// 颜色菜单允许显示历史自定义配色；选择预设时沿用原有批量写入与刷新路径。
+    /// 自定义颜色在用户主动选择或现有颜色不匹配预设时显示。
+    private var showsCustomColorControls: Bool {
+        explicitlyUsesCustomColors || selectedColorPreset == nil
+    }
+
+    /// 颜色菜单允许显式进入自定义状态；选择预设时沿用原有批量写入与刷新路径。
     private var colorPresetBinding: Binding<MenuBarColorPreset?> {
         Binding(
-            get: { selectedColorPreset },
+            get: { explicitlyUsesCustomColors ? nil : selectedColorPreset },
             set: { preset in
                 if let preset {
+                    explicitlyUsesCustomColors = false
                     applyColorPreset(preset)
+                } else {
+                    explicitlyUsesCustomColors = true
                 }
             }
         )
@@ -1043,19 +1058,37 @@ struct SettingsView: View {
         Binding(
             get: { menuBarLayoutChoice },
             set: { choice in
+                let previousChoice = menuBarLayoutChoice
                 menuBarLayoutChoice = choice
                 if let preset = choice.preset {
                     applyDisplayPreset(preset)
+                } else if previousChoice != .custom {
+                    seedCustomTypographyFromCurrentDisplay()
                 }
             }
         )
+    }
+
+    /// 进入自定义时保留当前实际排版；只有单行需把原生按钮的 13pt Regular 写回控件。
+    private func seedCustomTypographyFromCurrentDisplay() {
+        guard !usesMultilineMenuBarDisplay else { return }
+        numberFontSize = NativeStatusBarTitle.fontSize
+        numberFontWeight = MenuBarNumberFontWeight.regular.rawValue
+        MenuBarDisplaySettings.sharedDefaults.set(numberFontSize, forKey: MenuBarPreferenceKeys.numberFontSize)
+        MenuBarDisplaySettings.sharedDefaults.set(numberFontWeight, forKey: MenuBarPreferenceKeys.numberFontWeight)
+        notifyMenuBarDisplaySettingsDidChange()
+    }
+
+    /// 密度、项目间距和行距只影响 SwiftUI 双行布局，单行原生标题不展示无效控件。
+    private var usesMultilineMenuBarDisplay: Bool {
+        StatusLineDisplay.lines(snapshot: previewSnapshot, settings: currentSettings).count > 1
     }
 
     /// 语言选择写入共享偏好、更新下次启动覆盖，并立即刷新桌面小组件时间线。
     private var appLanguageBinding: Binding<String> {
         storedBinding($selectedLanguage, key: AppLanguagePreferenceKeys.selectedLanguage) { rawValue in
             (AppLanguage(rawValue: rawValue) ?? .system).apply()
-            WidgetCenter.shared.reloadAllTimelines()
+            reloadWidgetTimelinesInBackground(reloadAll: true)
         }
     }
 
@@ -1096,7 +1129,7 @@ struct SettingsView: View {
         storedBinding(binding, key: key) { _ in
             SurfaceAppearanceSettings.notifyDidChange()
             SettingsWindowPresenter.shared.applyCurrentAppearance()
-            WidgetCenter.shared.reloadTimelines(ofKind: "CodexUsageWidget")
+            reloadWidgetTimelinesInBackground()
         }
     }
 
@@ -1151,13 +1184,24 @@ struct SettingsView: View {
     /// 统一发送菜单栏设置变更通知，并同步依赖菜单栏偏好的小组件。
     private func notifyMenuBarDisplaySettingsDidChange() {
         MenuBarDisplaySettings.notifyDidChange()
-        WidgetCenter.shared.reloadTimelines(ofKind: "CodexUsageWidget")
+        reloadWidgetTimelinesInBackground()
     }
 
     /// 统一发送小组件设置变更通知，并要求 WidgetKit 马上重建时间线。
     private func notifyWidgetDisplaySettingsDidChange() {
         WidgetDisplaySettings.notifyDidChange()
-        WidgetCenter.shared.reloadTimelines(ofKind: "CodexUsageWidget")
+        reloadWidgetTimelinesInBackground()
+    }
+
+    /// WidgetKit 唤醒不参与设置点击的即时反馈，避免系统时间线重建阻塞主线程。
+    private func reloadWidgetTimelinesInBackground(reloadAll: Bool = false) {
+        DispatchQueue.global(qos: .utility).async {
+            if reloadAll {
+                WidgetCenter.shared.reloadAllTimelines()
+            } else {
+                WidgetCenter.shared.reloadTimelines(ofKind: "CodexUsageWidget")
+            }
+        }
     }
 
     private var launchAtLoginBinding: Binding<Bool> {
@@ -1176,31 +1220,40 @@ struct SettingsView: View {
         )
     }
 
-    private var primaryWindowBinding: Binding<Bool> {
-        Binding(
-            get: { showsPrimaryWindow },
-            set: { newValue in
-                showsPrimaryWindow = newValue
-                if !newValue && !showsSecondaryWindow {
-                    showsSecondaryWindow = true
-                }
-                MenuBarDisplaySettings.sharedDefaults.set(showsPrimaryWindow, forKey: MenuBarPreferenceKeys.showsPrimaryWindow)
-                MenuBarDisplaySettings.sharedDefaults.set(showsSecondaryWindow, forKey: MenuBarPreferenceKeys.showsSecondaryWindow)
-                notifyMenuBarDisplaySettingsDidChange()
-            }
-        )
+    /// 从当前快照提取并按时长排序窗口，同一时长只生成一个菜单栏开关。
+    private var detectedMenuBarWindows: [RateLimitWindow] {
+        var windowsByDuration: [Int: RateLimitWindow] = [:]
+        for window in [previewSnapshot?.rateLimits.primary, previewSnapshot?.rateLimits.secondary].compactMap({ $0 }) {
+            windowsByDuration[window.windowDurationMins ?? 0] = window
+        }
+        return windowsByDuration.sorted { $0.key < $1.key }.map(\.value)
     }
 
-    private var secondaryWindowBinding: Binding<Bool> {
-        Binding(
-            get: { showsSecondaryWindow },
-            set: { newValue in
-                showsSecondaryWindow = newValue
-                if !newValue && !showsPrimaryWindow {
-                    showsPrimaryWindow = true
-                }
-                MenuBarDisplaySettings.sharedDefaults.set(showsPrimaryWindow, forKey: MenuBarPreferenceKeys.showsPrimaryWindow)
-                MenuBarDisplaySettings.sharedDefaults.set(showsSecondaryWindow, forKey: MenuBarPreferenceKeys.showsSecondaryWindow)
+    /// 生成包含实际窗口时长的本地化开关标题。
+    private func windowVisibilityTitle(_ window: RateLimitWindow) -> String {
+        let language = AppLanguage(rawValue: selectedLanguage) ?? .system
+        let duration = window.localizedDurationLabel(language: language)
+        return AppLocalization.usesEnglish(language: language)
+            ? "Show \(duration) Window"
+            : "显示 \(duration)窗口"
+    }
+
+    /// 更新单个时长的可见性并持久化，最后一个已检测窗口不会被隐藏。
+    private func windowVisibilityBinding(_ window: RateLimitWindow) -> Binding<Bool> {
+        let duration = window.windowDurationMins ?? 0
+        return Binding(
+            get: { !hiddenWindowDurationMins.contains(duration) },
+            set: { isVisible in
+                hiddenWindowDurationMins = MenuBarDisplaySettings.updatingHiddenWindowDurationMins(
+                    hiddenWindowDurationMins,
+                    duration: duration,
+                    isVisible: isVisible,
+                    availableDurations: Set(detectedMenuBarWindows.map { $0.windowDurationMins ?? 0 })
+                )
+                MenuBarDisplaySettings.sharedDefaults.set(
+                    hiddenWindowDurationMins.sorted(),
+                    forKey: MenuBarPreferenceKeys.hiddenWindowDurationMins
+                )
                 notifyMenuBarDisplaySettingsDidChange()
             }
         )
@@ -1261,6 +1314,7 @@ struct SettingsView: View {
         dangerColorHex = settings.dangerColorHex
         showsPrimaryWindow = settings.showsPrimaryWindow
         showsSecondaryWindow = settings.showsSecondaryWindow
+        hiddenWindowDurationMins = settings.hiddenWindowDurationMins
         showsPercentSymbol = settings.showsPercentSymbol
         showsMenuBarIcon = settings.showsMenuBarIcon
         showsHookActivityLight = settings.showsHookActivityLight
@@ -1312,7 +1366,7 @@ struct SettingsView: View {
             try UsageSnapshotStore().deleteSnapshot()
             previewSnapshot = nil
             cacheActionMessage = localized("最近同步缓存已清除。")
-            WidgetCenter.shared.reloadTimelines(ofKind: "CodexUsageWidget")
+            reloadWidgetTimelinesInBackground()
         } catch {
             cacheActionMessage = "\(localized("清除失败：")) \(error.localizedDescription)"
         }

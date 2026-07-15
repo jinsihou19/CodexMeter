@@ -115,6 +115,11 @@ public struct RateLimitWindow: Codable, Equatable, Sendable {
         Int(min(max(usedPercent, 0), 100).rounded())
     }
 
+    /// 按接口时长识别设置中所称的 7 天窗口，不依赖 primary 或 secondary 的返回位置。
+    public var isWeeklyQuotaWindow: Bool {
+        windowDurationMins == 7 * 24 * 60
+    }
+
     /// 按接口返回的实际窗口时长生成中文标题，未返回时长时使用通用名称。
     public var durationLabel: String {
         localizedDurationLabel(language: .chineseSimplified)

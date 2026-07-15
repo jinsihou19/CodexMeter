@@ -14,6 +14,7 @@ public enum MenuBarPreferenceKeys {
     public static let dangerColorHex = "menuBar.dangerColorHex"
     public static let showsPrimaryWindow = "menuBar.showsPrimaryWindow"
     public static let showsSecondaryWindow = "menuBar.showsSecondaryWindow"
+    public static let hiddenWindowDurationMins = "menuBar.hiddenWindowDurationMins"
     public static let showsPercentSymbol = "menuBar.showsPercentSymbol"
     public static let showsAdditionalLimits = "menuBar.showsAdditionalLimits"
     public static let showsMenuBarIcon = "menuBar.showsMenuBarIcon"
@@ -33,6 +34,7 @@ public enum MenuBarPreferenceKeys {
         dangerColorHex,
         showsPrimaryWindow,
         showsSecondaryWindow,
+        hiddenWindowDurationMins,
         showsPercentSymbol,
         showsAdditionalLimits,
         showsMenuBarIcon,
@@ -172,6 +174,7 @@ public enum AppLocalization {
         "在菜单栏显示短窗口剩余额度；至少会保留一个窗口。": "Show the short-window quota; at least one window remains visible.",
         "显示 7 天窗口": "Show 7-Day Window",
         "在菜单栏显示周窗口剩余额度；至少会保留一个窗口。": "Show the weekly quota; at least one window remains visible.",
+        "在菜单栏显示此窗口剩余额度；至少会保留一个窗口。": "Show this quota window; at least one window remains visible.",
         "显示 Codex 图标": "Show Codex Icon",
         "在数字左侧显示 Codex 图标，便于和其他菜单栏项目区分。": "Show the Codex icon before values for easier identification.",
         "显示活动指示": "Show Activity Indicator",
@@ -961,20 +964,20 @@ public enum MenuBarLayoutDensity: String, CaseIterable, Identifiable, Sendable {
     public var statusItemWidth: CGFloat {
         switch self {
         case .compact:
-            return 42
+            return 48
         case .normal:
-            return 44
+            return 50
         }
     }
 }
 
 public struct MenuBarDisplaySettings: Equatable, Sendable {
-    public static let currentDisplayDefaultsVersion = 2
+    public static let currentDisplayDefaultsVersion = 4
     public static let defaultContentMode = MenuBarContentMode.remainingWindows
     public static let defaultLayoutDensity = MenuBarLayoutDensity.compact
     public static let defaultItemSpacing = 2.0
     public static let defaultRowSpacing = -1.0
-    public static let defaultNumberFontSize = 9.5
+    public static let defaultNumberFontSize = 10.0
     public static let defaultNumberFontWeight = MenuBarNumberFontWeight.medium
     public static let defaultGoodColorHex = "#1AB85C"
     public static let defaultWarningColorHex = "#F5931A"
@@ -1007,6 +1010,7 @@ public struct MenuBarDisplaySettings: Equatable, Sendable {
     public let dangerColorHex: String
     public let showsPrimaryWindow: Bool
     public let showsSecondaryWindow: Bool
+    public let hiddenWindowDurationMins: Set<Int>
     public let showsPercentSymbol: Bool
     public let showsAdditionalLimits: Bool
     public let showsMenuBarIcon: Bool
@@ -1026,6 +1030,7 @@ public struct MenuBarDisplaySettings: Equatable, Sendable {
         dangerColorHex: String = Self.defaultDangerColorHex,
         showsPrimaryWindow: Bool = Self.defaultShowsPrimaryWindow,
         showsSecondaryWindow: Bool = Self.defaultShowsSecondaryWindow,
+        hiddenWindowDurationMins: Set<Int>? = nil,
         showsPercentSymbol: Bool = Self.defaultShowsPercentSymbol,
         showsAdditionalLimits: Bool = Self.defaultShowsAdditionalLimits,
         showsMenuBarIcon: Bool = Self.defaultShowsMenuBarIcon,
@@ -1044,6 +1049,10 @@ public struct MenuBarDisplaySettings: Equatable, Sendable {
         self.dangerColorHex = Self.normalizedColorHex(dangerColorHex, fallback: Self.defaultDangerColorHex)
         self.showsPrimaryWindow = showsPrimaryWindow || !showsSecondaryWindow
         self.showsSecondaryWindow = showsSecondaryWindow || !showsPrimaryWindow
+        self.hiddenWindowDurationMins = hiddenWindowDurationMins ?? Self.legacyHiddenWindowDurationMins(
+            showsPrimaryWindow: showsPrimaryWindow,
+            showsSecondaryWindow: showsSecondaryWindow
+        )
         self.showsPercentSymbol = showsPercentSymbol
         self.showsAdditionalLimits = showsAdditionalLimits
         self.showsMenuBarIcon = showsMenuBarIcon
@@ -1079,6 +1088,7 @@ public struct MenuBarDisplaySettings: Equatable, Sendable {
                 ?? Self.defaultShowsPrimaryWindow,
             showsSecondaryWindow: defaults.object(forKey: MenuBarPreferenceKeys.showsSecondaryWindow) as? Bool
                 ?? Self.defaultShowsSecondaryWindow,
+            hiddenWindowDurationMins: Self.storedHiddenWindowDurationMins(defaults: defaults),
             showsPercentSymbol: defaults.object(forKey: MenuBarPreferenceKeys.showsPercentSymbol) as? Bool
                 ?? Self.defaultShowsPercentSymbol,
             showsAdditionalLimits: defaults.object(forKey: MenuBarPreferenceKeys.showsAdditionalLimits) as? Bool
@@ -1121,6 +1131,49 @@ public struct MenuBarDisplaySettings: Equatable, Sendable {
         }
     }
 
+    /// 按窗口实际时长应用 5 小时与 7 天显示开关，兼容只有 primary 周窗口的账号。
+    public func showsQuotaWindow(_ window: RateLimitWindow) -> Bool {
+        guard let duration = window.windowDurationMins else { return true }
+        return !hiddenWindowDurationMins.contains(duration)
+    }
+
+    /// 读取动态窗口偏好；新键不存在时把旧 5 小时与 7 天开关迁移为对应时长。
+    public static func storedHiddenWindowDurationMins(defaults: UserDefaults) -> Set<Int>? {
+        if let values = defaults.array(forKey: MenuBarPreferenceKeys.hiddenWindowDurationMins) {
+            return Set(values.compactMap { ($0 as? NSNumber)?.intValue })
+        }
+        return nil
+    }
+
+    /// 应用单个窗口开关，并拒绝隐藏当前检测结果中的最后一个可见窗口。
+    public static func updatingHiddenWindowDurationMins(
+        _ hidden: Set<Int>,
+        duration: Int,
+        isVisible: Bool,
+        availableDurations: Set<Int>
+    ) -> Set<Int> {
+        var updated = hidden
+        if isVisible {
+            updated.remove(duration)
+        } else {
+            let visibleDurations = availableDurations.subtracting(hidden)
+            guard visibleDurations.count > 1 || !visibleDurations.contains(duration) else { return hidden }
+            updated.insert(duration)
+        }
+        return updated
+    }
+
+    /// 把旧版固定窗口开关映射为对应标准时长，首次升级时保持既有选择。
+    private static func legacyHiddenWindowDurationMins(
+        showsPrimaryWindow: Bool,
+        showsSecondaryWindow: Bool
+    ) -> Set<Int> {
+        var hidden: Set<Int> = []
+        if !showsPrimaryWindow { hidden.insert(5 * 60) }
+        if !showsSecondaryWindow { hidden.insert(7 * 24 * 60) }
+        return hidden
+    }
+
     public func color(for tone: UsageRemainingTone) -> Color {
         switch tone {
         case .unavailable:
@@ -1143,9 +1196,12 @@ public struct MenuBarDisplaySettings: Equatable, Sendable {
 
     /// 将已经写入的旧默认值迁移到当前默认值，避免菜单栏和小组件继续读取旧版默认设置。
     public static func migrateLegacyDisplayDefaults(defaults: UserDefaults = Self.sharedDefaults) {
-        guard defaults.integer(forKey: MenuBarPreferenceKeys.displayDefaultsVersion) < currentDisplayDefaultsVersion else {
+        let storedVersion = defaults.integer(forKey: MenuBarPreferenceKeys.displayDefaultsVersion)
+        guard storedVersion < currentDisplayDefaultsVersion else {
             return
         }
+
+        migrateVersion3PresetFontSize(defaults: defaults, storedVersion: storedVersion)
 
         replaceStoredValue(
             defaults: defaults,
@@ -1179,6 +1235,12 @@ public struct MenuBarDisplaySettings: Equatable, Sendable {
         )
         replaceStoredValue(
             defaults: defaults,
+            key: MenuBarPreferenceKeys.numberFontSize,
+            legacyValue: 9.5,
+            currentValue: defaultNumberFontSize
+        )
+        replaceStoredValue(
+            defaults: defaults,
             key: MenuBarPreferenceKeys.numberFontWeight,
             legacyValue: MenuBarNumberFontWeight.medium.rawValue,
             currentValue: defaultNumberFontWeight.rawValue
@@ -1195,6 +1257,21 @@ public struct MenuBarDisplaySettings: Equatable, Sendable {
 
         defaults.set(currentDisplayDefaultsVersion, forKey: MenuBarPreferenceKeys.displayDefaultsVersion)
         defaults.synchronize()
+    }
+
+    /// 只把 v3 的两档完整预设从 11pt 调整为 10pt，用户手工配置的 11pt 保持不变。
+    private static func migrateVersion3PresetFontSize(defaults: UserDefaults, storedVersion: Int) {
+        guard storedVersion == 3,
+              defaults.string(forKey: MenuBarPreferenceKeys.layoutDensity) == MenuBarLayoutDensity.compact.rawValue,
+              defaults.string(forKey: MenuBarPreferenceKeys.numberFontWeight) == MenuBarNumberFontWeight.medium.rawValue,
+              (defaults.object(forKey: MenuBarPreferenceKeys.numberFontSize) as? NSNumber)?.doubleValue == 11
+        else {
+            return
+        }
+        let itemSpacing = (defaults.object(forKey: MenuBarPreferenceKeys.itemSpacing) as? NSNumber)?.doubleValue
+        let rowSpacing = (defaults.object(forKey: MenuBarPreferenceKeys.rowSpacing) as? NSNumber)?.doubleValue
+        guard (itemSpacing == 1 && rowSpacing == -2) || (itemSpacing == 2 && rowSpacing == -1) else { return }
+        defaults.set(defaultNumberFontSize, forKey: MenuBarPreferenceKeys.numberFontSize)
     }
 
     public static func notifyDidChange(defaults: UserDefaults = Self.sharedDefaults) {
@@ -1524,8 +1601,9 @@ public struct CodexMeterWidgetDisplay: Equatable, Sendable {
         now: Date = Date()
     ) {
         var lines: [Line] = []
-        let windows = Self.visibleWindows(menuBarSettings: settings, widgetSettings: widgetSettings)
-        if windows.showsPrimary, let primary = snapshot.rateLimits.primary {
+        if let primary = snapshot.rateLimits.primary,
+           Self.showsWindow(primary, menuBarSettings: settings, widgetSettings: widgetSettings)
+        {
             lines.append(Self.line(
                 id: "primary",
                 title: primary.localizedDurationLabel(language: language),
@@ -1546,7 +1624,9 @@ public struct CodexMeterWidgetDisplay: Equatable, Sendable {
                 language: language
             ))
         }
-        if windows.showsSecondary, let secondary = snapshot.rateLimits.secondary {
+        if let secondary = snapshot.rateLimits.secondary,
+           Self.showsWindow(secondary, menuBarSettings: settings, widgetSettings: widgetSettings)
+        {
             lines.append(Self.line(
                 id: "secondary",
                 title: secondary.localizedDurationLabel(language: language),
@@ -1567,44 +1647,24 @@ public struct CodexMeterWidgetDisplay: Equatable, Sendable {
                 language: language
             ))
         }
-        if lines.isEmpty, let fallback = snapshot.rateLimits.primary ?? snapshot.rateLimits.secondary {
-            lines.append(Self.line(
-                id: "fallback",
-                title: fallback.localizedDurationLabel(language: language),
-                window: fallback,
-                resetText: widgetSettings.showsResetTime
-                    ? formatter.resetRemainingText(window: fallback, now: now)
-                    : "",
-                paceDisplay: widgetSettings.showsPaceComparison
-                    ? UsageWindowPaceDisplay(
-                        id: "fallback",
-                        title: fallback.localizedDurationLabel(language: language),
-                        window: fallback,
-                        now: now,
-                        weeklyProgressWorkDays: settings.weeklyProgressWorkDays
-                    )?.display
-                    : nil,
-                settings: settings,
-                language: language
-            ))
-        }
         self.lines = lines
     }
 
-    /// 根据小组件专属配置决定可见窗口；跟随菜单栏时复用旧行为。
-    private static func visibleWindows(
+    /// 根据实际窗口时长和小组件模式判断是否显示，避免把 primary 固定解释为 5 小时。
+    private static func showsWindow(
+        _ window: RateLimitWindow,
         menuBarSettings: MenuBarDisplaySettings,
         widgetSettings: WidgetDisplaySettings
-    ) -> (showsPrimary: Bool, showsSecondary: Bool) {
+    ) -> Bool {
         switch widgetSettings.contentMode {
         case .followsMenuBar:
-            return (menuBarSettings.showsPrimaryWindow, menuBarSettings.showsSecondaryWindow)
+            return menuBarSettings.showsQuotaWindow(window)
         case .bothWindows:
-            return (true, true)
+            return true
         case .primaryOnly:
-            return (true, false)
+            return !window.isWeeklyQuotaWindow
         case .secondaryOnly:
-            return (false, true)
+            return window.isWeeklyQuotaWindow
         }
     }
 
