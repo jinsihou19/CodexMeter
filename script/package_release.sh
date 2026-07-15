@@ -45,6 +45,7 @@ fi
 NEXT_BUILD_NUMBER="$(release_next_build_number "$BUILD_NUMBER")"
 DMG_PATH="$DIST_DIR/$APP_NAME-$MARKETING_VERSION-$BUILD_NUMBER-universal.dmg"
 APPCAST_PATH="$DIST_DIR/appcast.xml"
+RELEASE_NOTES_PATH="$DIST_DIR/release-notes.md"
 APP_PATH="$BUILD_DIR/Release/$COMPATIBLE_PRODUCT_NAME.app"
 RELEASE_TAG="v$MARKETING_VERSION-$BUILD_NUMBER"
 DOWNLOAD_URL_PREFIX="https://github.com/jinsihou19/CodexMeter/releases/download/$RELEASE_TAG/"
@@ -151,6 +152,20 @@ fi
 # Sparkle 会用兼容 App 包目录生成频道标题；仅替换展示标题，保留已签名 enclosure 的全部属性。
 perl -0pi -e 's{(<channel>\s*<title>)[^<]*(</title>)}{$1CodexMeter$2}' "$APPCAST_PATH"
 
+# 使用上一个 Release 到当前提交的差异生成分类说明，直接提交也不会被遗漏。
+PREVIOUS_RELEASE_TAG="$(gh release list --repo "$GITHUB_REPOSITORY" --limit 1 --json tagName --jq '.[0].tagName // empty')"
+NOTES_REVISION_RANGE="HEAD"
+if [ -n "$PREVIOUS_RELEASE_TAG" ] && git -C "$ROOT_DIR" rev-parse --verify "$PREVIOUS_RELEASE_TAG^{commit}" >/dev/null 2>&1; then
+  NOTES_REVISION_RANGE="$PREVIOUS_RELEASE_TAG..HEAD"
+fi
+release_write_notes \
+  "$ROOT_DIR" \
+  "$NOTES_REVISION_RANGE" \
+  "$RELEASE_NOTES_PATH" \
+  "$PREVIOUS_RELEASE_TAG" \
+  "$RELEASE_TAG" \
+  "$GITHUB_REPOSITORY"
+
 # WidgetKit 会保留 extension 进程；本机安装前一并结束，Actions runner 则跳过该步骤。
 if [ "$INSTALL_LOCAL" = "1" ]; then
   pkill -x "$WIDGET_PROCESS_NAME" 2>/dev/null || true
@@ -168,7 +183,7 @@ if [ "$PUBLISH_RELEASE" = "1" ]; then
     --repo "$GITHUB_REPOSITORY" \
     --target "$(git -C "$ROOT_DIR" rev-parse HEAD)" \
     --title "$APP_NAME $MARKETING_VERSION ($BUILD_NUMBER)" \
-    --generate-notes
+    --notes-file "$RELEASE_NOTES_PATH"
 fi
 
 # 全部构建、安装和所选发布流程成功后再推进工程版本，失败发布不会消耗构建号。

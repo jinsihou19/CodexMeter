@@ -39,7 +39,7 @@ assert_equal() {
 assert_script_contains() {
   local pattern="$1"
   local message="$2"
-  if ! grep -Fq "$pattern" "$PACKAGE_SCRIPT"; then
+  if ! grep -Fq -- "$pattern" "$PACKAGE_SCRIPT"; then
     echo "$message: missing '$pattern'" >&2
     exit 1
   fi
@@ -81,11 +81,34 @@ grep -Fq 'runs-on: macos-' "$PAGES_WORKFLOW"
 grep -Fq 'SPARKLE_PRIVATE_KEY: ${{ secrets.SPARKLE_PRIVATE_KEY }}' "$PAGES_WORKFLOW"
 grep -Fq 'actions/upload-pages-artifact@v4' "$PAGES_WORKFLOW"
 grep -Fq 'actions/deploy-pages@v4' "$PAGES_WORKFLOW"
+grep -Fq 'fetch-depth: 0' "$PAGES_WORKFLOW"
 assert_script_contains 'CURRENT_PROJECT_VERSION="$BUILD_NUMBER"' "构建号注入"
 assert_script_contains 'MARKETING_VERSION="$MARKETING_VERSION"' "语义版本注入"
 assert_script_contains 'if [ -e "$DMG_PATH" ]; then' "禁止覆盖旧产物"
 assert_script_contains 'release_update_project_versions "$PROJECT_FILE" "$MARKETING_VERSION" "$NEXT_BUILD_NUMBER"' "发布后推进版本"
+assert_script_contains '--notes-file "$RELEASE_NOTES_PATH"' "发布使用分类说明"
 release_validate_marketing_version "$(release_read_project_setting "$ACTUAL_PROJECT_FILE" MARKETING_VERSION)"
 release_validate_build_number "$(release_read_project_setting "$ACTUAL_PROJECT_FILE" CURRENT_PROJECT_VERSION)"
+
+# 验证直接提交能按 Conventional Commits 分组，并生成版本对比链接。
+NOTES_REPOSITORY="$TEMP_DIR/notes-repository"
+NOTES_FILE="$TEMP_DIR/release-notes.md"
+git init -q "$NOTES_REPOSITORY"
+git -C "$NOTES_REPOSITORY" config user.name "Release Test"
+git -C "$NOTES_REPOSITORY" config user.email "release-test@example.com"
+touch "$NOTES_REPOSITORY/file"
+git -C "$NOTES_REPOSITORY" add file
+git -C "$NOTES_REPOSITORY" commit -q -m "chore: baseline"
+git -C "$NOTES_REPOSITORY" tag v1.0.0-1
+printf 'feature\n' >> "$NOTES_REPOSITORY/file"
+git -C "$NOTES_REPOSITORY" commit -qam "feat(settings): add display option"
+printf 'fix\n' >> "$NOTES_REPOSITORY/file"
+git -C "$NOTES_REPOSITORY" commit -qam "fix(ui): repair popover"
+release_write_notes "$NOTES_REPOSITORY" "v1.0.0-1..HEAD" "$NOTES_FILE" "v1.0.0-1" "v1.1.0-2" "example/project"
+grep -Fq '## 新功能' "$NOTES_FILE"
+grep -Fq -- '- add display option' "$NOTES_FILE"
+grep -Fq '## 问题修复' "$NOTES_FILE"
+grep -Fq -- '- repair popover' "$NOTES_FILE"
+grep -Fq 'https://github.com/example/project/compare/v1.0.0-1...v1.1.0-2' "$NOTES_FILE"
 
 echo "Release version tests passed"

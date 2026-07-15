@@ -29,6 +29,8 @@ jobs:
     steps:
       - name: 检出源码
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: 计算构建号
         id: version

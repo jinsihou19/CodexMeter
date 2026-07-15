@@ -61,3 +61,54 @@ release_update_project_versions() {
       s/CURRENT_PROJECT_VERSION = [^;]+;/CURRENT_PROJECT_VERSION = $ENV{RELEASE_BUILD_NUMBER};/g;
     ' "$project_file"
 }
+
+# 把指定类型的 Conventional Commits 追加为发布说明分组；无匹配时不生成空标题。
+release_append_notes_section() {
+  local repository_path="$1"
+  local revision_range="$2"
+  local output_file="$3"
+  local title="$4"
+  local pattern="$5"
+  local entries
+  entries="$(
+    git -C "$repository_path" log "$revision_range" --no-merges \
+      --format='- %s (`%h`)' --extended-regexp --grep="$pattern" \
+      | sed -E 's/^- [a-z]+(\([^)]*\))?!?:[[:space:]]*/- /'
+  )"
+  if [ -n "$entries" ]; then
+    printf '## %s\n\n%s\n\n' "$title" "$entries" >> "$output_file"
+  fi
+}
+
+# 按提交类型生成发布说明，未遵循约定的提交收入“其他变更”。
+release_write_notes() {
+  local repository_path="$1"
+  local revision_range="$2"
+  local output_file="$3"
+  local previous_tag="$4"
+  local release_tag="$5"
+  local repository_slug="$6"
+  local other_entries
+
+  printf '# 变更内容\n\n' > "$output_file"
+  release_append_notes_section "$repository_path" "$revision_range" "$output_file" "新功能" '^feat(\([^)]*\))?!?:[[:space:]]'
+  release_append_notes_section "$repository_path" "$revision_range" "$output_file" "问题修复" '^fix(\([^)]*\))?!?:[[:space:]]'
+  release_append_notes_section "$repository_path" "$revision_range" "$output_file" "性能优化" '^perf(\([^)]*\))?!?:[[:space:]]'
+  release_append_notes_section "$repository_path" "$revision_range" "$output_file" "代码调整" '^(refactor|style)(\([^)]*\))?!?:[[:space:]]'
+  release_append_notes_section "$repository_path" "$revision_range" "$output_file" "文档" '^docs(\([^)]*\))?!?:[[:space:]]'
+  release_append_notes_section "$repository_path" "$revision_range" "$output_file" "工程维护" '^(test|build|ci|chore|revert)(\([^)]*\))?!?:[[:space:]]'
+
+  other_entries="$(
+    git -C "$repository_path" log "$revision_range" --no-merges --format='- %s (`%h`)' \
+      | grep -Ev '^- (feat|fix|perf|refactor|style|docs|test|build|ci|chore|revert)(\([^)]*\))?!?:[[:space:]]' \
+      || true
+  )"
+  if [ -n "$other_entries" ]; then
+    printf '## 其他变更\n\n%s\n\n' "$other_entries" >> "$output_file"
+  fi
+
+  if [ -n "$previous_tag" ]; then
+    printf '**完整变更记录**: https://github.com/%s/compare/%s...%s\n' \
+      "$repository_slug" "$previous_tag" "$release_tag" >> "$output_file"
+  fi
+}
