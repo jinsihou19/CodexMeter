@@ -49,31 +49,100 @@ enum UsageNotificationEventResolver {
     }
 }
 
-/// 识别可信的额度重置：用量回落到近零且接口给出的下一次重置边界已经前移。
-enum UsageResetCelebrationResolver {
-    /// 返回本次快照是否应播放彩带；选项决定检查短窗口、周窗口或两者。
-    static func shouldCelebrate(
-        previous: RateLimitSnapshot,
-        current: RateLimitSnapshot,
-        option: UsageResetCelebrationOption
-    ) -> Bool {
-        let sessionReset = option.celebratesSessionReset && didReset(previous.primary, current.primary)
-        let weeklyReset = option.celebratesWeeklyReset && didReset(previous.secondary, current.secondary)
-        return sessionReset || weeklyReset
+/// 持久化额度重置检测基线，使睡眠和应用重启后的首次刷新仍能识别真实重置。
+struct UsageResetCelebrationDetector {
+    private struct State: Codable {
+        let wasAboveThreshold: Bool
+        let resetBoundary: Int?
     }
 
-    /// 边界校验用于过滤接口抖动，1% 容差允许重置后立即产生的极少量用量。
-    private static func didReset(_ previous: RateLimitWindow?, _ current: RateLimitWindow?) -> Bool {
-        guard let previous,
-              let current,
-              previous.usedPercent > 1,
-              current.usedPercent <= 1,
-              let previousReset = previous.resetsAt,
-              let currentReset = current.resetsAt
-        else {
-            return false
+    private enum ResetKind: String {
+        case session
+        case weekly
+    }
+
+    private static let defaultsKey = "celebrations.resetDetectorStates.v1"
+    private static let threshold = 1.0
+
+    private let defaults: UserDefaults
+    private var states: [String: State]
+
+    /// 从偏好存储恢复检测基线；损坏或旧格式数据按空状态处理，避免影响正常刷新。
+    init(defaults: UserDefaults) {
+        self.defaults = defaults
+        if let data = defaults.data(forKey: Self.defaultsKey),
+           let decoded = try? JSONDecoder().decode([String: State].self, from: data)
+        {
+            self.states = decoded
+        } else {
+            self.states = [:]
         }
-        return currentReset > previousReset
+    }
+
+    /// 仅在缺少持久化状态时用缓存快照建立基线，避免启动时覆盖更可靠的跨进程记录。
+    mutating func seed(with rateLimits: RateLimitSnapshot?) {
+        guard let rateLimits else { return }
+        var changed = false
+        for (kind, window) in observations(in: rateLimits) where states[kind.rawValue] == nil {
+            states[kind.rawValue] = State(
+                wasAboveThreshold: window.usedPercent > Self.threshold,
+                resetBoundary: window.resetsAt
+            )
+            changed = true
+        }
+        if changed {
+            persist()
+        }
+    }
+
+    /// 更新持久化检测状态，并在用量跨过阈值且重置边界前移时返回是否应播放彩带。
+    mutating func process(_ rateLimits: RateLimitSnapshot, option: UsageResetCelebrationOption) -> Bool {
+        var shouldCelebrate = false
+        for (kind, window) in observations(in: rateLimits) {
+            let key = kind.rawValue
+            let previous = states[key]
+            let isAboveThreshold = window.usedPercent > Self.threshold
+            let boundaryAdvanced = previous?.resetBoundary.flatMap { previousBoundary in
+                window.resetsAt.map { $0 > previousBoundary }
+            } ?? false
+            let crossedBelowThreshold = previous?.wasAboveThreshold == true && !isAboveThreshold
+            let suppressedCrossing = crossedBelowThreshold && !boundaryAdvanced
+
+            if crossedBelowThreshold, boundaryAdvanced, includes(kind, in: option) {
+                shouldCelebrate = true
+            }
+            states[key] = State(
+                wasAboveThreshold: suppressedCrossing ? true : isAboveThreshold,
+                resetBoundary: boundaryAdvanced ? window.resetsAt : previous?.resetBoundary ?? window.resetsAt
+            )
+        }
+        persist()
+        return shouldCelebrate
+    }
+
+    /// 按接口实际窗口时长区分会话与周额度，兼容只有 primary 周窗口的账号。
+    private func observations(in rateLimits: RateLimitSnapshot) -> [(ResetKind, RateLimitWindow)] {
+        [rateLimits.primary, rateLimits.secondary].compactMap { window in
+            guard let window else { return nil }
+            let kind: ResetKind = window.windowDurationMins == 7 * 24 * 60 ? .weekly : .session
+            return (kind, window)
+        }
+    }
+
+    /// 判断当前用户选项是否包含指定重置类型。
+    private func includes(_ kind: ResetKind, in option: UsageResetCelebrationOption) -> Bool {
+        switch kind {
+        case .session:
+            option.celebratesSessionReset
+        case .weekly:
+            option.celebratesWeeklyReset
+        }
+    }
+
+    /// 将小型检测状态写入共享偏好，供下次启动和唤醒后的刷新继续使用。
+    private func persist() {
+        guard let data = try? JSONEncoder().encode(states) else { return }
+        defaults.set(data, forKey: Self.defaultsKey)
     }
 }
 
@@ -81,36 +150,38 @@ enum UsageResetCelebrationResolver {
 @MainActor
 final class UsageNotificationController {
     private var previousRateLimits: RateLimitSnapshot?
+    private var resetCelebrationDetector: UsageResetCelebrationDetector
     private let playConfetti: () -> Void
 
     /// 注入彩带播放动作，使重置判断保持可测试且不依赖窗口实现。
-    init(playConfetti: @escaping () -> Void = {}) {
+    init(
+        defaults: UserDefaults = MenuBarDisplaySettings.sharedDefaults,
+        playConfetti: @escaping () -> Void = {}
+    ) {
+        self.resetCelebrationDetector = UsageResetCelebrationDetector(defaults: defaults)
         self.playConfetti = playConfetti
     }
 
     /// 用已有缓存建立比较基线，避免应用启动后的第一次刷新被误判为额度下降。
     func seed(with snapshot: UsageSnapshot?) {
         previousRateLimits = snapshot?.rateLimits
+        resetCelebrationDetector.seed(with: snapshot?.rateLimits)
     }
 
     /// 处理新快照并异步投递系统通知；无跨界事件时不访问通知中心。
     func process(_ snapshot: UsageSnapshot) {
         let current = snapshot.rateLimits
         defer { previousRateLimits = current }
-        guard let previousRateLimits else {
-            return
-        }
         let celebrationOption = UsageResetCelebrationOption(
             rawValue: MenuBarDisplaySettings.sharedDefaults.string(
                 forKey: UsageCelebrationPreferenceKeys.resetOption
             ) ?? ""
         ) ?? .off
-        if UsageResetCelebrationResolver.shouldCelebrate(
-            previous: previousRateLimits,
-            current: current,
-            option: celebrationOption
-        ) {
+        if resetCelebrationDetector.process(current, option: celebrationOption) {
             playConfetti()
+        }
+        guard let previousRateLimits else {
+            return
         }
         let settings = UsageNotificationSettings(defaults: MenuBarDisplaySettings.sharedDefaults)
         let events = UsageNotificationEventResolver.events(

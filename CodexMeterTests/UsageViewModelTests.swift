@@ -129,22 +129,16 @@ final class UsageViewModelTests: XCTestCase {
         )
     }
 
-    /// 验证彩带只在用量回落且重置边界前移时触发，并遵守短窗口与周窗口选项。
-    func testUsageResetCelebrationRequiresBoundaryAdvance() {
+    /// 验证检测基线可跨进程恢复，并且瞬时零用量不会吞掉随后确认的周重置。
+    func testUsageResetCelebrationPersistsBaselineUntilBoundaryAdvances() {
+        let suiteName = "UsageViewModelTests.ResetCelebration.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defer { defaults.removePersistentDomain(forName: suiteName) }
         let previous = RateLimitSnapshot(
             limitId: "codex",
             limitName: nil,
-            primary: RateLimitWindow(usedPercent: 62, windowDurationMins: 300, resetsAt: 2_000),
-            secondary: RateLimitWindow(usedPercent: 48, windowDurationMins: 10_080, resetsAt: 3_000),
-            credits: nil,
-            planType: nil,
-            rateLimitReachedType: nil
-        )
-        let reset = RateLimitSnapshot(
-            limitId: "codex",
-            limitName: nil,
-            primary: RateLimitWindow(usedPercent: 1, windowDurationMins: 300, resetsAt: 4_000),
-            secondary: RateLimitWindow(usedPercent: 48, windowDurationMins: 10_080, resetsAt: 3_000),
+            primary: RateLimitWindow(usedPercent: 62, windowDurationMins: 10_080, resetsAt: 2_000),
+            secondary: nil,
             credits: nil,
             planType: nil,
             rateLimitReachedType: nil
@@ -152,22 +146,29 @@ final class UsageViewModelTests: XCTestCase {
         let transientDrop = RateLimitSnapshot(
             limitId: "codex",
             limitName: nil,
-            primary: RateLimitWindow(usedPercent: 0, windowDurationMins: 300, resetsAt: 2_000),
-            secondary: previous.secondary,
+            primary: RateLimitWindow(usedPercent: 0, windowDurationMins: 10_080, resetsAt: 2_000),
+            secondary: nil,
+            credits: nil,
+            planType: nil,
+            rateLimitReachedType: nil
+        )
+        let reset = RateLimitSnapshot(
+            limitId: "codex",
+            limitName: nil,
+            primary: RateLimitWindow(usedPercent: 1, windowDurationMins: 10_080, resetsAt: 4_000),
+            secondary: nil,
             credits: nil,
             planType: nil,
             rateLimitReachedType: nil
         )
 
-        XCTAssertTrue(
-            UsageResetCelebrationResolver.shouldCelebrate(previous: previous, current: reset, option: .session)
-        )
-        XCTAssertFalse(
-            UsageResetCelebrationResolver.shouldCelebrate(previous: previous, current: reset, option: .weekly)
-        )
-        XCTAssertFalse(
-            UsageResetCelebrationResolver.shouldCelebrate(previous: previous, current: transientDrop, option: .both)
-        )
+        var detector = UsageResetCelebrationDetector(defaults: defaults)
+        XCTAssertFalse(detector.process(previous, option: .weekly))
+        detector = UsageResetCelebrationDetector(defaults: defaults)
+        XCTAssertFalse(detector.process(transientDrop, option: .weekly))
+        detector = UsageResetCelebrationDetector(defaults: defaults)
+        XCTAssertTrue(detector.process(reset, option: .weekly))
+        XCTAssertFalse(detector.process(reset, option: .weekly))
     }
 
     /// 验证语言偏好能覆盖下一次启动使用的 AppleLanguages，并能恢复跟随系统。
