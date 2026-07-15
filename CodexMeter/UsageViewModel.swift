@@ -124,7 +124,7 @@ struct UsageResetCelebrationDetector {
     private func observations(in rateLimits: RateLimitSnapshot) -> [(ResetKind, RateLimitWindow)] {
         [rateLimits.primary, rateLimits.secondary].compactMap { window in
             guard let window else { return nil }
-            let kind: ResetKind = window.windowDurationMins == 7 * 24 * 60 ? .weekly : .session
+            let kind: ResetKind = window.isWeeklyQuotaWindow ? .weekly : .session
             return (kind, window)
         }
     }
@@ -252,7 +252,9 @@ final class UsageViewModel: ObservableObject {
         client: any UsageRateLimitFetching = DirectCodexUsageClient(),
         store: UsageSnapshotStore = UsageSnapshotStore(),
         reloadWidgetTimelines: @escaping () -> Void = {
-            WidgetCenter.shared.reloadTimelines(ofKind: "CodexUsageWidget")
+            DispatchQueue.global(qos: .utility).async {
+                WidgetCenter.shared.reloadTimelines(ofKind: "CodexUsageWidget")
+            }
         },
         refreshCadenceProvider: @escaping @MainActor @Sendable () -> UsageRefreshCadence = {
             AppBehaviorSettings(defaults: MenuBarDisplaySettings.sharedDefaults).refreshCadence

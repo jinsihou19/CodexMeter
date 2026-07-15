@@ -50,7 +50,8 @@ struct MenuBarView: View {
     let onSizeChange: ((CGSize) -> Void)?
     @State private var activityMode = TokenActivityMode.daily
     @State private var measuredScrollContentHeight: CGFloat = 0
-    @State private var usesScrollableContent = false
+    // 重建后首帧先使用安全的可滚动容器，避免未完成测量的长内容溢出弹窗。
+    @State private var usesScrollableContent = true
     @State private var activePaceHelpText: String?
     @AppStorage(AppLanguagePreferenceKeys.selectedLanguage, store: MenuBarDisplaySettings.sharedDefaults) private var selectedLanguage = AppLanguage.system.rawValue
     private var formatter: UsageFormatter {
@@ -220,7 +221,7 @@ struct MenuBarView: View {
                 scrollContent
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
-            .scrollIndicators(.automatic)
+            .scrollIndicators(.hidden)
             .frame(height: MenuBarPopoverLayout.maximumScrollableContentHeight)
         } else {
             scrollContent
@@ -253,15 +254,18 @@ struct MenuBarView: View {
         }
         let roundedHeight = ceil(height)
         DispatchQueue.main.async {
+            let hasPreviousMeasurement = measuredScrollContentHeight > 0
             if abs(measuredScrollContentHeight - roundedHeight) > 0.5 {
                 measuredScrollContentHeight = roundedHeight
             }
 
             let maximumHeight = MenuBarPopoverLayout.maximumScrollableContentHeight
             let hysteresis = MenuBarPopoverLayout.scrollOverflowHysteresis
-            let shouldUseScrollableContent = usesScrollableContent
-                ? roundedHeight > maximumHeight - hysteresis
-                : roundedHeight > maximumHeight + hysteresis
+            let shouldUseScrollableContent = hasPreviousMeasurement
+                ? (usesScrollableContent
+                    ? roundedHeight > maximumHeight - hysteresis
+                    : roundedHeight > maximumHeight + hysteresis)
+                : roundedHeight > maximumHeight
             guard shouldUseScrollableContent != usesScrollableContent else {
                 return
             }
@@ -610,7 +614,7 @@ private struct PaceMarkerHelpBubble: View {
     }
 }
 
-/// 参考 CodexBar 的菜单卡片进度条，用单个 Canvas 绘制轨道、填充和内嵌刻度线。
+/// 菜单卡片进度条用单个 Canvas 绘制轨道、填充和内嵌刻度线。
 private struct WorkdayMarkedProgressView: View {
     let value: Double
     let tint: Color
@@ -704,7 +708,7 @@ private struct WorkdayMarkedProgressView: View {
         }
     }
 
-    /// 与 CodexBar 的刻度线保持一致：像素对齐、窄线、只占进度条中间一段高度。
+    /// 刻度线保持像素对齐和窄线，只占进度条中间一段高度。
     private static func markerRect(x: CGFloat, size: CGSize, scale rawScale: CGFloat) -> CGRect {
         let scale = max(rawScale, 1)
         let width = max(1 / scale, 1)
@@ -727,7 +731,7 @@ private struct WorkdayMarkedProgressView: View {
     private static let paceMarkerHitWidth: CGFloat = 24
     private static let paceMarkerHitHeight: CGFloat = 22
 
-    /// 绿色/红色节奏标记仿照 CodexBar：先挖出一条窄槽，再在中心绘制醒目的节奏线。
+    /// 绿色/红色节奏标记先挖出一条窄槽，再在中心绘制醒目的节奏线。
     private static func paceMarkerPaths(
         x: CGFloat,
         size: CGSize,

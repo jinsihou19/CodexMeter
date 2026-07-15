@@ -206,6 +206,7 @@ final class StatusBarController: NSObject {
     private let statusItem: NSStatusItem
     private let popover = NSPopover()
     private var statusLabel: PassthroughHostingView<StatusBarLabel>?
+    private var nativeStatusButtonFont: NSFont?
     private var defaultsObservers: [NSObjectProtocol] = []
     private var usageObserver: AnyCancellable?
     private var activityObserver: AnyCancellable?
@@ -237,6 +238,10 @@ final class StatusBarController: NSObject {
 
         button.title = ""
         button.image = nil
+        button.cell?.wraps = false
+        button.cell?.usesSingleLineMode = true
+        button.cell?.lineBreakMode = .byClipping
+        nativeStatusButtonFont = button.font
         button.toolTip = "CodexMeter"
         button.target = self
         button.action = #selector(togglePopover(_:))
@@ -281,10 +286,11 @@ final class StatusBarController: NSObject {
     private func observeSettingsNotification(_ name: Notification.Name) {
         let observer = NotificationCenter.default.addObserver(
             forName: name,
-            object: MenuBarDisplaySettings.sharedDefaults,
+            // 通知名已经是应用专用，不再依赖 UserDefaults 实例身份过滤。
+            object: nil,
             queue: .main
         ) { [weak self] _ in
-            Task { @MainActor in
+            MainActor.assumeIsolated {
                 self?.applySettings()
             }
         }
@@ -329,18 +335,70 @@ final class StatusBarController: NSObject {
         let settings = settings ?? MenuBarDisplaySettings(defaults: MenuBarDisplaySettings.sharedDefaults)
         let lines = StatusLineDisplay.lines(viewModel: viewModel, settings: settings)
         let activityDisplay = settings.showsHookActivityLight ? activityStore.display : CodexHookActivityDisplay(snapshot: nil)
+        if !activityDisplay.isVisible,
+           NativeStatusBarTitle.text(for: lines) != nil,
+           let line = lines.first
+        {
+            applyNativeStatusDisplay(
+                line: line,
+                settings: settings
+            )
+            return
+        }
         let statusWidth = StatusBarDisplayMetrics.statusItemWidth(
             for: lines,
             settings: settings,
             activityDisplay: activityDisplay
         )
         statusItem.length = statusWidth
+        statusItem.button?.title = ""
+        statusItem.button?.attributedTitle = NSAttributedString(string: "")
+        statusItem.button?.image = nil
+        statusLabel?.isHidden = false
         statusLabel?.rootView = StatusBarLabel(
             viewModel: viewModel,
             activityStore: activityStore,
             settings: settings,
             statusWidth: statusWidth
         )
+    }
+
+    /// 单行时直接使用系统状态按钮标题；活动图标优先，否则按设置显示 Codex 图标。
+    private func applyNativeStatusDisplay(
+        line: StatusLineDisplay,
+        settings: MenuBarDisplaySettings
+    ) {
+        guard let button = statusItem.button else { return }
+        statusLabel?.isHidden = true
+        // 先解除双行的固定宽度，否则 AppKit 会在窄宽度下把单行标题提前换行。
+        statusItem.length = NSStatusItem.variableLength
+        let nativeFont = nativeStatusButtonFont ?? NSFont.systemFont(ofSize: NativeStatusBarTitle.fontSize)
+        let resolvedFont = NativeStatusBarTitle.font(settings: settings, nativeFont: nativeFont)
+        button.font = resolvedFont
+        button.title = line.label.isEmpty ? line.value : "\(line.label) \(line.value)"
+        button.attributedTitle = NativeStatusBarTitle.attributedText(
+            for: line,
+            settings: settings,
+            font: resolvedFont
+        )
+        button.image = nativeStatusImage(settings: settings)
+        button.imagePosition = button.image == nil ? .noImage : .imageLeft
+        button.imageScaling = .scaleProportionallyDown
+        button.invalidateIntrinsicContentSize()
+        statusItem.length = ceil(button.cell?.cellSize.width ?? button.intrinsicContentSize.width)
+    }
+
+    /// 原生单行只负责空闲图标；活动状态统一交给 SwiftUI 动效组件。
+    private func nativeStatusImage(settings: MenuBarDisplaySettings) -> NSImage? {
+        guard settings.showsMenuBarIcon, let image = NSImage(named: "OpenAIStatusIcon")?.copy() as? NSImage else {
+            return nil
+        }
+        image.size = NSSize(
+            width: MenuBarDisplaySettings.menuBarIconWidth,
+            height: MenuBarDisplaySettings.menuBarIconWidth
+        )
+        image.isTemplate = true
+        return image
     }
 
     private func makePopoverContentController() -> NSViewController {
@@ -558,7 +616,8 @@ private struct StatusBarLabel: View {
                         label: line.label,
                         value: line.value,
                         tone: line.tone,
-                        settings: settings
+                        settings: settings,
+                        usesSingleLineTypography: lines.count == 1
                     )
                 }
             }
@@ -586,20 +645,12 @@ private struct StatusBarLabel: View {
         CGFloat(settings.rowSpacing)
     }
 
-    /// 菜单栏字号完全跟随设置页，避免同一设置在不同显示模式下产生意外差异。
-    private func fontSize(settings: MenuBarDisplaySettings) -> CGFloat {
-        CGFloat(settings.numberFontSize)
-    }
-
-    private func fontWeight(settings: MenuBarDisplaySettings) -> Font.Weight {
-        settings.numberFontWeight.fontWeight
-    }
-
     private func statusLine(
         label: String,
         value: String,
         tone: UsageRemainingTone,
-        settings: MenuBarDisplaySettings
+        settings: MenuBarDisplaySettings,
+        usesSingleLineTypography: Bool
     ) -> some View {
         HStack(alignment: .firstTextBaseline, spacing: CGFloat(settings.itemSpacing)) {
             if !label.isEmpty {
@@ -609,10 +660,27 @@ private struct StatusBarLabel: View {
             Text(value)
                 .foregroundStyle(tone.statusBarColor(settings: settings))
         }
-        .font(.system(size: fontSize(settings: settings), weight: fontWeight(settings: settings)))
-        .monospacedDigit()
+        .font(.system(
+            size: statusFontSize(settings: settings, usesSingleLineTypography: usesSingleLineTypography),
+            weight: statusFontWeight(settings: settings, usesSingleLineTypography: usesSingleLineTypography)
+        ).monospacedDigit())
+        .fixedSize(horizontal: true, vertical: false)
         .lineLimit(1)
-        .minimumScaleFactor(0.82)
+    }
+
+    /// 单行活动态与空闲原生标题使用同一实际字号，双行继续读取双行设置。
+    private func statusFontSize(settings: MenuBarDisplaySettings, usesSingleLineTypography: Bool) -> CGFloat {
+        usesSingleLineTypography
+            ? NativeStatusBarTitle.font(settings: settings).pointSize
+            : CGFloat(settings.numberFontSize)
+    }
+
+    /// 预设单行跟随系统 Regular，自定义单行和双行使用用户选择的字重。
+    private func statusFontWeight(settings: MenuBarDisplaySettings, usesSingleLineTypography: Bool) -> Font.Weight {
+        if usesSingleLineTypography, MenuBarLayoutChoice.matching(settings: settings) != .custom {
+            return .regular
+        }
+        return settings.numberFontWeight.fontWeight
     }
 
     /// 组合菜单栏读数和可见 hook 状态，给 VoiceOver 一个完整但不啰嗦的说明。

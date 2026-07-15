@@ -405,7 +405,7 @@ struct StatusLineDisplay: Identifiable, Equatable {
     }
 }
 
-/// 单行菜单栏交给 NSStatusBarButton 原生标题渲染，与 CodexBar 保持相同的 13pt Regular 系统排版。
+/// 单行菜单栏交给 NSStatusBarButton 原生标题渲染，使用 13pt Regular 系统排版。
 enum NativeStatusBarTitle {
     static let fontSize = NSFont.systemFontSize
 
