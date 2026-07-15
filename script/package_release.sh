@@ -153,7 +153,7 @@ fi
 perl -0pi -e 's{(<channel>\s*<title>)[^<]*(</title>)}{$1CodexMeter$2}' "$APPCAST_PATH"
 
 # 使用上一个 Release 到当前提交的差异生成分类说明，直接提交也不会被遗漏。
-PREVIOUS_RELEASE_TAG="$(gh release list --repo "$GITHUB_REPOSITORY" --limit 1 --json tagName --jq '.[0].tagName // empty')"
+PREVIOUS_RELEASE_TAG="$(git -C "$ROOT_DIR" describe --tags --abbrev=0 --match 'v*' HEAD 2>/dev/null || true)"
 NOTES_REVISION_RANGE="HEAD"
 if [ -n "$PREVIOUS_RELEASE_TAG" ] && git -C "$ROOT_DIR" rev-parse --verify "$PREVIOUS_RELEASE_TAG^{commit}" >/dev/null 2>&1; then
   NOTES_REVISION_RANGE="$PREVIOUS_RELEASE_TAG..HEAD"
