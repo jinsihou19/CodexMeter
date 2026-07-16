@@ -607,6 +607,26 @@ final class UsageViewModelTests: XCTestCase {
         XCTAssertEqual(NativeStatusBarTitle.font(settings: MenuBarDisplayPreset.balanced.settings).pointSize, 13)
     }
 
+    /// 验证从双行切到单行后保留系统自动宽度，不使用尚未布局完成的 cellSize 截断标题。
+    func testNativeStatusBarKeepsVariableLengthAfterLineCountChanges() throws {
+        let projectRoot = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        let source = try String(
+            contentsOf: projectRoot.appendingPathComponent("CodexMeter/CodexMeterApp.swift"),
+            encoding: .utf8
+        )
+        let methodStart = try XCTUnwrap(source.range(of: "private func applyNativeStatusDisplay("))
+        let methodEnd = try XCTUnwrap(
+            source.range(of: "private func nativeStatusImage", range: methodStart.upperBound..<source.endIndex)
+        )
+        let methodSource = source[methodStart.lowerBound..<methodEnd.lowerBound]
+
+        XCTAssertTrue(methodSource.contains("statusItem.length = NSStatusItem.variableLength"))
+        XCTAssertFalse(methodSource.contains("statusItem.length = ceil"))
+        XCTAssertFalse(methodSource.contains("cellSize.width"))
+    }
+
     func testStatusBarWidthKeepsRemainingModeWiderThanPaceWhenLabelsAreShown() {
         let paceSettings = MenuBarDisplaySettings(
             contentMode: .paceComparison,

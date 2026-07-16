@@ -385,7 +385,6 @@ final class StatusBarController: NSObject {
         button.imagePosition = button.image == nil ? .noImage : .imageLeft
         button.imageScaling = .scaleProportionallyDown
         button.invalidateIntrinsicContentSize()
-        statusItem.length = ceil(button.cell?.cellSize.width ?? button.intrinsicContentSize.width)
     }
 
     /// 原生单行只负责空闲图标；活动状态统一交给 SwiftUI 动效组件。
