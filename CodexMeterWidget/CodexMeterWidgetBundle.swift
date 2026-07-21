@@ -5,6 +5,6 @@ import SwiftUI
 struct CodexMeterWidgetBundle: WidgetBundle {
     var body: some Widget {
         CodexMeterWidget()
+        LocalCodexUsageWidget()
     }
 }
-

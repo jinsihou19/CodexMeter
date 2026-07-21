@@ -15,8 +15,8 @@ public enum CodexRadarPreferenceKeys {
 
 /// 降智雷达开关设置；只控制外部雷达接口读取，不影响本机 Codex 用量同步。
 public struct CodexRadarSettings: Equatable, Sendable {
-    public static let defaultIsEnabled = false
-    public static let defaultShowsScoreChart = true
+    public static let defaultIsEnabled = true
+    public static let defaultShowsScoreChart = false
 
     public let isEnabled: Bool
     public let showsScoreChart: Bool
@@ -122,15 +122,18 @@ public struct CodexRadarPrediction: Codable, Equatable, Sendable {
 public struct CodexRadarModelIQ: Codable, Equatable, Sendable {
     public let primary: CodexRadarModelSeries
     public let comparisons: [CodexRadarModelSeries]
+    public let updatedAt: String?
     public let quotaRadarUpdatedAt: String?
 
     public init(
         primary: CodexRadarModelSeries,
         comparisons: [CodexRadarModelSeries],
+        updatedAt: String? = nil,
         quotaRadarUpdatedAt: String? = nil
     ) {
         self.primary = primary
         self.comparisons = comparisons
+        self.updatedAt = updatedAt
         self.quotaRadarUpdatedAt = quotaRadarUpdatedAt
     }
 
@@ -177,12 +180,13 @@ public struct CodexRadarModelIQ: Codable, Equatable, Sendable {
 
         let effortRank: Int
         switch series.reasoningEffort?.lowercased() {
-        case "max", "ultra": effortRank = 0
-        case "xhigh": effortRank = 1
-        case "high": effortRank = 2
-        case "medium": effortRank = 3
-        case "low": effortRank = 4
-        default: effortRank = 5
+        case "ultra": effortRank = 0
+        case "max": effortRank = 1
+        case "xhigh": effortRank = 2
+        case "high": effortRank = 3
+        case "medium": effortRank = 4
+        case "low": effortRank = 5
+        default: effortRank = 6
         }
         return (modelRank, effortRank)
     }

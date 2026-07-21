@@ -258,6 +258,35 @@ final class UsageViewModelTests: XCTestCase {
         XCTAssertTrue(source.contains("Label(AppLocalization.string(\"更新\")"))
     }
 
+    /// 验证本机看板重排项目与任务，并只保留三种口径的可悬停热力图。
+    func testLocalUsageDashboardIncludesInteractivePages() throws {
+        let projectRoot = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        let source = try String(
+            contentsOf: projectRoot.appendingPathComponent("CodexMeter/MenuBarView.swift"),
+            encoding: .utf8
+        )
+
+        XCTAssertTrue(source.contains("SectionTitle(\"额度与用量\")"))
+        XCTAssertTrue(source.contains("Label(AppLocalization.string(\"消耗与成本\"), systemImage: \"dollarsign.circle\")"))
+        XCTAssertFalse(source.contains("Label(AppLocalization.string(\"本机\"), systemImage: \"internaldrive\")"))
+        XCTAssertTrue(source.contains("Text(\"\\(AppLocalization.string(\"成本\")) \\(Self.currency(estimatedCostUSD))\")"))
+        XCTAssertTrue(source.contains("estimatedCostUSD: estimatedCost(for: week)"))
+        XCTAssertFalse(source.contains("LocalUsageDashboardPage"))
+        XCTAssertTrue(source.contains("ForEach(LocalUsageHeatmapMode.allCases)"))
+        XCTAssertTrue(source.contains("private struct LocalMenuUsageHeatmap"))
+        XCTAssertFalse(source.contains("private struct LocalUsageTrendChart"))
+        XCTAssertTrue(source.contains("let rowCount = 7"))
+        XCTAssertTrue(source.contains(".fill(CodexMeterChartPalette.heatmapColor(value: colorBucket?.tokens ?? 0, maximum: maximum))"))
+        XCTAssertTrue(source.contains("return column.map { $0 == nil ? nil : aggregate }"))
+        XCTAssertTrue(source.contains(".onContinuousHover { phase in"))
+        XCTAssertTrue(source.contains("projectRanking(maximum: maximum)"))
+        XCTAssertTrue(source.contains("ForEach(Array(snapshot.taskBoard.items.prefix(6)))"))
+        XCTAssertTrue(source.contains("Text(item.title)"))
+        XCTAssertTrue(source.contains(".onHover { isInside in"))
+    }
+
     func testSettingsWindowPresenterCreatesAndReusesSettingsWindow() {
         var createdWindowCount = 0
         let presenter = SettingsWindowPresenter(
@@ -423,6 +452,9 @@ final class UsageViewModelTests: XCTestCase {
         defaults.set("not-a-style", forKey: PopoverPreferenceKeys.resetTimeDisplayStyle)
         defaults.set(true, forKey: MenuBarPreferenceKeys.showsAdditionalLimits)
         defaults.set(false, forKey: PopoverPreferenceKeys.showsResetCredits)
+        defaults.set(false, forKey: PopoverPreferenceKeys.showsLocalOverview)
+        defaults.set(false, forKey: PopoverPreferenceKeys.showsLocalTrend)
+        defaults.set(false, forKey: PopoverPreferenceKeys.showsLocalProjects)
 
         let widgetSettings = WidgetDisplaySettings(defaults: defaults)
         let surfaceSettings = SurfaceAppearanceSettings(defaults: defaults)
@@ -449,7 +481,17 @@ final class UsageViewModelTests: XCTestCase {
         XCTAssertEqual(popoverSettings.resetTimeDisplayStyle, .countdown)
         XCTAssertTrue(popoverSettings.showsAdditionalLimits)
         XCTAssertFalse(popoverSettings.showsResetCredits)
+        XCTAssertFalse(popoverSettings.showsLocalOverview)
+        XCTAssertFalse(popoverSettings.showsLocalTrend)
+        XCTAssertFalse(popoverSettings.showsLocalProjects)
+        XCTAssertFalse(popoverSettings.showsAnyLocalSection)
         XCTAssertTrue(PopoverDisplaySettings().showsResetCredits)
+        XCTAssertFalse(PopoverDisplaySettings().showsTopInvocations)
+        XCTAssertFalse(PopoverDisplaySettings().showsSyncDetails)
+        XCTAssertFalse(PopoverDisplaySettings().showsLocalOverview)
+        XCTAssertFalse(PopoverDisplaySettings().showsLocalTrend)
+        XCTAssertFalse(PopoverDisplaySettings().showsLocalProjects)
+        XCTAssertFalse(PopoverDisplaySettings().showsAnyLocalSection)
     }
 
     func testMenuBarDisplaySettingsDefaultToCompactReadableValues() {
@@ -1400,12 +1442,42 @@ final class UsageViewModelTests: XCTestCase {
             reloadWidgetTimelines: {
                 reloadCount += 1
             },
-            refreshCadenceProvider: { .manual }
+            refreshCadenceProvider: { .manual },
+            localCodexUsageLoader: { nil }
         )
 
         viewModel.start()
 
         XCTAssertEqual(reloadCount, 1)
+    }
+
+    /// 验证启动时会独立发布本机统计，不需要触发网络额度刷新。
+    func testStartPublishesLocalCodexUsageWithoutNetworkRefresh() async throws {
+        let storeDirectory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let store = UsageSnapshotStore(appGroupIdentifier: "", fallbackDirectory: storeDirectory)
+        try store.save(UsageSnapshot(
+            fetchedAt: Date(timeIntervalSince1970: 1_800_000),
+            rateLimits: Self.emptyRateLimits()
+        ))
+        let client = CountingRateLimitClient(snapshot: Self.emptyRateLimits())
+        let localSnapshot = Self.localUsageSnapshot()
+        let viewModel = UsageViewModel(
+            client: client,
+            store: store,
+            reloadWidgetTimelines: {},
+            refreshCadenceProvider: { .manual },
+            localCodexUsageLoader: { localSnapshot }
+        )
+
+        viewModel.start()
+        for _ in 0..<10 where viewModel.snapshot?.localCodexUsage == nil {
+            await Task.yield()
+        }
+
+        XCTAssertEqual(client.fetchCount, 0)
+        XCTAssertEqual(viewModel.snapshot?.localCodexUsage?.todayTokens, 120)
+        XCTAssertEqual(try store.load()?.localCodexUsage?.todayTokens, 120)
     }
 
     func testRefreshReloadsWidgetTimelinesAfterSavingSnapshot() async throws {
@@ -1447,6 +1519,106 @@ final class UsageViewModelTests: XCTestCase {
         XCTAssertEqual(viewModel.menuBarSecondaryTone, .good)
         XCTAssertEqual(try store.load()?.rateLimits.limitId, "codex")
         XCTAssertEqual(reloadCount, 1)
+    }
+
+    /// 验证额度刷新会同时发布本机统计，并把无标题的汇总摘要保存给 Widget。
+    func testRefreshPublishesAndSharesLocalCodexUsage() async throws {
+        let storeDirectory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let store = UsageSnapshotStore(appGroupIdentifier: "", fallbackDirectory: storeDirectory)
+        let localSnapshot = Self.localUsageSnapshot()
+        let viewModel = UsageViewModel(
+            client: StubRateLimitClient(snapshot: Self.emptyRateLimits()),
+            store: store,
+            reloadWidgetTimelines: {},
+            localCodexUsageLoader: { localSnapshot }
+        )
+
+        await viewModel.refresh()
+
+        XCTAssertEqual(viewModel.localCodexUsage?.summary.todayTokens, 120)
+        XCTAssertEqual(viewModel.localCodexUsage?.taskBoard.items.first?.title, "仅内存任务")
+        XCTAssertEqual(try store.load()?.localCodexUsage?.todayTokens, 120)
+        let storedJSON = try String(contentsOf: store.snapshotURL(), encoding: .utf8)
+        XCTAssertFalse(storedJSON.contains("仅内存任务"))
+    }
+
+    /// 验证本机统计失败不会覆盖成功的网络快照或设置主错误信息。
+    func testLocalCodexUsageFailureDoesNotAffectNetworkRefresh() async {
+        let viewModel = UsageViewModel(
+            client: StubRateLimitClient(snapshot: Self.emptyRateLimits()),
+            store: UsageSnapshotStore(appGroupIdentifier: "", fallbackDirectory: FileManager.default.temporaryDirectory),
+            reloadWidgetTimelines: {},
+            localCodexUsageLoader: { nil }
+        )
+
+        await viewModel.refresh()
+
+        XCTAssertNotNil(viewModel.snapshot)
+        XCTAssertNil(viewModel.localCodexUsage)
+        XCTAssertNil(viewModel.errorMessage)
+    }
+
+    /// 验证网络失败时仍会把本机统计合并到额度缓存并刷新本机 Widget。
+    func testNetworkFailureStillPublishesLocalCodexUsage() async throws {
+        let storeDirectory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let store = UsageSnapshotStore(appGroupIdentifier: "", fallbackDirectory: storeDirectory)
+        try store.save(UsageSnapshot(
+            fetchedAt: Date(timeIntervalSince1970: 1_800_000),
+            rateLimits: Self.emptyRateLimits()
+        ))
+        let localSnapshot = Self.localUsageSnapshot()
+        var reloadCount = 0
+        let viewModel = UsageViewModel(
+            client: FailingRateLimitClient(),
+            store: store,
+            reloadWidgetTimelines: { reloadCount += 1 },
+            localCodexUsageLoader: { localSnapshot }
+        )
+
+        await viewModel.refresh()
+
+        XCTAssertEqual(viewModel.localCodexUsage?.summary.todayTokens, 120)
+        XCTAssertEqual(viewModel.snapshot?.localCodexUsage?.todayTokens, 120)
+        XCTAssertEqual(try store.load()?.localCodexUsage?.todayTokens, 120)
+        XCTAssertNotNil(viewModel.errorMessage)
+        XCTAssertEqual(reloadCount, 1)
+    }
+
+    /// 构造不包含窗口数据的最小额度快照，供刷新协作测试复用。
+    private static func emptyRateLimits() -> RateLimitSnapshot {
+        RateLimitSnapshot(
+            limitId: "codex",
+            limitName: nil,
+            primary: nil,
+            secondary: nil,
+            credits: nil,
+            planType: nil,
+            rateLimitReachedType: nil
+        )
+    }
+
+    /// 构造含任务标题的应用内快照，验证共享缓存只保存 summary。
+    private static func localUsageSnapshot() -> LocalCodexUsageSnapshot {
+        let task = LocalCodexTaskItem(
+            id: "task",
+            title: "仅内存任务",
+            detail: nil,
+            kind: .active,
+            updatedAt: Date(timeIntervalSince1970: 1_800_000),
+            tokens: 120
+        )
+        let summary = LocalCodexUsageSummary(
+            fetchedAt: Date(timeIntervalSince1970: 1_800_000),
+            todayTokens: 120,
+            sevenDayTokens: 560,
+            lifetimeTokens: 2_400,
+            threadCount: 4,
+            projects: [],
+            taskCounts: LocalCodexTaskCounts(active: 1, pending: 0, scheduled: 0, done: 0)
+        )
+        return LocalCodexUsageSnapshot(summary: summary, taskBoard: LocalCodexTaskBoard(items: [task]))
     }
 
     func testMenuBarToneMovesTowardRedAsRemainingDrops() async {
@@ -1759,6 +1931,16 @@ private struct StubRateLimitClient: UsageRateLimitFetching {
 
     func fetchRateLimits() async throws -> RateLimitSnapshot {
         snapshot
+    }
+}
+
+/// 固定抛错的额度客户端，用于验证网络失败时的本机数据降级路径。
+private struct FailingRateLimitClient: UsageRateLimitFetching {
+    struct Failure: Error {}
+
+    /// 模拟额度网络请求失败。
+    func fetchRateLimits() async throws -> RateLimitSnapshot {
+        throw Failure()
     }
 }
 

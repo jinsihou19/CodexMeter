@@ -232,6 +232,7 @@ final class UsageNotificationController {
 @MainActor
 final class UsageViewModel: ObservableObject {
     @Published private(set) var snapshot: UsageSnapshot?
+    @Published private(set) var localCodexUsage: LocalCodexUsageSnapshot?
     @Published private(set) var isRefreshing = false
     @Published private(set) var errorMessage: String?
 
@@ -241,6 +242,7 @@ final class UsageViewModel: ObservableObject {
     private let refreshCadenceProvider: @MainActor @Sendable () -> UsageRefreshCadence
     private let resetCreditsVisibilityProvider: @MainActor @Sendable () -> Bool
     private let processUsageNotifications: @MainActor @Sendable (UsageSnapshot) -> Void
+    private let localCodexUsageLoader: @Sendable () async -> LocalCodexUsageSnapshot?
     private let logger = Logger(subsystem: "com.jinsihou.CodexUsage", category: "Usage")
     private var refreshTask: Task<Void, Never>?
     private var hasStartedRefreshLoop = false
@@ -254,6 +256,7 @@ final class UsageViewModel: ObservableObject {
         reloadWidgetTimelines: @escaping () -> Void = {
             DispatchQueue.global(qos: .utility).async {
                 WidgetCenter.shared.reloadTimelines(ofKind: "CodexUsageWidget")
+                WidgetCenter.shared.reloadTimelines(ofKind: "CodexLocalUsageWidget")
             }
         },
         refreshCadenceProvider: @escaping @MainActor @Sendable () -> UsageRefreshCadence = {
@@ -262,7 +265,10 @@ final class UsageViewModel: ObservableObject {
         resetCreditsVisibilityProvider: @escaping @MainActor @Sendable () -> Bool = {
             PopoverDisplaySettings(defaults: MenuBarDisplaySettings.sharedDefaults).showsResetCredits
         },
-        processUsageNotifications: @escaping @MainActor @Sendable (UsageSnapshot) -> Void = { _ in }
+        processUsageNotifications: @escaping @MainActor @Sendable (UsageSnapshot) -> Void = { _ in },
+        localCodexUsageLoader: @escaping @Sendable () async -> LocalCodexUsageSnapshot? = {
+            await LocalCodexUsageReader().load()
+        }
     ) {
         self.client = client
         self.store = store
@@ -270,6 +276,7 @@ final class UsageViewModel: ObservableObject {
         self.refreshCadenceProvider = refreshCadenceProvider
         self.resetCreditsVisibilityProvider = resetCreditsVisibilityProvider
         self.processUsageNotifications = processUsageNotifications
+        self.localCodexUsageLoader = localCodexUsageLoader
         self.lastShowsResetCredits = resetCreditsVisibilityProvider()
         self.snapshot = try? store.load()
     }
@@ -367,6 +374,9 @@ final class UsageViewModel: ObservableObject {
         observeAppBehaviorSettings()
         observePopoverDisplaySettings()
         applyRefreshCadence()
+        Task { [weak self] in
+            await self?.refreshLocalCodexUsage()
+        }
         // 本地已有缓存时也要唤醒 WidgetKit，避免上一次空时间线继续显示“暂无数据”。
         if snapshot != nil {
             reloadWidgetTimelines()
@@ -375,6 +385,17 @@ final class UsageViewModel: ObservableObject {
 
     func refresh() async {
         await refresh(forceRefreshResetCredits: false)
+    }
+
+    /// 独立刷新本机统计并合并进已有额度缓存，不等待网络额度请求。
+    private func refreshLocalCodexUsage() async {
+        guard let loadedLocalCodexUsage = await localCodexUsageLoader() else { return }
+        localCodexUsage = loadedLocalCodexUsage
+        guard let cachedSnapshot = snapshot else { return }
+        let updatedSnapshot = cachedSnapshot.withLocalCodexUsage(loadedLocalCodexUsage.summary)
+        try? store.save(updatedSnapshot)
+        snapshot = updatedSnapshot
+        reloadWidgetTimelines()
     }
 
     /// 用户主动刷新重置卡时绕过每日缓存，确保测试机上已经发放的卡能被立刻补读出来。
@@ -398,9 +419,13 @@ final class UsageViewModel: ObservableObject {
         logger.info("Refresh started")
         isRefreshing = true
         defer { isRefreshing = false }
+        async let localUsageResult = localCodexUsageLoader()
 
         do {
-            let updatedSnapshot = try await client.fetchUsageSnapshot(forceRefreshResetCredits: forceRefreshResetCredits)
+            let networkSnapshot = try await client.fetchUsageSnapshot(forceRefreshResetCredits: forceRefreshResetCredits)
+            let loadedLocalCodexUsage = await localUsageResult
+            localCodexUsage = loadedLocalCodexUsage
+            let updatedSnapshot = networkSnapshot.withLocalCodexUsage(loadedLocalCodexUsage?.summary)
             try store.save(updatedSnapshot)
             snapshot = updatedSnapshot
             processUsageNotifications(updatedSnapshot)
@@ -408,14 +433,23 @@ final class UsageViewModel: ObservableObject {
             logger.info("Refresh saved snapshot")
             reloadWidgetTimelines()
         } catch {
+            let loadedLocalCodexUsage = await localUsageResult
+            localCodexUsage = loadedLocalCodexUsage
             errorMessage = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
             logger.error("Refresh failed: \(self.errorMessage ?? "unknown", privacy: .public)")
+            let restoredCachedSnapshot = snapshot == nil
             if snapshot == nil {
                 snapshot = try? store.load()
-                // 网络刷新失败但本地缓存可用时，同步恢复小组件显示。
-                if snapshot != nil {
-                    reloadWidgetTimelines()
-                }
+            }
+            // 本机看板不依赖网络；额度请求失败时仍把本机摘要合并进已有缓存。
+            if let loadedLocalCodexUsage, let cachedSnapshot = snapshot {
+                let updatedSnapshot = cachedSnapshot.withLocalCodexUsage(loadedLocalCodexUsage.summary)
+                try? store.save(updatedSnapshot)
+                snapshot = updatedSnapshot
+                reloadWidgetTimelines()
+            } else if restoredCachedSnapshot, snapshot != nil {
+                // 网络刷新失败但旧缓存可用时，同步恢复额度小组件显示。
+                reloadWidgetTimelines()
             }
         }
     }

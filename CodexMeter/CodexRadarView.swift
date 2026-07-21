@@ -7,6 +7,7 @@ import SwiftUI
 struct CodexRadarSection: View {
     @ObservedObject var store: CodexRadarStore
     let settings: CodexRadarSettings
+    @State private var selectedModelFamilies: Set<String> = ["Sol"]
 
     /// 降智雷达详情页入口；弹窗里只放外链图标，完整说明交给网页承载。
     private static let radarPageURL = URL(string: "https://codexradar.com/")!
@@ -18,9 +19,22 @@ struct CodexRadarSection: View {
 
                 if let snapshot = store.snapshot, let modelIQ = snapshot.modelIQ {
                     let displaySeries = modelIQ.displaySeries(limit: modelIQ.allSeries.count)
-                    CodexRadarScoreGrid(runs: displaySeries.compactMap(\.latest))
+                    let chartSeries = displaySeries.filter {
+                        selectedModelFamilies.contains(CodexRadarScoreCardText.familyLabel(model: $0.model))
+                    }
+                    CodexRadarScoreGrid(
+                        runs: displaySeries.compactMap(\.latest),
+                        selectedFamilies: selectedModelFamilies,
+                        onToggleFamily: { family in
+                            if selectedModelFamilies.contains(family) {
+                                selectedModelFamilies.remove(family)
+                            } else {
+                                selectedModelFamilies.insert(family)
+                            }
+                        }
+                    )
                     if settings.showsScoreChart {
-                        CodexRadarLineChart(series: displaySeries)
+                        CodexRadarLineChart(series: chartSeries)
                     }
                     footer(snapshot: snapshot)
                 } else if store.isRefreshing {
@@ -87,9 +101,9 @@ struct CodexRadarSection: View {
         .font(.caption2)
     }
 
-    /// 格式化同步时间，避免把 ISO 字符串原样塞进紧凑弹窗。
+    /// 格式化模型 IQ 的上游更新时间；缺失时才回退为本地抓取时间。
     private func syncText(snapshot: CodexRadarSnapshot) -> String {
-        if let updatedAt = snapshot.modelIQ?.quotaRadarUpdatedAt.flatMap(CodexRadarDateFormatter.shortDateTime) {
+        if let updatedAt = snapshot.modelIQ?.updatedAt.flatMap(CodexRadarDateFormatter.shortDateTime) {
             return AppLocalization.usesEnglish() ? "Model IQ updated \(updatedAt)" : "模型IQ更新 \(updatedAt)"
         }
         let time = CodexRadarDateFormatter.shortTime(snapshot.fetchedAt)
@@ -100,6 +114,8 @@ struct CodexRadarSection: View {
 /// 最新模型矩阵，用最多两行的紧凑卡片展示模型和 IQ。
 private struct CodexRadarScoreGrid: View {
     let runs: [CodexRadarIQRun]
+    let selectedFamilies: Set<String>
+    let onToggleFamily: (String) -> Void
 
     /// 矩阵中的单个模型家族，runs 保留上游的档位排序。
     private struct ModelFamily: Identifiable {
@@ -111,10 +127,18 @@ private struct CodexRadarScoreGrid: View {
         VStack(spacing: 0) {
             ForEach(modelFamilies) { family in
                 HStack(spacing: 4) {
-                    Text(family.id)
-                        .font(.caption2.weight(.medium))
-                        .foregroundStyle(.secondary)
-                        .frame(width: 30, alignment: .leading)
+                    Button {
+                        onToggleFamily(family.id)
+                    } label: {
+                        Text(family.id)
+                    }
+                    .buttonStyle(.plain)
+                    .font(.caption2.weight(.medium))
+                    .foregroundStyle(selectedFamilies.contains(family.id) ? Color.primary : Color.secondary.opacity(0.55))
+                    .frame(width: 30, alignment: .leading)
+                    .accessibilityLabel("\(family.id) 模型曲线")
+                    .accessibilityValue(selectedFamilies.contains(family.id) ? "已显示" : "已隐藏")
+                    .help(selectedFamilies.contains(family.id) ? "点击隐藏 \(family.id) 曲线" : "点击显示 \(family.id) 曲线")
 
                     ForEach(family.runs) { run in
                         scoreCell(for: run)
@@ -235,7 +259,7 @@ private struct CodexRadarLineChart: View {
 
     /// 绘制轻量网格和关键刻度，保持菜单弹窗可扫读。
     private func drawGrid(context: inout GraphicsContext, rect: CGRect) {
-        for score in [90.0, 110.0, 130.0, 150.0] {
+        for score in CodexRadarScoreAxis.gridScores(in: scoreAxisBounds) {
             let y = pixelAligned(yPosition(score: score, rect: rect))
             var path = Path()
             path.move(to: CGPoint(x: rect.minX, y: y))
@@ -343,10 +367,10 @@ private struct CodexRadarLineChart: View {
         }
     }
 
-    /// 把 IQ 90 及以上的连续跑分分段，低分日期会真正断开曲线。
+    /// 把纵轴范围内的连续跑分分段，超出范围的日期会真正断开曲线。
     private func visibleSegments(for item: CodexRadarModelSeries) -> [[CodexRadarIQRun]] {
         item.recentDays.reduce(into: [[CodexRadarIQRun]]()) { segments, run in
-            guard run.score >= 90 else {
+            guard scoreAxisBounds.contains(run.score) else {
                 if segments.last?.isEmpty == false {
                     segments.append([])
                 }
@@ -368,7 +392,7 @@ private struct CodexRadarLineChart: View {
     private func nearestPoint(to location: CGPoint, size: CGSize) -> HoveredPoint? {
         let rect = plotRect(for: size)
         let candidates = series.flatMap { item in
-            let runs = item.recentDays.filter { $0.score >= 90 }
+            let runs = item.recentDays.filter { scoreAxisBounds.contains($0.score) }
             return zip(runs, points(for: runs, rect: rect)).map { ($0.0.date, $0.0.score, $0.1) }
         }
         return candidates
@@ -409,10 +433,15 @@ private struct CodexRadarLineChart: View {
         CGRect(x: 28, y: 4, width: max(size.width - 34, 1), height: max(size.height - 20, 1))
     }
 
-    /// 将 IQ 分数夹到 90-150 的可视范围，突出高分模型之间的差异。
+    /// 根据当前历史数据计算紧凑纵轴，跨度超过 60 时优先保留高分段。
+    private var scoreAxisBounds: ClosedRange<Double> {
+        CodexRadarScoreAxis.bounds(for: series.flatMap { $0.recentDays.map(\.score) })
+    }
+
+    /// 将 IQ 分数夹到动态纵轴范围，保证极值不会越出画布。
     private func yPosition(score: Double, rect: CGRect) -> CGFloat {
-        let clamped = min(max(score, 90), 150)
-        let ratio = (clamped - 90) / 60
+        let clamped = min(max(score, scoreAxisBounds.lowerBound), scoreAxisBounds.upperBound)
+        let ratio = (clamped - scoreAxisBounds.lowerBound) / (scoreAxisBounds.upperBound - scoreAxisBounds.lowerBound)
         return rect.maxY - rect.height * CGFloat(ratio)
     }
 
@@ -424,24 +453,8 @@ private struct CodexRadarLineChart: View {
 
 }
 
-/// 雷达颜色表；集中管理状态色和曲线色，避免卡片和图例各自漂移。
+/// 雷达颜色表；状态色保留分数语义，曲线色复用全应用图表主题。
 private enum CodexRadarPalette {
-    /// 最多十二条曲线使用互不重复的高对比颜色，顺序与数据点和悬停提示保持一致。
-    private static let seriesHexColors = [
-        "#2F6ED3", // 蓝
-        "#0E9F6E", // 绿
-        "#D98200", // 橙
-        "#D9293A", // 红
-        "#8B5CF6", // 紫
-        "#0891B2", // 青
-        "#C026D3", // 紫红
-        "#65A30D", // 黄绿
-        "#E11D74", // 玫红
-        "#4F46E5", // 靛蓝
-        "#0F766E", // 蓝绿
-        "#A16207"  // 琥珀
-    ]
-
     static func color(status: String?, score: Double) -> Color {
         switch status {
         case "green":
@@ -462,7 +475,7 @@ private enum CodexRadarPalette {
     }
 
     static func seriesColor(index: Int) -> Color {
-        Color(hexRGB: seriesHexColors[index % seriesHexColors.count])
+        CodexMeterChartPalette.seriesColor(index: index)
     }
 }
 
@@ -555,9 +568,10 @@ private enum CodexRadarDateFormatter {
         timeFormatter().string(from: value)
     }
 
-    /// 把雷达日期压成横轴标签；am/pm 后缀保留为早/晚，帮助区分同一天多次跑分。
+    /// 把雷达日期压成横轴标签；ISO 时间先截取日期部分，am/pm 后缀保留为早/晚。
     static func axisLabel(_ value: String) -> String {
-        let parts = value.split(separator: "-").map(String.init)
+        let datePart = value.split(separator: "T", maxSplits: 1).first ?? Substring(value)
+        let parts = datePart.split(separator: "-").map(String.init)
         guard parts.count >= 3,
               let month = Int(parts[1]),
               let day = Int(parts[2])

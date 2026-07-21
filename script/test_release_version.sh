@@ -65,6 +65,8 @@ assert_equal "8" "$(release_read_project_setting "$PROJECT_FILE" CURRENT_PROJECT
 
 assert_script_contains 'DMG_PATH="$DIST_DIR/$APP_NAME-$MARKETING_VERSION-$BUILD_NUMBER-universal.dmg"' "产物唯一命名"
 assert_script_contains 'APP_PATH="$BUILD_DIR/Release/$COMPATIBLE_PRODUCT_NAME.app"' "保留兼容 App 包名"
+assert_script_contains 'INSTALLED_APP_PATH="/Applications/$APP_NAME.app"' "安装使用品牌名称"
+assert_script_contains 'ditto "$APP_PATH" "$DMG_ROOT/$APP_NAME.app"' "DMG 使用品牌名称"
 assert_script_contains 'ARCHS="arm64 x86_64"' "构建 Universal App"
 assert_script_contains 'APP_ARCHS="$(lipo -archs' "验证 Universal 架构"
 assert_script_contains 'generate_appcast' "生成 Sparkle appcast"

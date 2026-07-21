@@ -208,12 +208,23 @@ public enum AppLocalization {
         "显示额外额度": "Show Additional Limits",
         "显示 Codex Spark 等接口返回的额外 rate limit。": "Show additional rate limits such as Codex Spark.",
         "活动": "Activity",
+        "半年活跃": "6-Month Activity",
+        "Token 构成": "Token Mix",
+        "剩余": "Remaining",
         "显示 Profile 概览": "Show Profile Overview",
         "展示累计 Token、峰值、最长任务和连续天数。": "Show lifetime tokens, peak usage, longest task, and streak.",
         "显示 Token 活动": "Show Token Activity",
         "展示每日、每周和累计 Token 活动柱状图。": "Show daily, weekly, and lifetime token activity charts.",
         "显示额度重置卡": "Show Reset Credits",
-        "在 Token 活动下方显示可用重置卡数量和到期时间。": "Show available reset credits and expiry below token activity.",
+        "在额度与用量中显示可用重置卡数量和到期时间。": "Show available reset credits and expiry under quota and usage.",
+        "Profiles": "Profiles",
+        "本机消耗与成本": "Local Usage & Cost",
+        "显示概览": "Show Overview",
+        "展示本机 Token、费用构成和项目消耗排行。": "Show local tokens, cost mix, and project usage rankings.",
+        "显示趋势": "Show Trends",
+        "展示可切换每日、每周和累计口径的热力图。": "Show the heatmap with daily, weekly, and cumulative views.",
+        "显示项目": "Show Projects",
+        "展示任务分类、进度和最近任务。": "Show task categories, progress, and recent tasks.",
         "洞察": "Insights",
         "显示活动洞察": "Show Activity Insights",
         "展示快速模式、推理强度、技能和会话统计。": "Show fast mode, reasoning effort, skills, and session statistics.",
@@ -350,7 +361,44 @@ public enum AppLocalization {
         "超高": "Extra High",
         "显示 Codex 5 小时与 7 天窗口的最近同步余量。": "Show the latest synced Codex quota for the 5-hour and 7-day windows.",
         "暂无数据": "No Data",
-        "打开菜单栏 App 后自动同步": "Open the menu bar app to sync automatically"
+        "打开菜单栏 App 后自动同步": "Open the menu bar app to sync automatically",
+        "本机统计": "Local Insights",
+        "本机看板": "Local Dashboard",
+        "Codex 用量看板": "Codex Usage Dashboard",
+        "Codex 概览": "Codex Overview",
+        "统一展示额度、Token、费用、项目和任务状态。": "Show quota, tokens, cost, projects, and task status in one dashboard.",
+        "额度与用量": "Quota & Usage",
+        "额度": "Quota",
+        "云端": "Cloud",
+        "消耗与成本": "Usage & Cost",
+        "成本": "Cost",
+        "概览": "Overview",
+        "趋势": "Trend",
+        "项目": "Projects",
+        "Token 趋势": "Token Trend",
+        "30 天": "30 Days",
+        "本机": "Local",
+        "未缓存": "Uncached",
+        "缓存率": "Cache Rate",
+        "已归档": "Archived",
+        "Codex 本机统计": "Codex Local Insights",
+        "显示本机 Token、项目排行和今日任务计数。": "Show local tokens, project rankings, and today's task counts.",
+        "暂无本机统计": "No Local Insights",
+        "今日": "Today",
+        "近 7 天": "Last 7 Days",
+        "线程": "Threads",
+        "项目 Top 5": "Top 5 Projects",
+        "项目排行": "Top Projects",
+        "近 7 日趋势": "7-Day Trend",
+        "本月估算": "Month Estimate",
+        "API 等效估算": "API-Rate Estimate",
+        "输入": "Input",
+        "缓存输入": "Cached",
+        "输出": "Output",
+        "进行中": "Active",
+        "待处理": "Pending",
+        "定时": "Scheduled",
+        "完成": "Done"
     ]
 }
 
@@ -466,6 +514,11 @@ public enum PopoverPreferenceKeys {
     public static let showsSyncDetails = "popover.showsSyncDetails"
     public static let showsAdditionalLimits = "popover.showsAdditionalLimits"
     public static let showsResetCredits = "popover.showsResetCredits"
+    /// 保留旧总开关键仅用于升级迁移，新版本使用三个栏目开关。
+    public static let showsLocalUsage = "popover.showsLocalUsage"
+    public static let showsLocalOverview = "popover.showsLocalOverview"
+    public static let showsLocalTrend = "popover.showsLocalTrend"
+    public static let showsLocalProjects = "popover.showsLocalProjects"
     public static let resetTimeDisplayStyle = "popover.resetTimeDisplayStyle"
 
     public static let allKeys = [
@@ -477,6 +530,10 @@ public enum PopoverPreferenceKeys {
         showsSyncDetails,
         showsAdditionalLimits,
         showsResetCredits,
+        showsLocalUsage,
+        showsLocalOverview,
+        showsLocalTrend,
+        showsLocalProjects,
         resetTimeDisplayStyle
     ]
 }
@@ -807,10 +864,13 @@ public struct PopoverDisplaySettings: Equatable, Sendable {
     public static let defaultShowsProfileOverview = true
     public static let defaultShowsTokenActivity = true
     public static let defaultShowsActivityInsights = true
-    public static let defaultShowsTopInvocations = true
-    public static let defaultShowsSyncDetails = true
+    public static let defaultShowsTopInvocations = false
+    public static let defaultShowsSyncDetails = false
     public static let defaultShowsAdditionalLimits = false
     public static let defaultShowsResetCredits = true
+    public static let defaultShowsLocalOverview = false
+    public static let defaultShowsLocalTrend = false
+    public static let defaultShowsLocalProjects = false
     public static let defaultResetTimeDisplayStyle = ResetTimeDisplayStyle.countdown
 
     public let showsPaceComparison: Bool
@@ -821,6 +881,9 @@ public struct PopoverDisplaySettings: Equatable, Sendable {
     public let showsSyncDetails: Bool
     public let showsAdditionalLimits: Bool
     public let showsResetCredits: Bool
+    public let showsLocalOverview: Bool
+    public let showsLocalTrend: Bool
+    public let showsLocalProjects: Bool
     public let resetTimeDisplayStyle: ResetTimeDisplayStyle
 
     public init(
@@ -832,6 +895,9 @@ public struct PopoverDisplaySettings: Equatable, Sendable {
         showsSyncDetails: Bool = Self.defaultShowsSyncDetails,
         showsAdditionalLimits: Bool = Self.defaultShowsAdditionalLimits,
         showsResetCredits: Bool = Self.defaultShowsResetCredits,
+        showsLocalOverview: Bool = Self.defaultShowsLocalOverview,
+        showsLocalTrend: Bool = Self.defaultShowsLocalTrend,
+        showsLocalProjects: Bool = Self.defaultShowsLocalProjects,
         resetTimeDisplayStyle: ResetTimeDisplayStyle = Self.defaultResetTimeDisplayStyle
     ) {
         self.showsPaceComparison = showsPaceComparison
@@ -842,6 +908,9 @@ public struct PopoverDisplaySettings: Equatable, Sendable {
         self.showsSyncDetails = showsSyncDetails
         self.showsAdditionalLimits = showsAdditionalLimits
         self.showsResetCredits = showsResetCredits
+        self.showsLocalOverview = showsLocalOverview
+        self.showsLocalTrend = showsLocalTrend
+        self.showsLocalProjects = showsLocalProjects
         self.resetTimeDisplayStyle = resetTimeDisplayStyle
     }
 
@@ -865,6 +934,15 @@ public struct PopoverDisplaySettings: Equatable, Sendable {
             showsAdditionalLimits: additionalLimits,
             showsResetCredits: defaults.object(forKey: PopoverPreferenceKeys.showsResetCredits) as? Bool
                 ?? Self.defaultShowsResetCredits,
+            showsLocalOverview: defaults.object(forKey: PopoverPreferenceKeys.showsLocalOverview) as? Bool
+                ?? defaults.object(forKey: PopoverPreferenceKeys.showsLocalUsage) as? Bool
+                ?? Self.defaultShowsLocalOverview,
+            showsLocalTrend: defaults.object(forKey: PopoverPreferenceKeys.showsLocalTrend) as? Bool
+                ?? defaults.object(forKey: PopoverPreferenceKeys.showsLocalUsage) as? Bool
+                ?? Self.defaultShowsLocalTrend,
+            showsLocalProjects: defaults.object(forKey: PopoverPreferenceKeys.showsLocalProjects) as? Bool
+                ?? defaults.object(forKey: PopoverPreferenceKeys.showsLocalUsage) as? Bool
+                ?? Self.defaultShowsLocalProjects,
             resetTimeDisplayStyle: ResetTimeDisplayStyle(
                 rawValue: defaults.string(forKey: PopoverPreferenceKeys.resetTimeDisplayStyle) ?? ""
             ) ?? Self.defaultResetTimeDisplayStyle
@@ -873,6 +951,11 @@ public struct PopoverDisplaySettings: Equatable, Sendable {
 
     public var usesDefaultValues: Bool {
         self == PopoverDisplaySettings()
+    }
+
+    /// 判断本机卡片是否至少有一个栏目可见，全部关闭时不渲染空卡片。
+    public var showsAnyLocalSection: Bool {
+        showsLocalOverview || showsLocalTrend || showsLocalProjects
     }
 
     /// 通知菜单栏弹窗重新构建内容；可附带重置卡开关值，避免快速关开时后台只读到最终状态。
@@ -1699,6 +1782,37 @@ public struct CodexMeterWidgetDisplay: Equatable, Sendable {
             return "\(remainingPercent)%"
         }
         return "\(remainingPercent)"
+    }
+}
+
+/// 定义下拉框和小组件共用的图表主题；连续数据以暖橙为主，分类数据使用高对比辅助色。
+public enum CodexMeterChartPalette {
+    public static let primary = Color(hexRGB: "#F59E0B")
+    public static let primaryStrong = Color(hexRGB: "#D97706")
+    public static let secondary = Color(hexRGB: "#F28C28")
+    public static let tertiary = Color(hexRGB: "#EAB308")
+    public static let tokenInput = primary
+    public static let tokenCachedInput = Color(hexRGB: "#14B8A6")
+    public static let tokenOutput = Color(hexRGB: "#A855F7")
+
+    /// 根据用量强度生成单一主题色的热力图层级，避免连续数据混用色相造成视觉割裂。
+    public static func heatmapColor(value: Int64, maximum: Int64) -> Color {
+        guard value > 0 else { return Color.primary.opacity(0.07) }
+        switch Double(value) / Double(max(1, maximum)) {
+        case ..<0.2: return primary.opacity(0.28)
+        case ..<0.45: return primary.opacity(0.5)
+        case ..<0.75: return primary.opacity(0.7)
+        default: return primary.opacity(0.92)
+        }
+    }
+
+    /// 为多序列折线提供同一暖橙主题下仍可区分的颜色，按索引循环复用。
+    public static func seriesColor(index: Int) -> Color {
+        let seriesHexColors = [
+            "#F59E0B", "#E07A1F", "#F0A43A", "#C96A28", "#D98D33", "#B85C2B",
+            "#F2B24A", "#CE7D35", "#E6A15A", "#A95F3D", "#F3C05C", "#C77A48"
+        ]
+        return Color(hexRGB: seriesHexColors[index % seriesHexColors.count])
     }
 }
 

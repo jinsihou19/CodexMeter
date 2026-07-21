@@ -34,6 +34,23 @@ private enum TokenActivityMode: String, CaseIterable, Identifiable {
     }
 }
 
+/// 定义本机热力图的聚合口径，三种模式共享同一份逐日本机数据。
+private enum LocalUsageHeatmapMode: String, CaseIterable, Identifiable {
+    case daily
+    case weekly
+    case cumulative
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .daily: "每日"
+        case .weekly: "每周"
+        case .cumulative: "累计"
+        }
+    }
+}
+
 /// 从共享偏好解析当前应用语言，供下拉面板中的独立子视图复用。
 private func currentAppLanguage() -> AppLanguage {
     AppLanguage(
@@ -217,11 +234,10 @@ struct MenuBarView: View {
 
     @ViewBuilder private var visibleContentArea: some View {
         if usesScrollableContent {
-            ScrollView {
+            ScrollView(.vertical, showsIndicators: false) {
                 scrollContent
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
-            .scrollIndicators(.hidden)
             .frame(height: MenuBarPopoverLayout.maximumScrollableContentHeight)
         } else {
             scrollContent
@@ -281,6 +297,12 @@ struct MenuBarView: View {
     private func usageContent(_ snapshot: UsageSnapshot) -> some View {
         let activePopoverSettings = popoverSettings
         return VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                SectionTitle("额度与用量")
+                Spacer()
+                sourceBadge("额度", source: "云端", color: .blue)
+            }
+
             QuotaSummaryGrid(
                 snapshot: snapshot.rateLimits,
                 formatter: formatter,
@@ -290,10 +312,29 @@ struct MenuBarView: View {
                 onPaceMarkerHoverChange: updateActivePaceHelpText
             )
 
+            if activePopoverSettings.showsResetCredits {
+                ResetCreditsSection(
+                    snapshot: snapshot.resetCredits,
+                    isRefreshing: viewModel.isRefreshing,
+                    formatter: formatter,
+                    onRefresh: {
+                        Task { await viewModel.refreshResetCredits() }
+                    }
+                )
+            }
+
             CodexRadarSection(
                 store: radarStore,
                 settings: CodexRadarSettings(defaults: MenuBarDisplaySettings.sharedDefaults)
             )
+
+            if activePopoverSettings.showsAnyLocalSection, let localCodexUsage = viewModel.localCodexUsage {
+                LocalCodexUsageSection(
+                    snapshot: localCodexUsage,
+                    formatter: formatter,
+                    settings: activePopoverSettings
+                )
+            }
 
             if activePopoverSettings.showsAdditionalLimits, !snapshot.rateLimits.additionalLimits.isEmpty {
                 VStack(alignment: .leading, spacing: 10) {
@@ -319,21 +360,20 @@ struct MenuBarView: View {
                 )
             }
 
-            if activePopoverSettings.showsResetCredits {
-                ResetCreditsSection(
-                    snapshot: snapshot.resetCredits,
-                    isRefreshing: viewModel.isRefreshing,
-                    formatter: formatter,
-                    onRefresh: {
-                        Task { await viewModel.refreshResetCredits() }
-                    }
-                )
-            }
-
             if activePopoverSettings.showsSyncDetails {
                 SnapshotDetailsSection(snapshot: snapshot, formatter: formatter)
             }
         }
+    }
+
+    /// 生成不抢占主指标的来源标签，明确额度与消耗的不同口径。
+    private func sourceBadge(_ metric: String, source: String, color: Color) -> some View {
+        HStack(spacing: 3) {
+            Circle().fill(color).frame(width: 5, height: 5)
+            Text("\(AppLocalization.string(metric)) · \(AppLocalization.string(source))")
+        }
+        .font(.caption2.weight(.medium))
+        .foregroundStyle(.secondary)
     }
 
     @ViewBuilder private var scrollContent: some View {
@@ -351,6 +391,13 @@ struct MenuBarView: View {
                     store: radarStore,
                     settings: CodexRadarSettings(defaults: MenuBarDisplaySettings.sharedDefaults)
                 )
+                if popoverSettings.showsAnyLocalSection, let localCodexUsage = viewModel.localCodexUsage {
+                    LocalCodexUsageSection(
+                        snapshot: localCodexUsage,
+                        formatter: formatter,
+                        settings: popoverSettings
+                    )
+                }
             }
 
             if let errorMessage = viewModel.errorMessage {
@@ -779,6 +826,403 @@ private struct SectionTitle: View {
     }
 }
 
+/// 在菜单弹窗展示只读本机 token、项目排行和今日任务，不承担数据读取职责。
+private struct LocalCodexUsageSection: View {
+    let snapshot: LocalCodexUsageSnapshot
+    let formatter: UsageFormatter
+    let settings: PopoverDisplaySettings
+    @State private var heatmapMode = LocalUsageHeatmapMode.daily
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 5) {
+            HStack {
+                Label(AppLocalization.string("消耗与成本"), systemImage: "dollarsign.circle")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                Spacer()
+            }
+
+            if let cost = snapshot.summary.monthCost {
+                HStack(spacing: 4) {
+                    Text(AppLocalization.string("本月估算"))
+                        .foregroundStyle(.secondary)
+                    Text(Self.currency(cost.estimatedCostUSD))
+                        .fontWeight(.semibold)
+                        .monospacedDigit()
+                    Spacer()
+                    Text(AppLocalization.string("API 等效估算"))
+                        .foregroundStyle(.tertiary)
+                }
+                .font(.caption2)
+            }
+
+            if settings.showsLocalOverview {
+                subsectionTitle("概览")
+                overview
+            }
+            if settings.showsLocalOverview && (settings.showsLocalTrend || settings.showsLocalProjects) {
+                Divider()
+            }
+            if settings.showsLocalTrend {
+                trend
+            }
+            if settings.showsLocalTrend && settings.showsLocalProjects {
+                Divider()
+            }
+            if settings.showsLocalProjects {
+                subsectionTitle("项目")
+                projects
+            }
+        }
+        .menuSectionCard(padding: 6)
+    }
+
+    /// 生成纵向栏目的紧凑标题，和趋势标题保持同一视觉层级。
+    private func subsectionTitle(_ title: String) -> some View {
+        Text(AppLocalization.string(title))
+            .font(.caption2.weight(.semibold))
+            .foregroundStyle(.secondary)
+    }
+
+    /// 展示最常用的 Token、费用构成和项目消耗排行。
+    private var overview: some View {
+        let maximum = max(1, snapshot.summary.projects.map(\.tokens).max() ?? 1)
+        return VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 8) {
+                metric("今日", snapshot.summary.todayTokens)
+                metric("近 7 天", snapshot.summary.sevenDayTokens)
+                metric("累计", snapshot.summary.lifetimeTokens)
+                metric("线程", Int64(snapshot.summary.threadCount))
+            }
+
+            if let cost = snapshot.summary.monthCost {
+                VStack(alignment: .leading, spacing: 5) {
+                    tokenComposition(cost)
+                    HStack(spacing: 10) {
+                        costMetric("未缓存", max(0, cost.inputTokens - cost.cachedInputTokens), color: CodexMeterChartPalette.tokenInput)
+                        costMetric("缓存输入", cost.cachedInputTokens, color: CodexMeterChartPalette.tokenCachedInput)
+                        costMetric("输出", cost.outputTokens, color: CodexMeterChartPalette.tokenOutput)
+                        Spacer(minLength: 0)
+                        Text("\(AppLocalization.string("缓存率")) \(percent(cost.cachedInputTokens, of: cost.inputTokens))")
+                            .font(.caption2.weight(.semibold))
+                            .monospacedDigit()
+                    }
+                }
+            }
+
+            Divider()
+            projectRanking(maximum: maximum)
+        }
+    }
+
+    /// 仅用热力图展示半年 Token 活动，并允许切换逐日、逐周和累计口径。
+    private var trend: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Text(AppLocalization.string("趋势"))
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                Spacer()
+                Picker("", selection: $heatmapMode) {
+                    ForEach(LocalUsageHeatmapMode.allCases) { mode in
+                        Text(AppLocalization.string(mode.title)).tag(mode)
+                    }
+                }
+                .labelsHidden()
+                .pickerStyle(.segmented)
+                .frame(width: 150)
+            }
+
+            LocalMenuUsageHeatmap(
+                buckets: snapshot.summary.dailyBuckets ?? [],
+                fetchedAt: snapshot.summary.fetchedAt,
+                mode: heatmapMode,
+                formatter: formatter
+            )
+            .frame(height: 82)
+        }
+    }
+
+    /// 展示今日任务分类与具体条目，让项目页承接任务完成情况。
+    private var projects: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 10) {
+                taskCount("进行中", snapshot.taskBoard.activeCount, color: .green)
+                taskCount("待处理", snapshot.taskBoard.pendingCount, color: .orange)
+                taskCount("定时", snapshot.taskBoard.scheduledCount, color: .blue)
+                taskCount("已归档", snapshot.taskBoard.doneCount, color: .secondary)
+            }
+            ForEach(Array(snapshot.taskBoard.items.prefix(6))) { item in
+                HStack(spacing: 6) {
+                    Image(systemName: symbol(for: item.kind))
+                        .frame(width: 12)
+                        .foregroundStyle(color(for: item.kind))
+                    Text(item.title)
+                        .lineLimit(1)
+                    Spacer(minLength: 6)
+                    if let detail = item.detail {
+                        Text(detail)
+                            .lineLimit(1)
+                            .foregroundStyle(.tertiary)
+                    }
+                }
+                .font(.caption)
+            }
+        }
+    }
+
+    /// 绘制项目排行条，供概览页快速比较近七天项目消耗。
+    private func projectRanking(maximum: Int64) -> some View {
+        VStack(alignment: .leading, spacing: 7) {
+            ForEach(Array(snapshot.summary.projects.enumerated()), id: \.element.id) { index, project in
+                VStack(spacing: 3) {
+                    HStack(spacing: 6) {
+                        Text("\(index + 1)")
+                            .foregroundStyle(.tertiary)
+                            .frame(width: 12, alignment: .trailing)
+                        Text(project.name).lineLimit(1)
+                        Spacer(minLength: 4)
+                        Text("\(project.threadCount) \(AppLocalization.string("线程"))")
+                            .foregroundStyle(.tertiary)
+                        Text(formatter.tokenCount(project.tokens))
+                            .monospacedDigit()
+                            .foregroundStyle(.secondary)
+                    }
+                    .font(.caption)
+                    GeometryReader { geometry in
+                        ZStack(alignment: .leading) {
+                            Capsule().fill(Color.primary.opacity(0.08))
+                            Capsule().fill(CodexMeterChartPalette.primary.opacity(0.72))
+                                .frame(width: max(3, geometry.size.width * CGFloat(project.tokens) / CGFloat(maximum)))
+                        }
+                    }
+                    .frame(height: 4)
+                }
+            }
+        }
+    }
+
+    /// 绘制本月未缓存输入、缓存输入和输出的比例条。
+    private func tokenComposition(_ cost: LocalCodexCostSummary) -> some View {
+        let uncached = max(0, cost.inputTokens - cost.cachedInputTokens)
+        let total = max(1, uncached + cost.cachedInputTokens + cost.outputTokens)
+        return GeometryReader { geometry in
+            HStack(spacing: 0) {
+                Rectangle().fill(CodexMeterChartPalette.tokenInput)
+                    .frame(width: geometry.size.width * CGFloat(uncached) / CGFloat(total))
+                Rectangle().fill(CodexMeterChartPalette.tokenCachedInput)
+                    .frame(width: geometry.size.width * CGFloat(cost.cachedInputTokens) / CGFloat(total))
+                Rectangle().fill(CodexMeterChartPalette.tokenOutput)
+                    .frame(width: geometry.size.width * CGFloat(cost.outputTokens) / CGFloat(total))
+            }
+            .clipShape(RoundedRectangle(cornerRadius: 3))
+            .help("\(AppLocalization.string("未缓存")) \(formatter.tokenCount(uncached)) · \(AppLocalization.string("缓存输入")) \(formatter.tokenCount(cost.cachedInputTokens)) · \(AppLocalization.string("输出")) \(formatter.tokenCount(cost.outputTokens))")
+        }
+        .frame(height: 7)
+    }
+
+    /// 计算紧凑百分比，分母为零时保持稳定零值。
+    private func percent(_ value: Int64, of total: Int64) -> String {
+        guard total > 0 else { return "0%" }
+        return "\(Int((Double(value) / Double(total) * 100).rounded()))%"
+    }
+
+    /// 生成费用拆分的紧凑 token 指标，颜色与上方构成条保持对应。
+    private func costMetric(_ title: String, _ value: Int64, color: Color) -> some View {
+        HStack(spacing: 4) {
+            Circle().fill(color).frame(width: 5, height: 5)
+            Text(AppLocalization.string(title)).foregroundStyle(.secondary)
+            Text(formatter.tokenCount(value)).monospacedDigit()
+        }
+        .font(.caption2)
+    }
+
+    /// 把美元估算格式化为看板短文本。
+    private static func currency(_ value: Double) -> String {
+        String(format: "$%.2f", value)
+    }
+
+    /// 生成固定宽度的顶部指标，线程数沿用紧凑数字格式。
+    private func metric(_ title: String, _ value: Int64) -> some View {
+        VStack(alignment: .leading, spacing: 1) {
+            Text(AppLocalization.string(title))
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+            Text(formatter.tokenCount(value))
+                .font(.caption.weight(.semibold))
+                .monospacedDigit()
+                .lineLimit(1)
+                .minimumScaleFactor(0.72)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    /// 生成任务分类数量标签，颜色只用于快速扫读。
+    private func taskCount(_ title: String, _ value: Int, color: Color) -> some View {
+        HStack(spacing: 3) {
+            Circle().fill(color).frame(width: 5, height: 5)
+            Text("\(AppLocalization.string(title)) \(value)")
+                .lineLimit(1)
+        }
+        .font(.caption2)
+    }
+
+    /// 返回任务分类对应的系统图标。
+    private func symbol(for kind: LocalCodexTaskKind) -> String {
+        switch kind {
+        case .active: "play.circle.fill"
+        case .pending: "circle"
+        case .scheduled: "clock"
+        case .done: "checkmark.circle.fill"
+        }
+    }
+
+    /// 返回任务分类对应的提示色。
+    private func color(for kind: LocalCodexTaskKind) -> Color {
+        switch kind {
+        case .active: .green
+        case .pending: .orange
+        case .scheduled: .blue
+        case .done: .secondary
+        }
+    }
+}
+
+/// 在下拉框内展示可悬停的 26 周热力图，并按选择改变聚合口径。
+private struct LocalMenuUsageHeatmap: View {
+    let buckets: [LocalCodexDailyUsageBucket]
+    let fetchedAt: Date
+    let mode: LocalUsageHeatmapMode
+    let formatter: UsageFormatter
+    @State private var hoveredBucketID: String?
+
+    var body: some View {
+        let colorValues = paddedBuckets()
+        let detailValues = displayedBuckets(from: colorValues)
+        let maximum = max(1, colorValues.compactMap { $0?.tokens }.max() ?? 1)
+        let activeBucket = detailValues.compactMap(\.self).first { $0.id == hoveredBucketID }
+            ?? detailValues.compactMap(\.self).last
+
+        VStack(alignment: .leading, spacing: 4) {
+            if let activeBucket {
+                HStack(spacing: 6) {
+                    Text(activeBucket.label).foregroundStyle(.secondary)
+                    Text(formatter.tokenCount(activeBucket.tokens)).fontWeight(.semibold)
+                    Spacer(minLength: 8)
+                    if let estimatedCostUSD = activeBucket.estimatedCostUSD {
+                        Text("\(AppLocalization.string("成本")) \(Self.currency(estimatedCostUSD))")
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                .font(.caption2.monospacedDigit())
+            }
+
+            GeometryReader { geometry in
+                let spacing: CGFloat = 2
+                let cellWidth = max(3, (geometry.size.width - spacing * 25) / 26)
+                let rowCount = 7
+                let cellHeight = max(3, (geometry.size.height - spacing * CGFloat(rowCount - 1)) / CGFloat(rowCount))
+                HStack(spacing: spacing) {
+                    ForEach(0..<26, id: \.self) { column in
+                        VStack(spacing: spacing) {
+                            ForEach(0..<rowCount, id: \.self) { row in
+                                let index = column * rowCount + row
+                                let colorBucket = colorValues[index]
+                                let detailBucket = detailValues[index]
+                                RoundedRectangle(cornerRadius: min(2, cellWidth / 3))
+                                    .fill(CodexMeterChartPalette.heatmapColor(value: colorBucket?.tokens ?? 0, maximum: maximum))
+                                    .overlay {
+                                        if detailBucket?.id == activeBucket?.id {
+                                            RoundedRectangle(cornerRadius: min(2, cellWidth / 3))
+                                                .stroke(Color.primary.opacity(0.75), lineWidth: 1)
+                                        }
+                                    }
+                                    .frame(width: cellWidth, height: cellHeight)
+                            }
+                        }
+                    }
+                }
+                .contentShape(Rectangle())
+                .onContinuousHover { phase in
+                    switch phase {
+                    case let .active(location):
+                        let column = min(25, max(0, Int(location.x / (cellWidth + spacing))))
+                        let row = min(6, max(0, Int(location.y / (cellHeight + spacing))))
+                        hoveredBucketID = detailValues[column * rowCount + row]?.id
+                    case .ended:
+                        hoveredBucketID = nil
+                    }
+                }
+            }
+        }
+    }
+
+    /// 生成交互详情数据；颜色仍由原始逐日数据决定，模式切换不会改变热力图外观。
+    private func displayedBuckets(
+        from daily: [LocalCodexDailyUsageBucket?]
+    ) -> [LocalCodexDailyUsageBucket?] {
+        switch mode {
+        case .daily:
+            return daily
+        case .weekly:
+            return stride(from: 0, to: daily.count, by: 7).flatMap { start -> [LocalCodexDailyUsageBucket?] in
+                let column = daily[start..<min(start + 7, daily.count)]
+                let week = column.compactMap(\.self)
+                guard let first = week.first, let last = week.last else {
+                    return Array(repeating: nil, count: column.count)
+                }
+                let aggregate = LocalCodexDailyUsageBucket(
+                    id: "week-\(first.id)",
+                    label: "\(first.label)–\(last.label)",
+                    tokens: week.reduce(0) { $0 + $1.tokens },
+                    estimatedCostUSD: estimatedCost(for: week)
+                )
+                return column.map { $0 == nil ? nil : aggregate }
+            }
+        case .cumulative:
+            var total: Int64 = 0
+            var totalCost = 0.0
+            var hasEstimatedCost = false
+            return daily.map { bucket in
+                guard let bucket else { return nil }
+                total += bucket.tokens
+                if let estimatedCostUSD = bucket.estimatedCostUSD {
+                    totalCost += estimatedCostUSD
+                    hasEstimatedCost = true
+                }
+                return LocalCodexDailyUsageBucket(
+                    id: "cumulative-\(bucket.id)",
+                    label: bucket.label,
+                    tokens: total,
+                    estimatedCostUSD: hasEstimatedCost ? totalCost : nil
+                )
+            }
+        }
+    }
+
+    /// 汇总一个周列中已识别模型的 API 等效成本；没有可定价记录时不显示误导性的零金额。
+    private func estimatedCost(for buckets: [LocalCodexDailyUsageBucket]) -> Double? {
+        let costs = buckets.compactMap(\.estimatedCostUSD)
+        return costs.isEmpty ? nil : costs.reduce(0, +)
+    }
+
+    /// 把热力图选中时段的 API 等效金额格式化为紧凑美元文本。
+    private static func currency(_ value: Double) -> String {
+        String(format: "$%.2f", value)
+    }
+
+    /// 按当前星期对齐 26 周，并用 nil 表示未来日期。
+    private func paddedBuckets(calendar: Calendar = .current) -> [LocalCodexDailyUsageBucket?] {
+        let trailingDays = 7 - calendar.component(.weekday, from: fetchedAt)
+        let historyCount = 182 - trailingDays
+        let history = Array(buckets.suffix(historyCount)).map(Optional.some)
+        let leading = Array<LocalCodexDailyUsageBucket?>(repeating: nil, count: max(0, historyCount - history.count))
+        let trailing = Array<LocalCodexDailyUsageBucket?>(repeating: nil, count: trailingDays)
+        return leading + history + trailing
+    }
+
+}
+
 private struct PaceComparisonSection: View {
     let displays: [UsageWindowPaceDisplay]
 
@@ -1159,11 +1603,11 @@ private struct TokenActivityChart: View {
                     let ratio = Double(bucket.tokens) / Double(maximumTokens)
                     let isActive = activeBucket?.id == bucket.id
                     RoundedRectangle(cornerRadius: 2, style: .continuous)
-                        .fill(Color.orange.opacity(isActive ? 0.95 : 0.34 + (0.44 * ratio)))
+                        .fill(CodexMeterChartPalette.primary.opacity(isActive ? 0.95 : 0.34 + (0.44 * ratio)))
                         .overlay(alignment: .top) {
                             if isActive {
                                 RoundedRectangle(cornerRadius: 2, style: .continuous)
-                                    .stroke(Color.orange, lineWidth: 1)
+                                    .stroke(CodexMeterChartPalette.primary, lineWidth: 1)
                             }
                         }
                         .frame(maxWidth: .infinity)

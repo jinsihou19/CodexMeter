@@ -6,15 +6,18 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 APP_NAME="CodexMeter"
 SCHEME_NAME="CodexMeter"
-# 兼容标识：旧安装路径和 Sparkle 更新都依赖该包名，不能随展示名称一起修改。
+# 兼容标识：可执行文件和 Xcode 产物仍依赖该名称，安装时只调整外层 App 文件名。
 COMPATIBLE_PRODUCT_NAME="CodexUsage"
 WIDGET_PROCESS_NAME="CodexMeterWidgetExtension"
+WIDGET_BUNDLE_ID="com.jinsihou.CodexUsage.WidgetExtension"
+LSREGISTER="/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister"
 PROJECT_PATH="$ROOT_DIR/CodexMeter.xcodeproj"
 PROJECT_FILE="$PROJECT_PATH/project.pbxproj"
 BUILD_DIR="$ROOT_DIR/build/universal"
 DIST_DIR="$ROOT_DIR/dist"
 APPCAST_WORK_DIR="$BUILD_DIR/appcast"
-INSTALLED_APP_PATH="/Applications/$COMPATIBLE_PRODUCT_NAME.app"
+INSTALLED_APP_PATH="/Applications/$APP_NAME.app"
+LEGACY_INSTALLED_APP_PATH="/Applications/$COMPATIBLE_PRODUCT_NAME.app"
 GITHUB_REPOSITORY="jinsihou19/CodexMeter"
 PUBLISH_RELEASE="${CODEX_PUBLISH_RELEASE:-1}"
 INSTALL_LOCAL="${CODEX_INSTALL_LOCAL:-1}"
@@ -96,7 +99,6 @@ xcodebuild \
   ONLY_ACTIVE_ARCH=NO \
   CODE_SIGN_STYLE=Manual \
   CODE_SIGN_IDENTITY="$SIGN_IDENTITY" \
-  CODE_SIGN_ENTITLEMENTS="" \
   DEVELOPMENT_TEAM="" \
   PROVISIONING_PROFILE="" \
   PROVISIONING_PROFILE_SPECIFIER="" \
@@ -124,7 +126,7 @@ done
 DMG_ROOT="$BUILD_DIR/dmg-root"
 rm -rf "$DMG_ROOT"
 mkdir -p "$DMG_ROOT"
-cp -R "$APP_PATH" "$DMG_ROOT/"
+ditto "$APP_PATH" "$DMG_ROOT/$APP_NAME.app"
 ln -s /Applications "$DMG_ROOT/Applications"
 hdiutil create \
   -volname "$APP_NAME" \
@@ -170,8 +172,14 @@ release_write_notes \
 if [ "$INSTALL_LOCAL" = "1" ]; then
   pkill -x "$WIDGET_PROCESS_NAME" 2>/dev/null || true
   pkill -x "$COMPATIBLE_PRODUCT_NAME" 2>/dev/null || true
-  rm -rf "$INSTALLED_APP_PATH"
+  pluginkit -r "$LEGACY_INSTALLED_APP_PATH/Contents/PlugIns/CodexMeterWidgetExtension.appex" 2>/dev/null || true
+  rm -rf "$INSTALLED_APP_PATH" "$LEGACY_INSTALLED_APP_PATH"
   ditto "$APP_PATH" "$INSTALLED_APP_PATH"
+  # 构建会把临时产物注册进插件数据库；安装后改登稳定路径，否则系统组件库可能只记住 build 目录。
+  pluginkit -r "$APP_PATH/Contents/PlugIns/CodexMeterWidgetExtension.appex" 2>/dev/null || true
+  "$LSREGISTER" -f "$INSTALLED_APP_PATH"
+  pluginkit -a "$INSTALLED_APP_PATH/Contents/PlugIns/CodexMeterWidgetExtension.appex"
+  pluginkit -e use -i "$WIDGET_BUNDLE_ID"
   open -n "$INSTALLED_APP_PATH"
 fi
 

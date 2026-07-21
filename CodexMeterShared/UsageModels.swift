@@ -395,19 +395,22 @@ public struct UsageSnapshot: Codable, Equatable, Sendable {
     public let account: CodexAccountSnapshot?
     public let profileStats: CodexProfileStats?
     public let resetCredits: ResetCreditsSnapshot?
+    public let localCodexUsage: LocalCodexUsageSummary?
 
     public init(
         fetchedAt: Date,
         rateLimits: RateLimitSnapshot,
         account: CodexAccountSnapshot? = nil,
         profileStats: CodexProfileStats? = nil,
-        resetCredits: ResetCreditsSnapshot? = nil
+        resetCredits: ResetCreditsSnapshot? = nil,
+        localCodexUsage: LocalCodexUsageSummary? = nil
     ) {
         self.fetchedAt = fetchedAt
         self.rateLimits = rateLimits
         self.account = account
         self.profileStats = profileStats
         self.resetCredits = resetCredits
+        self.localCodexUsage = localCodexUsage
     }
 
     public var accountEmail: String? {
@@ -424,6 +427,125 @@ public struct UsageSnapshot: Codable, Equatable, Sendable {
 
     public var accountPlanCompactDisplayText: String? {
         CodexPlanFormatter.compactDisplayName(for: accountPlanType)
+    }
+
+    /// 返回带本机统计摘要的新快照，保留网络接口已经获取的全部字段。
+    public func withLocalCodexUsage(_ localCodexUsage: LocalCodexUsageSummary?) -> UsageSnapshot {
+        UsageSnapshot(
+            fetchedAt: fetchedAt,
+            rateLimits: rateLimits,
+            account: account,
+            profileStats: profileStats,
+            resetCredits: resetCredits,
+            localCodexUsage: localCodexUsage
+        )
+    }
+}
+
+/// 保存可安全共享给 Widget 的本机 Codex 聚合数据，不包含任务标题和完整工作目录。
+public struct LocalCodexUsageSummary: Codable, Equatable, Sendable {
+    public let fetchedAt: Date
+    public let todayTokens: Int64
+    public let sevenDayTokens: Int64
+    public let lifetimeTokens: Int64
+    public let threadCount: Int
+    public let projects: [LocalCodexProjectUsage]
+    public let taskCounts: LocalCodexTaskCounts
+    public let dailyBuckets: [LocalCodexDailyUsageBucket]?
+    public let monthCost: LocalCodexCostSummary?
+
+    public init(
+        fetchedAt: Date,
+        todayTokens: Int64,
+        sevenDayTokens: Int64,
+        lifetimeTokens: Int64,
+        threadCount: Int,
+        projects: [LocalCodexProjectUsage],
+        taskCounts: LocalCodexTaskCounts,
+        dailyBuckets: [LocalCodexDailyUsageBucket]? = nil,
+        monthCost: LocalCodexCostSummary? = nil
+    ) {
+        self.fetchedAt = fetchedAt
+        self.todayTokens = max(0, todayTokens)
+        self.sevenDayTokens = max(0, sevenDayTokens)
+        self.lifetimeTokens = max(0, lifetimeTokens)
+        self.threadCount = max(0, threadCount)
+        self.projects = Array(projects.prefix(5))
+        self.taskCounts = taskCounts
+        self.dailyBuckets = dailyBuckets
+        self.monthCost = monthCost
+    }
+}
+
+/// 保存近七天单日 token 聚合，供菜单和 Widget 绘制趋势图。
+public struct LocalCodexDailyUsageBucket: Codable, Equatable, Identifiable, Sendable {
+    public let id: String
+    public let label: String
+    public let tokens: Int64
+    /// 对应日期内可识别模型的 API 等效费用；旧快照和未知模型保持为空。
+    public let estimatedCostUSD: Double?
+
+    public init(id: String, label: String, tokens: Int64, estimatedCostUSD: Double? = nil) {
+        self.id = id
+        self.label = label
+        self.tokens = max(0, tokens)
+        self.estimatedCostUSD = estimatedCostUSD.map { max(0, $0) }
+    }
+}
+
+/// 保存本月本机日志的 token 拆分与 API 等效价值，金额不代表实际账单。
+public struct LocalCodexCostSummary: Codable, Equatable, Sendable {
+    public let inputTokens: Int64
+    public let cachedInputTokens: Int64
+    public let outputTokens: Int64
+    public let estimatedCostUSD: Double
+    public let pricedSessionCount: Int
+    public let sessionCount: Int
+
+    public init(
+        inputTokens: Int64,
+        cachedInputTokens: Int64,
+        outputTokens: Int64,
+        estimatedCostUSD: Double,
+        pricedSessionCount: Int,
+        sessionCount: Int
+    ) {
+        self.inputTokens = max(0, inputTokens)
+        self.cachedInputTokens = min(max(0, cachedInputTokens), self.inputTokens)
+        self.outputTokens = max(0, outputTokens)
+        self.estimatedCostUSD = max(0, estimatedCostUSD)
+        self.pricedSessionCount = max(0, pricedSessionCount)
+        self.sessionCount = max(0, sessionCount)
+    }
+}
+
+/// 描述近七天单个项目的聚合用量；只保存目录末级名称，避免共享完整路径。
+public struct LocalCodexProjectUsage: Codable, Equatable, Identifiable, Sendable {
+    public let id: String
+    public let name: String
+    public let tokens: Int64
+    public let threadCount: Int
+
+    public init(id: String, name: String, tokens: Int64, threadCount: Int) {
+        self.id = id
+        self.name = name
+        self.tokens = max(0, tokens)
+        self.threadCount = max(0, threadCount)
+    }
+}
+
+/// 汇总今日任务看板的四类数量，供菜单和 Widget 使用。
+public struct LocalCodexTaskCounts: Codable, Equatable, Sendable {
+    public let active: Int
+    public let pending: Int
+    public let scheduled: Int
+    public let done: Int
+
+    public init(active: Int, pending: Int, scheduled: Int, done: Int) {
+        self.active = max(0, active)
+        self.pending = max(0, pending)
+        self.scheduled = max(0, scheduled)
+        self.done = max(0, done)
     }
 }
 

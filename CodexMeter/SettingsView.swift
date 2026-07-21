@@ -198,6 +198,9 @@ struct SettingsView: View {
     @AppStorage(PopoverPreferenceKeys.showsSyncDetails, store: MenuBarDisplaySettings.sharedDefaults) private var popoverShowsSyncDetails = PopoverDisplaySettings.defaultShowsSyncDetails
     @AppStorage(PopoverPreferenceKeys.showsAdditionalLimits, store: MenuBarDisplaySettings.sharedDefaults) private var popoverShowsAdditionalLimits = PopoverDisplaySettings.defaultShowsAdditionalLimits
     @AppStorage(PopoverPreferenceKeys.showsResetCredits, store: MenuBarDisplaySettings.sharedDefaults) private var popoverShowsResetCredits = PopoverDisplaySettings.defaultShowsResetCredits
+    @AppStorage(PopoverPreferenceKeys.showsLocalOverview, store: MenuBarDisplaySettings.sharedDefaults) private var popoverShowsLocalOverview = PopoverDisplaySettings.defaultShowsLocalOverview
+    @AppStorage(PopoverPreferenceKeys.showsLocalTrend, store: MenuBarDisplaySettings.sharedDefaults) private var popoverShowsLocalTrend = PopoverDisplaySettings.defaultShowsLocalTrend
+    @AppStorage(PopoverPreferenceKeys.showsLocalProjects, store: MenuBarDisplaySettings.sharedDefaults) private var popoverShowsLocalProjects = PopoverDisplaySettings.defaultShowsLocalProjects
     @AppStorage(PopoverPreferenceKeys.resetTimeDisplayStyle, store: MenuBarDisplaySettings.sharedDefaults) private var popoverResetTimeDisplayStyle = PopoverDisplaySettings.defaultResetTimeDisplayStyle.rawValue
 
     @State private var selectedPane = Pane.general
@@ -757,10 +760,10 @@ struct SettingsView: View {
         .scrollContentBackground(.hidden)
     }
 
-    /// 下拉面板页按用量、活动、洞察、雷达和显示分组，保留全部现有模块开关。
+    /// 下拉面板按额度、Profiles、本机消耗、雷达和显示分组，明确云端与本机数据边界。
     private var popoverPane: some View {
         Form {
-            Section(AppLocalization.string("用量")) {
+            Section(AppLocalization.string("额度与用量")) {
                 SettingsToggleRow(
                     title: "显示用量速度",
                     subtitle: "展示当前用量相对预期节奏是偏快还是有余量。",
@@ -777,9 +780,23 @@ struct SettingsView: View {
                         key: PopoverPreferenceKeys.showsAdditionalLimits
                     )
                 )
+                SettingsToggleRow(
+                    title: "显示额度重置卡",
+                    subtitle: "在额度与用量中显示可用重置卡数量和到期时间。",
+                    isOn: popoverResetCreditsBinding
+                )
+                SettingsPickerRow(
+                    title: "重置时间",
+                    subtitle: "倒计时适合快速扫读，具体时间适合规划任务开始时间。",
+                    selection: popoverBinding(
+                        $popoverResetTimeDisplayStyle,
+                        key: PopoverPreferenceKeys.resetTimeDisplayStyle
+                    ),
+                    options: ResetTimeDisplayStyle.allCases.map { ($0.rawValue, $0.title) }
+                )
             }
 
-            Section(AppLocalization.string("活动")) {
+            Section(AppLocalization.string("Profiles")) {
                 SettingsToggleRow(
                     title: "显示 Profile 概览",
                     subtitle: "展示累计 Token、峰值、最长任务和连续天数。",
@@ -793,14 +810,6 @@ struct SettingsView: View {
                     subtitle: "展示每日、每周和累计 Token 活动柱状图。",
                     isOn: popoverBinding($popoverShowsTokenActivity, key: PopoverPreferenceKeys.showsTokenActivity)
                 )
-                SettingsToggleRow(
-                    title: "显示额度重置卡",
-                    subtitle: "在 Token 活动下方显示可用重置卡数量和到期时间。",
-                    isOn: popoverResetCreditsBinding
-                )
-            }
-
-            Section(AppLocalization.string("洞察")) {
                 SettingsToggleRow(
                     title: "显示活动洞察",
                     subtitle: "展示快速模式、推理强度、技能和会话统计。",
@@ -816,6 +825,33 @@ struct SettingsView: View {
                 )
             }
 
+            Section(AppLocalization.string("本机消耗与成本")) {
+                SettingsToggleRow(
+                    title: "显示概览",
+                    subtitle: "展示本机 Token、费用构成和项目消耗排行。",
+                    isOn: popoverBinding(
+                        $popoverShowsLocalOverview,
+                        key: PopoverPreferenceKeys.showsLocalOverview
+                    )
+                )
+                SettingsToggleRow(
+                    title: "显示趋势",
+                    subtitle: "展示可切换每日、每周和累计口径的热力图。",
+                    isOn: popoverBinding(
+                        $popoverShowsLocalTrend,
+                        key: PopoverPreferenceKeys.showsLocalTrend
+                    )
+                )
+                SettingsToggleRow(
+                    title: "显示项目",
+                    subtitle: "展示任务分类、进度和最近任务。",
+                    isOn: popoverBinding(
+                        $popoverShowsLocalProjects,
+                        key: PopoverPreferenceKeys.showsLocalProjects
+                    )
+                )
+            }
+
             Section(AppLocalization.string("降智雷达")) {
                 SettingsToggleRow(
                     title: "开启降智雷达",
@@ -825,7 +861,7 @@ struct SettingsView: View {
                 if codexRadarEnabled {
                     SettingsToggleRow(
                         title: "显示分值折线图",
-                        subtitle: "只绘制 IQ 90 及以上的历史分值。",
+                        subtitle: "只绘制当前纵轴范围内的历史分值。",
                         isOn: codexRadarScoreChartBinding
                     )
                 }
@@ -836,15 +872,6 @@ struct SettingsView: View {
                     title: "显示同步详情",
                     subtitle: "展示限制状态和最近同步时间。",
                     isOn: popoverBinding($popoverShowsSyncDetails, key: PopoverPreferenceKeys.showsSyncDetails)
-                )
-                SettingsPickerRow(
-                    title: "重置时间",
-                    subtitle: "倒计时适合快速扫读，具体时间适合规划任务开始时间。",
-                    selection: popoverBinding(
-                        $popoverResetTimeDisplayStyle,
-                        key: PopoverPreferenceKeys.resetTimeDisplayStyle
-                    ),
-                    options: ResetTimeDisplayStyle.allCases.map { ($0.rawValue, $0.title) }
                 )
             }
 
@@ -1019,6 +1046,9 @@ struct SettingsView: View {
             showsSyncDetails: popoverShowsSyncDetails,
             showsAdditionalLimits: popoverShowsAdditionalLimits,
             showsResetCredits: popoverShowsResetCredits,
+            showsLocalOverview: popoverShowsLocalOverview,
+            showsLocalTrend: popoverShowsLocalTrend,
+            showsLocalProjects: popoverShowsLocalProjects,
             resetTimeDisplayStyle: ResetTimeDisplayStyle(rawValue: popoverResetTimeDisplayStyle) ?? .countdown
         )
     }
@@ -1200,6 +1230,7 @@ struct SettingsView: View {
                 WidgetCenter.shared.reloadAllTimelines()
             } else {
                 WidgetCenter.shared.reloadTimelines(ofKind: "CodexUsageWidget")
+                WidgetCenter.shared.reloadTimelines(ofKind: "CodexLocalUsageWidget")
             }
         }
     }

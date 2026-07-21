@@ -137,12 +137,14 @@ private struct CodexRadarResponse: Decodable {
     }
 
     struct ModelIQ: Decodable {
+        let updatedAt: String?
         let latest: Run?
         let recentDays: [Run]?
         let comparisons: [String: Series]?
         let quotaRadar: QuotaRadar?
 
         enum CodingKeys: String, CodingKey {
+            case updatedAt = "updated_at"
             case latest
             case recentDays = "recent_days"
             case comparisons
@@ -165,6 +167,7 @@ private struct CodexRadarResponse: Decodable {
             return CodexRadarModelIQ(
                 primary: primary,
                 comparisons: comparisonModels,
+                updatedAt: updatedAt,
                 quotaRadarUpdatedAt: quotaRadar?.updatedAt
             )
         }

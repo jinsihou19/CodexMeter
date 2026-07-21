@@ -47,6 +47,46 @@ enum CodexRadarLineChartLayout {
     }
 }
 
+/// 降智雷达纵轴规则；按实际分数范围生成整十刻度，最高分不超过 150。
+enum CodexRadarScoreAxis {
+    private static let standardLowerBound = 90.0
+    private static let maximumUpperBound = 150.0
+    private static let minimumLowerBound = 0.0
+    private static let maximumSpan = 60.0
+    private static let step = 10.0
+
+    /// 返回覆盖分数的整十纵轴范围；跨度超过 60 时优先保留最高分向下的 60 分。
+    static func bounds(for scores: [Double]) -> ClosedRange<Double> {
+        guard let lowest = scores.min(), let highest = scores.max() else {
+            return standardLowerBound...maximumUpperBound
+        }
+        let lowerBound = max((lowest / step).rounded(.down) * step, minimumLowerBound)
+        let upperBound = upperBound(for: [highest])
+        if upperBound - lowerBound > maximumSpan {
+            return (upperBound - maximumSpan)...upperBound
+        }
+        if lowerBound < upperBound {
+            return lowerBound...upperBound
+        }
+        if upperBound < maximumUpperBound {
+            return lowerBound...(upperBound + step)
+        }
+        return max(lowerBound - step, minimumLowerBound)...upperBound
+    }
+
+    /// 返回覆盖最高分的整十纵轴上限，最大不超过 150。
+    static func upperBound(for scores: [Double]) -> Double {
+        let highest = scores.max() ?? standardLowerBound
+        let rounded = (highest / step).rounded(.up) * step
+        return min(max(rounded, standardLowerBound), maximumUpperBound)
+    }
+
+    /// 生成当前纵轴范围内的全部整十刻度。
+    static func gridScores(in bounds: ClosedRange<Double>) -> [Double] {
+        stride(from: bounds.lowerBound, through: bounds.upperBound, by: step).map { $0 }
+    }
+}
+
 /// 降智雷达模型矩阵文案规则；统一卡片标签和悬停全称的模型格式。
 enum CodexRadarScoreCardText {
     /// 提取模型家族名，供矩阵每行只展示一次。
@@ -57,7 +97,7 @@ enum CodexRadarScoreCardText {
             .map(String.init) ?? "GPT"
     }
 
-    /// 返回矩阵单元格的完整档位名，并兼容旧 ultra 数据。
+    /// 返回矩阵单元格的完整档位名；ultra 和 max 是独立档位。
     static func effortLabel(_ effort: String?) -> String {
         guard let effort, !effort.isEmpty else {
             return "--"
@@ -83,18 +123,17 @@ enum CodexRadarScoreCardText {
         return "\(base) \(fullEffort(effort))"
     }
 
-    /// 生成矩阵中的紧凑档位，medium 缩写为 med，旧 ultra 统一为 max。
+    /// 生成矩阵中的紧凑档位，medium 缩写为 med。
     private static func compactEffort(_ effort: String) -> String {
         switch effort.lowercased() {
         case "medium": return "med"
-        case "ultra": return "max"
         default: return effort.lowercased()
         }
     }
 
-    /// 悬停详情保留完整档位名，仅兼容旧 ultra 名称。
+    /// 悬停详情保留远端提供的完整推理档位名。
     private static func fullEffort(_ effort: String) -> String {
-        effort.lowercased() == "ultra" ? "max" : effort.lowercased()
+        effort.lowercased()
     }
 
     /// 规范远端模型名的大小写和 GPT 前缀，未知格式保留可读兜底。
