@@ -39,11 +39,11 @@
 
 系统要求：macOS 14.0 或更新版本。
 
-### 从 CodexUsage 桥接升级
+### 从旧版 CodexUsage 升级
 
-首个 CodexMeter 版本需要手动覆盖一次旧应用。安装包仍使用兼容路径 `/Applications/CodexUsage.app`，但 Finder 和界面显示为 `CodexMeter`；原有设置、额度缓存、Widget 和登录启动状态会继续保留。
+构建产物、DMG 和安装路径均使用 `CodexMeter.app`。Bundle ID 和 App Group 仍保留旧标识，因此原有设置、额度缓存和 Widget 数据会继续保留。
 
-旧版本本身没有更新器，因此无法自动完成这一次桥接。桥接完成后，后续版本均可通过 Sparkle 自动更新。
+如果“应用程序”中仍有 `CodexUsage.app`，安装 `CodexMeter.app` 后退出并删除旧应用，避免同时启动两个菜单栏进程。
 
 ## 自动更新
 

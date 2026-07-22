@@ -5,6 +5,7 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PROJECT_FILE="$ROOT_DIR/CodexMeter.xcodeproj/project.pbxproj"
+SCHEME_FILE="$ROOT_DIR/CodexMeter.xcodeproj/xcshareddata/xcschemes/CodexMeter.xcscheme"
 
 test -d "$ROOT_DIR/CodexMeter.xcodeproj"
 test -f "$ROOT_DIR/CodexMeter.xcodeproj/xcshareddata/xcschemes/CodexMeter.xcscheme"
@@ -16,7 +17,8 @@ grep -Fq '# CodexMeter' "$ROOT_DIR/README.md"
 grep -Fq '<string>CodexMeter</string>' "$ROOT_DIR/CodexMeter/Info.plist"
 grep -Fq 'PRODUCT_BUNDLE_IDENTIFIER = com.jinsihou.CodexUsage;' "$PROJECT_FILE"
 grep -Fq 'PRODUCT_MODULE_NAME = CodexMeter;' "$PROJECT_FILE"
-grep -Fq 'PRODUCT_NAME = CodexUsage;' "$PROJECT_FILE"
+grep -Fq 'PRODUCT_NAME = CodexMeter;' "$PROJECT_FILE"
+grep -Fq 'BuildableName = "CodexMeter.app"' "$SCHEME_FILE"
 grep -Fq 'group.com.jinsihou.CodexUsage' "$ROOT_DIR/CodexMeter/CodexMeter.entitlements"
 grep -Fq 'https://github.com/sparkle-project/Sparkle' "$PROJECT_FILE"
 grep -Fq '<key>SUFeedURL</key>' "$ROOT_DIR/CodexMeter/Info.plist"

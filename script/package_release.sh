@@ -6,8 +6,7 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 APP_NAME="CodexMeter"
 SCHEME_NAME="CodexMeter"
-# 兼容标识：可执行文件和 Xcode 产物仍依赖该名称，安装时只调整外层 App 文件名。
-COMPATIBLE_PRODUCT_NAME="CodexUsage"
+LEGACY_PRODUCT_NAME="CodexUsage"
 WIDGET_PROCESS_NAME="CodexMeterWidgetExtension"
 WIDGET_BUNDLE_ID="com.jinsihou.CodexUsage.WidgetExtension"
 LSREGISTER="/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister"
@@ -17,7 +16,7 @@ BUILD_DIR="$ROOT_DIR/build/universal"
 DIST_DIR="$ROOT_DIR/dist"
 APPCAST_WORK_DIR="$BUILD_DIR/appcast"
 INSTALLED_APP_PATH="/Applications/$APP_NAME.app"
-LEGACY_INSTALLED_APP_PATH="/Applications/$COMPATIBLE_PRODUCT_NAME.app"
+LEGACY_INSTALLED_APP_PATH="/Applications/$LEGACY_PRODUCT_NAME.app"
 GITHUB_REPOSITORY="jinsihou19/CodexMeter"
 PUBLISH_RELEASE="${CODEX_PUBLISH_RELEASE:-1}"
 INSTALL_LOCAL="${CODEX_INSTALL_LOCAL:-1}"
@@ -49,7 +48,7 @@ NEXT_BUILD_NUMBER="$(release_next_build_number "$BUILD_NUMBER")"
 DMG_PATH="$DIST_DIR/$APP_NAME-$MARKETING_VERSION-$BUILD_NUMBER-universal.dmg"
 APPCAST_PATH="$DIST_DIR/appcast.xml"
 RELEASE_NOTES_PATH="$DIST_DIR/release-notes.md"
-APP_PATH="$BUILD_DIR/Release/$COMPATIBLE_PRODUCT_NAME.app"
+APP_PATH="$BUILD_DIR/Release/$APP_NAME.app"
 RELEASE_TAG="v$MARKETING_VERSION-$BUILD_NUMBER"
 DOWNLOAD_URL_PREFIX="https://github.com/jinsihou19/CodexMeter/releases/download/$RELEASE_TAG/"
 
@@ -115,7 +114,7 @@ fi
 
 codesign --verify --deep --strict --verbose=2 "$APP_PATH"
 
-APP_ARCHS="$(lipo -archs "$APP_PATH/Contents/MacOS/$COMPATIBLE_PRODUCT_NAME")"
+APP_ARCHS="$(lipo -archs "$APP_PATH/Contents/MacOS/$APP_NAME")"
 for REQUIRED_ARCH in arm64 x86_64; do
   if [[ " $APP_ARCHS " != *" $REQUIRED_ARCH "* ]]; then
     echo "Missing $REQUIRED_ARCH in app binary: $APP_ARCHS" >&2
@@ -151,7 +150,7 @@ else
   "$GENERATE_APPCAST" "${APPCAST_ARGUMENTS[@]}"
 fi
 
-# Sparkle 会用兼容 App 包目录生成频道标题；仅替换展示标题，保留已签名 enclosure 的全部属性。
+# 统一频道展示标题，保留已签名 enclosure 的全部属性。
 perl -0pi -e 's{(<channel>\s*<title>)[^<]*(</title>)}{$1CodexMeter$2}' "$APPCAST_PATH"
 
 # 使用上一个 Release 到当前提交的差异生成分类说明，直接提交也不会被遗漏。
@@ -171,7 +170,8 @@ release_write_notes \
 # WidgetKit 会保留 extension 进程；本机安装前一并结束，Actions runner 则跳过该步骤。
 if [ "$INSTALL_LOCAL" = "1" ]; then
   pkill -x "$WIDGET_PROCESS_NAME" 2>/dev/null || true
-  pkill -x "$COMPATIBLE_PRODUCT_NAME" 2>/dev/null || true
+  pkill -x "$APP_NAME" 2>/dev/null || true
+  pkill -x "$LEGACY_PRODUCT_NAME" 2>/dev/null || true
   pluginkit -r "$LEGACY_INSTALLED_APP_PATH/Contents/PlugIns/CodexMeterWidgetExtension.appex" 2>/dev/null || true
   rm -rf "$INSTALLED_APP_PATH" "$LEGACY_INSTALLED_APP_PATH"
   ditto "$APP_PATH" "$INSTALLED_APP_PATH"

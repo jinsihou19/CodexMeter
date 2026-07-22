@@ -246,6 +246,7 @@ final class UsageViewModel: ObservableObject {
     private let logger = Logger(subsystem: "com.jinsihou.CodexUsage", category: "Usage")
     private var refreshTask: Task<Void, Never>?
     private var hasStartedRefreshLoop = false
+    private var isRefreshingLocalUsage = false
     private var appBehaviorObserver: NSObjectProtocol?
     private var popoverDisplayObserver: NSObjectProtocol?
     private var lastShowsResetCredits: Bool
@@ -384,11 +385,18 @@ final class UsageViewModel: ObservableObject {
     }
 
     func refresh() async {
+        let localUsageTask = Task { [weak self] in
+            await self?.refreshLocalCodexUsage()
+        }
         await refresh(forceRefreshResetCredits: false)
+        await localUsageTask.value
     }
 
-    /// 独立刷新本机统计并合并进已有额度缓存，不等待网络额度请求。
-    private func refreshLocalCodexUsage() async {
+    /// 串行刷新本机统计并合并进已有额度缓存；已有读取进行时跳过重复请求。
+    func refreshLocalCodexUsage() async {
+        guard !isRefreshingLocalUsage else { return }
+        isRefreshingLocalUsage = true
+        defer { isRefreshingLocalUsage = false }
         guard let loadedLocalCodexUsage = await localCodexUsageLoader() else { return }
         localCodexUsage = loadedLocalCodexUsage
         guard let cachedSnapshot = snapshot else { return }
@@ -419,13 +427,12 @@ final class UsageViewModel: ObservableObject {
         logger.info("Refresh started")
         isRefreshing = true
         defer { isRefreshing = false }
-        async let localUsageResult = localCodexUsageLoader()
 
         do {
             let networkSnapshot = try await client.fetchUsageSnapshot(forceRefreshResetCredits: forceRefreshResetCredits)
-            let loadedLocalCodexUsage = await localUsageResult
-            localCodexUsage = loadedLocalCodexUsage
-            let updatedSnapshot = networkSnapshot.withLocalCodexUsage(loadedLocalCodexUsage?.summary)
+            let updatedSnapshot = networkSnapshot.withLocalCodexUsage(
+                localCodexUsage?.summary ?? snapshot?.localCodexUsage
+            )
             try store.save(updatedSnapshot)
             snapshot = updatedSnapshot
             processUsageNotifications(updatedSnapshot)
@@ -433,21 +440,13 @@ final class UsageViewModel: ObservableObject {
             logger.info("Refresh saved snapshot")
             reloadWidgetTimelines()
         } catch {
-            let loadedLocalCodexUsage = await localUsageResult
-            localCodexUsage = loadedLocalCodexUsage
             errorMessage = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
             logger.error("Refresh failed: \(self.errorMessage ?? "unknown", privacy: .public)")
             let restoredCachedSnapshot = snapshot == nil
             if snapshot == nil {
                 snapshot = try? store.load()
             }
-            // 本机看板不依赖网络；额度请求失败时仍把本机摘要合并进已有缓存。
-            if let loadedLocalCodexUsage, let cachedSnapshot = snapshot {
-                let updatedSnapshot = cachedSnapshot.withLocalCodexUsage(loadedLocalCodexUsage.summary)
-                try? store.save(updatedSnapshot)
-                snapshot = updatedSnapshot
-                reloadWidgetTimelines()
-            } else if restoredCachedSnapshot, snapshot != nil {
+            if restoredCachedSnapshot, snapshot != nil {
                 // 网络刷新失败但旧缓存可用时，同步恢复额度小组件显示。
                 reloadWidgetTimelines()
             }
@@ -514,13 +513,13 @@ final class UsageViewModel: ObservableObject {
             guard let self else {
                 return
             }
-            await self.refresh()
+            await self.refresh(forceRefreshResetCredits: false)
             while !Task.isCancelled {
                 try? await Task.sleep(nanoseconds: intervalNanoseconds)
                 guard !Task.isCancelled else {
                     return
                 }
-                await self.refresh()
+                await self.refresh(forceRefreshResetCredits: false)
             }
         }
     }

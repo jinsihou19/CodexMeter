@@ -27,6 +27,7 @@ final class LocalCodexUsageReaderTests: XCTestCase {
             databaseURL: databaseURL,
             sessionIndexURL: sessionIndexURL,
             automationFiles: [automationURL],
+            diagnostics: testDiagnosticLog(),
             query: { _, sql in
                 if sql.contains("AS lifetimeTokens") {
                     return Self.json([["todayTokens": 120, "sevenDayTokens": 560, "lifetimeTokens": 2_400, "threadCount": 4, "lastUpdatedAt": 1_799_900]])
@@ -89,26 +90,37 @@ final class LocalCodexUsageReaderTests: XCTestCase {
         XCTAssertEqual(snapshot.taskBoard.items.first(where: { $0.kind == .pending })?.title, "待处理预览")
     }
 
-    /// 验证数据库不存在或 sqlite3 查询失败时静默返回 nil。
-    func testReaderReturnsNilWhenDatabaseIsUnavailable() async {
+    /// 验证数据库不存在或 sqlite3 查询失败时返回 nil，并留下可供设置页查看的诊断记录。
+    func testReaderReturnsNilAndLogsWhyDatabaseIsUnavailable() async throws {
+        let logURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+            .appendingPathComponent("CodexMeter.log")
+        let diagnostics = AppDiagnosticLog(fileURL: logURL)
         let missingReader = LocalCodexUsageReader(
             now: Date.init,
             databaseURL: URL(fileURLWithPath: "/tmp/\(UUID().uuidString)/state_5.sqlite"),
             automationFiles: [],
+            diagnostics: diagnostics,
             query: { _, _ in XCTFail("数据库缺失时不应执行查询"); return nil }
         )
         let missingSnapshot = await missingReader.load()
         XCTAssertNil(missingSnapshot)
+        XCTAssertTrue(try String(contentsOf: logURL, encoding: .utf8).contains("Codex 状态库不存在"))
 
         let databaseURL = try? temporaryFile(named: "state_5.sqlite", contents: Data())
         let failedReader = LocalCodexUsageReader(
             now: Date.init,
             databaseURL: databaseURL,
             automationFiles: [],
+            diagnostics: diagnostics,
             query: { _, _ in nil }
         )
         let failedSnapshot = await failedReader.load()
         XCTAssertNil(failedSnapshot)
+        let logContents = try String(contentsOf: logURL, encoding: .utf8)
+        XCTAssertTrue(logContents.contains("[本机统计]"))
+        XCTAssertTrue(logContents.contains("总览查询失败"))
+        XCTAssertTrue(logContents.contains("未生成可用快照"))
     }
 
     /// 验证 sqlite3 对零行查询返回空输出时，读取器仍生成有效统计而不是误判失败。
@@ -118,6 +130,7 @@ final class LocalCodexUsageReaderTests: XCTestCase {
             now: { Date(timeIntervalSince1970: 1_800_000) },
             databaseURL: databaseURL,
             automationFiles: [],
+            diagnostics: testDiagnosticLog(),
             query: { _, sql in
                 if sql.contains("AS lifetimeTokens") {
                     return Self.json([["todayTokens": 10, "sevenDayTokens": 20, "lifetimeTokens": 30, "threadCount": 1, "lastUpdatedAt": 1_800_000]])
@@ -141,6 +154,22 @@ final class LocalCodexUsageReaderTests: XCTestCase {
         XCTAssertEqual(snapshot.taskBoard.doneCount, 0)
     }
 
+    /// 验证两代 sqlite3 CLI 的 CANTOPEN 形式都会触发一次重试，其他错误不重试。
+    func testSQLiteCantOpenErrorsAreRetryable() {
+        XCTAssertTrue(LocalCodexUsageReader.shouldRetrySQLite(
+            terminationStatus: 1,
+            errorText: "Parse error: unable to open database file (14)"
+        ))
+        XCTAssertTrue(LocalCodexUsageReader.shouldRetrySQLite(
+            terminationStatus: 14,
+            errorText: "Error: in prepare, unable to open database file (14)"
+        ))
+        XCTAssertFalse(LocalCodexUsageReader.shouldRetrySQLite(
+            terminationStatus: 1,
+            errorText: "no such table: threads"
+        ))
+    }
+
     /// 创建测试文件并返回路径，目录由系统临时目录托管。
     private func temporaryFile(named name: String, contents: Data) throws -> URL {
         let directory = FileManager.default.temporaryDirectory
@@ -149,6 +178,15 @@ final class LocalCodexUsageReaderTests: XCTestCase {
         let url = directory.appendingPathComponent(name)
         try contents.write(to: url)
         return url
+    }
+
+    /// 为每个测试隔离诊断文件，避免测试记录混入用户实际日志。
+    private func testDiagnosticLog() -> AppDiagnosticLog {
+        AppDiagnosticLog(
+            fileURL: FileManager.default.temporaryDirectory
+                .appendingPathComponent(UUID().uuidString, isDirectory: true)
+                .appendingPathComponent("CodexMeter.log")
+        )
     }
 
     /// 把字典数组编码成 sqlite3 -json 相同形态的数据。

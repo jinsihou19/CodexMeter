@@ -850,6 +850,7 @@ struct SettingsView: View {
                         key: PopoverPreferenceKeys.showsLocalProjects
                     )
                 )
+
             }
 
             Section(AppLocalization.string("降智雷达")) {
@@ -946,6 +947,7 @@ struct SettingsView: View {
                         ) {
                             openCacheDirectory()
                         }
+                        .frame(maxWidth: .infinity)
 
                         SettingsCompactActionButton(
                             title: "打开状态目录",
@@ -954,9 +956,29 @@ struct SettingsView: View {
                         ) {
                             openActivityDirectory()
                         }
+                        .frame(maxWidth: .infinity)
+
+                        SettingsCompactActionButton(
+                            title: "查看诊断日志",
+                            subtitle: "打开应用诊断日志。",
+                            systemImage: "doc.text.magnifyingglass"
+                        ) {
+                            openAppDiagnosticLog()
+                        }
+                        .frame(maxWidth: .infinity)
+
+                        SettingsCompactActionButton(
+                            title: "打开日志目录",
+                            subtitle: "在 Finder 中打开应用日志目录。",
+                            systemImage: "folder"
+                        ) {
+                            openAppLogDirectory()
+                        }
+                        .frame(maxWidth: .infinity)
                     }
 
                     SettingsInfoRow(title: "状态文件", value: hookActivityURL.path)
+                    SettingsInfoRow(title: "日志文件", value: AppDiagnosticLog.shared.fileURL.path)
                     SettingsInfoRow(title: "Hook 配置", value: ".codex/hooks.json")
                     SettingsInfoRow(title: "Hook 脚本", value: ".codex/hooks/codex_activity.py")
 
@@ -1389,6 +1411,18 @@ struct SettingsView: View {
     /// 在 Finder 中打开 hook 活动状态目录，便于确认脚本是否正在写入 JSON。
     private func openActivityDirectory() {
         openDirectory(hookActivityURL.deletingLastPathComponent())
+    }
+
+    /// 确保应用诊断日志存在，并交给系统默认文本查看器打开。
+    private func openAppDiagnosticLog() {
+        let diagnostics = AppDiagnosticLog.shared
+        diagnostics.prepareFile()
+        NSWorkspace.shared.open(diagnostics.fileURL)
+    }
+
+    /// 在 Finder 中打开应用日志目录，方便复制日志给维护者。
+    private func openAppLogDirectory() {
+        openDirectory(AppDiagnosticLog.shared.directoryURL)
     }
 
     /// 删除最近同步快照并刷新小组件，让“暂无数据”状态立即可见。

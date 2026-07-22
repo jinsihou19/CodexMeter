@@ -225,6 +225,11 @@ public enum AppLocalization {
         "展示可切换每日、每周和累计口径的热力图。": "Show the heatmap with daily, weekly, and cumulative views.",
         "显示项目": "Show Projects",
         "展示任务分类、进度和最近任务。": "Show task categories, progress, and recent tasks.",
+        "查看诊断日志": "View Diagnostic Log",
+        "打开应用诊断日志。": "Open the application diagnostic log.",
+        "打开日志目录": "Open Log Folder",
+        "在 Finder 中打开应用日志目录。": "Open the application log folder in Finder.",
+        "日志文件": "Log File",
         "洞察": "Insights",
         "显示活动洞察": "Show Activity Insights",
         "展示快速模式、推理强度、技能和会话统计。": "Show fast mode, reasoning effort, skills, and session statistics.",
@@ -1806,11 +1811,13 @@ public enum CodexMeterChartPalette {
         }
     }
 
-    /// 为多序列折线提供同一暖橙主题下仍可区分的颜色，按索引循环复用。
+    /// 为雷达多序列折线提供深色背景下易区分的多色调色板，按索引循环复用。
     public static func seriesColor(index: Int) -> Color {
         let seriesHexColors = [
-            "#F59E0B", "#E07A1F", "#F0A43A", "#C96A28", "#D98D33", "#B85C2B",
-            "#F2B24A", "#CE7D35", "#E6A15A", "#A95F3D", "#F3C05C", "#C77A48"
+            "#3B82F6", "#F59E0B", "#14B8A6", "#F43F5E", "#8B5CF6",
+            "#84CC16", "#06B6D4", "#F97316", "#D946EF", "#10B981",
+            "#6366F1", "#EAB308", "#0EA5E9", "#EF4444", "#A855F7",
+            "#22C55E", "#EC4899", "#38BDF8", "#FB923C", "#2DD4BF"
         ]
         return Color(hexRGB: seriesHexColors[index % seriesHexColors.count])
     }

@@ -46,8 +46,8 @@ final class CodexRadarTests: XCTestCase {
         XCTAssertTrue(source.contains(") { _ in\n            CodexRadarSettings.notifyDidChange()"))
     }
 
-    /// 验证雷达曲线复用下拉框和小组件共有的十二色暖橙主题。
-    func testCodexRadarPaletteUsesSharedChartTheme() throws {
+    /// 验证雷达曲线使用二十种适合深色背景的高区分度颜色。
+    func testCodexRadarPaletteUsesTwentyDistinctColors() throws {
         let testFileURL = URL(fileURLWithPath: #filePath)
         let projectRoot = testFileURL
             .deletingLastPathComponent()
@@ -61,11 +61,13 @@ final class CodexRadarTests: XCTestCase {
             encoding: .utf8
         )
         let expectedColors = [
-            "#F59E0B", "#E07A1F", "#F0A43A", "#C96A28", "#D98D33", "#B85C2B",
-            "#F2B24A", "#CE7D35", "#E6A15A", "#A95F3D", "#F3C05C", "#C77A48"
+            "#3B82F6", "#F59E0B", "#14B8A6", "#F43F5E", "#8B5CF6",
+            "#84CC16", "#06B6D4", "#F97316", "#D946EF", "#10B981",
+            "#6366F1", "#EAB308", "#0EA5E9", "#EF4444", "#A855F7",
+            "#22C55E", "#EC4899", "#38BDF8", "#FB923C", "#2DD4BF"
         ]
 
-        XCTAssertEqual(Set(expectedColors).count, 12)
+        XCTAssertEqual(Set(expectedColors).count, 20)
         for color in expectedColors {
             XCTAssertTrue(paletteSource.contains("\"\(color)\""))
         }

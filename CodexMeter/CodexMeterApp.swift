@@ -532,6 +532,7 @@ final class StatusBarController: NSObject {
             configurePopoverWindowAppearance()
             alignPopoverWindow(to: sender)
             activatePopoverWindow()
+            Task { await viewModel.refreshLocalCodexUsage() }
             Task { await viewModel.refreshResetCreditsIfNeeded() }
         }
     }

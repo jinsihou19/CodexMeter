@@ -3,6 +3,99 @@
 import CodexMeterShared
 import Foundation
 
+/// 把应用运行诊断写入统一文本文件，供设置页直接打开排查；日志不记录会话正文。
+final class AppDiagnosticLog: @unchecked Sendable {
+    static let shared = AppDiagnosticLog()
+
+    let fileURL: URL
+    private let lock = NSLock()
+    private let maximumFileSize: UInt64 = 1_048_576
+
+    var directoryURL: URL {
+        fileURL.deletingLastPathComponent()
+    }
+
+    init(fileURL: URL? = nil) {
+        self.fileURL = fileURL ?? Self.defaultFileURL()
+    }
+
+    /// 记录正常运行阶段；分类用于区分本机统计等不同模块。
+    func info(_ message: String, category: String = "应用") {
+        append(level: "INFO", category: category, message: message)
+    }
+
+    /// 记录允许降级的异常，不中断应用其他功能。
+    func warning(_ message: String, category: String = "应用") {
+        append(level: "WARN", category: category, message: message)
+    }
+
+    /// 记录导致功能无法完成的错误。
+    func error(_ message: String, category: String = "应用") {
+        append(level: "ERROR", category: category, message: message)
+    }
+
+    /// 确保日志文件存在，供设置页在尚无记录时也能正常打开。
+    func prepareFile() {
+        lock.lock()
+        defer { lock.unlock() }
+        try? prepareFileLocked()
+    }
+
+    /// 串行追加单行日志；超过 1 MB 时直接从新文件开始，避免长期轮询无限占用磁盘。
+    private func append(level: String, category: String, message: String) {
+        lock.lock()
+        defer { lock.unlock() }
+        do {
+            try prepareFileLocked()
+            let attributes = try FileManager.default.attributesOfItem(atPath: fileURL.path)
+            if (attributes[.size] as? NSNumber)?.uint64Value ?? 0 >= maximumFileSize {
+                try Data().write(to: fileURL, options: .atomic)
+            }
+            let cleanMessage = message.replacingOccurrences(of: "\n", with: " ")
+            let cleanCategory = category.replacingOccurrences(of: "\n", with: " ")
+            let line = "[\(Self.timestamp())] [\(level)] [\(cleanCategory)] \(cleanMessage)\n"
+            let handle = try FileHandle(forWritingTo: fileURL)
+            defer { try? handle.close() }
+            try handle.seekToEnd()
+            try handle.write(contentsOf: Data(line.utf8))
+        } catch {
+            // 日志自身失败不能影响额度刷新或本机统计读取。
+        }
+    }
+
+    /// 创建日志目录和空文件，不覆盖已有诊断记录。
+    private func prepareFileLocked() throws {
+        try FileManager.default.createDirectory(at: directoryURL, withIntermediateDirectories: true)
+        if !FileManager.default.fileExists(atPath: fileURL.path) {
+            try Data().write(to: fileURL, options: .atomic)
+        }
+    }
+
+    /// 返回用户级 Application Support 下的稳定日志位置。
+    private static func defaultFileURL() -> URL {
+        if Bundle.main.bundleURL.pathExtension == "xctest"
+            || Bundle.main.bundleIdentifier?.localizedCaseInsensitiveContains("xctest") == true
+        {
+            return FileManager.default.temporaryDirectory
+                .appendingPathComponent("CodexMeterTests", isDirectory: true)
+                .appendingPathComponent("CodexMeter.log")
+        }
+        let root = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
+            ?? FileManager.default.temporaryDirectory
+        return root
+            .appendingPathComponent("CodexMeter", isDirectory: true)
+            .appendingPathComponent("Logs", isDirectory: true)
+            .appendingPathComponent("CodexMeter.log")
+    }
+
+    /// 生成带时区的稳定时间戳，方便跨电脑比对刷新时点。
+    private static func timestamp() -> String {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return formatter.string(from: Date())
+    }
+}
+
 /// 描述应用内存中的完整本机统计；任务标题不会写入共享快照。
 struct LocalCodexUsageSnapshot: Sendable {
     let summary: LocalCodexUsageSummary
@@ -45,11 +138,13 @@ struct LocalCodexTaskBoard: Sendable {
 /// 使用系统 sqlite3 只读汇总 Codex 状态库；任一读取失败都返回 nil，不影响网络额度刷新。
 struct LocalCodexUsageReader: Sendable {
     typealias Query = @Sendable (URL, String) -> Data?
+    private static let diagnosticCategory = "本机统计"
 
     private let now: @Sendable () -> Date
     private let databaseURL: URL?
     private let sessionIndexURL: URL?
     private let automationFiles: [URL]
+    private let diagnostics: AppDiagnosticLog
     private let query: Query
 
     init(
@@ -57,6 +152,7 @@ struct LocalCodexUsageReader: Sendable {
         databaseURL: URL? = nil,
         sessionIndexURL: URL? = nil,
         automationFiles: [URL]? = nil,
+        diagnostics: AppDiagnosticLog = .shared,
         query: @escaping Query = LocalCodexUsageReader.runQuery
     ) {
         self.now = now
@@ -65,23 +161,45 @@ struct LocalCodexUsageReader: Sendable {
             ?? (databaseURL?.deletingLastPathComponent().appendingPathComponent("session_index.jsonl"))
             ?? Self.defaultSessionIndexURL()
         self.automationFiles = automationFiles ?? Self.defaultAutomationFiles()
+        self.diagnostics = diagnostics
         self.query = query
     }
 
     /// 在后台读取统计；数据库缺失、schema 不兼容或 sqlite3 执行失败时返回 nil。
     func load() async -> LocalCodexUsageSnapshot? {
+        diagnostics.info(
+            "开始读取本机统计；应用版本=\(Self.applicationVersionDescription())",
+            category: Self.diagnosticCategory
+        )
         let pricingCatalog = LocalCodexPricingCatalog.loadCached()
         Task.detached(priority: .background) {
             await LocalCodexPricingCatalog.refreshIfNeeded()
         }
-        return await Task.detached(priority: .utility) { loadSynchronously(pricingCatalog: pricingCatalog) }.value
+        let snapshot = await Task.detached(priority: .utility) {
+            loadSynchronously(pricingCatalog: pricingCatalog)
+        }.value
+        if snapshot == nil {
+            diagnostics.error("本机统计读取结束：未生成可用快照", category: Self.diagnosticCategory)
+        }
+        return snapshot
     }
 
     /// 执行聚合查询并组装内存快照；动态价格缺失时使用内置官方价格兜底。
     private func loadSynchronously(pricingCatalog: LocalCodexPricingCatalog?) -> LocalCodexUsageSnapshot? {
-        guard let databaseURL, FileManager.default.fileExists(atPath: databaseURL.path) else {
+        guard let databaseURL else {
+            let candidates = Self.databaseCandidates().map(\.path).joined(separator: "；")
+            diagnostics.error("未找到 Codex 状态库；已检查=\(candidates)", category: Self.diagnosticCategory)
             return nil
         }
+        guard FileManager.default.fileExists(atPath: databaseURL.path) else {
+            diagnostics.error("Codex 状态库不存在；路径=\(databaseURL.path)", category: Self.diagnosticCategory)
+            return nil
+        }
+        guard FileManager.default.isReadableFile(atPath: databaseURL.path) else {
+            diagnostics.error("Codex 状态库不可读；请检查文件权限；路径=\(databaseURL.path)", category: Self.diagnosticCategory)
+            return nil
+        }
+        diagnostics.info("使用 Codex 状态库；路径=\(databaseURL.path)", category: Self.diagnosticCategory)
         let fetchedAt = now()
         let calendar = Calendar.current
         let todayStart = calendar.startOfDay(for: fetchedAt)
@@ -91,14 +209,30 @@ struct LocalCodexUsageReader: Sendable {
         let activeStart = fetchedAt.addingTimeInterval(-2 * 60 * 60)
         let sessionTitles = sessionTitlesByThreadID()
 
-        guard let totals: [TotalsRow] = rows(for: totalsSQL(todayStart: todayStart, sevenDayStart: sevenDayStart), databaseURL: databaseURL),
-              let total = totals.first,
-              let projectRows: [ProjectRow] = rows(for: projectsSQL(sevenDayStart: sevenDayStart), databaseURL: databaseURL),
-              let openRows: [TaskRow] = rows(for: openTasksSQL(todayStart: todayStart), databaseURL: databaseURL),
-              let doneRows: [TaskRow] = rows(for: doneTasksSQL(todayStart: todayStart), databaseURL: databaseURL)
-        else {
+        guard let totals: [TotalsRow] = rows(
+            for: totalsSQL(todayStart: todayStart, sevenDayStart: sevenDayStart),
+            databaseURL: databaseURL,
+            context: "总览"
+        ) else { return nil }
+        guard let total = totals.first else {
+            diagnostics.error("总览查询未返回聚合行；数据库 schema 可能不兼容", category: Self.diagnosticCategory)
             return nil
         }
+        guard let projectRows: [ProjectRow] = rows(
+            for: projectsSQL(sevenDayStart: sevenDayStart),
+            databaseURL: databaseURL,
+            context: "项目"
+        ) else { return nil }
+        guard let openRows: [TaskRow] = rows(
+            for: openTasksSQL(todayStart: todayStart),
+            databaseURL: databaseURL,
+            context: "未归档任务"
+        ) else { return nil }
+        guard let doneRows: [TaskRow] = rows(
+            for: doneTasksSQL(todayStart: todayStart),
+            databaseURL: databaseURL,
+            context: "已归档任务"
+        ) else { return nil }
 
         let mappedProjects = projectRows.map { Self.projectUsage(from: $0) }
         let sortedProjects = mappedProjects.sorted { left, right in
@@ -118,11 +252,13 @@ struct LocalCodexUsageReader: Sendable {
         let taskBoard = LocalCodexTaskBoard(items: Self.sortedTasks(threadTasks + automationTasks()))
         let dailyRows: [DailyUsageRow] = rows(
             for: dailyUsageSQL(historyStart: historyStart),
-            databaseURL: databaseURL
+            databaseURL: databaseURL,
+            context: "每日趋势"
         ) ?? []
         let monthSources: [MonthSessionRow] = rows(
             for: monthSessionsSQL(monthStart: monthStart),
-            databaseURL: databaseURL
+            databaseURL: databaseURL,
+            context: "本月会话"
         ) ?? []
         let monthCost = Self.monthCost(sources: monthSources, catalog: pricingCatalog)
         let summary = LocalCodexUsageSummary(
@@ -146,6 +282,10 @@ struct LocalCodexUsageReader: Sendable {
                 calendar: calendar
             ),
             monthCost: monthCost
+        )
+        diagnostics.info(
+            "本机统计读取成功；线程=\(total.threadCount)；项目=\(projects.count)；日聚合=\(dailyRows.count)；本月会话=\(monthSources.count)",
+            category: Self.diagnosticCategory
         )
         return LocalCodexUsageSnapshot(summary: summary, taskBoard: taskBoard)
     }
@@ -268,16 +408,22 @@ struct LocalCodexUsageReader: Sendable {
         max(0, (value as? NSNumber)?.int64Value ?? 0)
     }
 
-    /// 解码 sqlite3 的 JSON 行，空结果保留为空数组，执行失败返回 nil。
-    private func rows<Row: Decodable>(for sql: String, databaseURL: URL) -> [Row]? {
+    /// 解码 sqlite3 的 JSON 行；上下文只用于日志标识，不写入查询结果或会话正文。
+    private func rows<Row: Decodable>(for sql: String, databaseURL: URL, context: String) -> [Row]? {
         guard let data = query(databaseURL, sql) else {
+            diagnostics.error("\(context)查询失败；数据库=\(databaseURL.path)", category: Self.diagnosticCategory)
             return nil
         }
         // sqlite3 -json 在查询零行时输出空字节；这是合法空集合，不应让整份统计失败。
         if data.allSatisfy({ $0 == 0x20 || $0 == 0x09 || $0 == 0x0A || $0 == 0x0D }) {
             return []
         }
-        return try? JSONDecoder().decode([Row].self, from: data)
+        do {
+            return try JSONDecoder().decode([Row].self, from: data)
+        } catch {
+            diagnostics.error("\(context)结果解析失败；错误=\(error.localizedDescription)", category: Self.diagnosticCategory)
+            return nil
+        }
     }
 
     /// 将 SQLite 项目行收敛为不包含完整路径的共享摘要。
@@ -315,9 +461,14 @@ struct LocalCodexUsageReader: Sendable {
 
     /// 逐行解析会话索引；重复 id 以后写入的标题为准，与 Codex 侧边栏保持一致。
     private func sessionTitlesByThreadID() -> [String: String] {
-        guard let sessionIndexURL,
-              let data = try? Data(contentsOf: sessionIndexURL)
-        else { return [:] }
+        guard let sessionIndexURL else { return [:] }
+        let data: Data
+        do {
+            data = try Data(contentsOf: sessionIndexURL)
+        } catch {
+            diagnostics.warning("会话名称索引读取失败；路径=\(sessionIndexURL.path)；错误=\(error.localizedDescription)", category: Self.diagnosticCategory)
+            return [:]
+        }
         let decoder = JSONDecoder()
         var titles: [String: String] = [:]
         for line in data.split(separator: 0x0A) {
@@ -332,7 +483,11 @@ struct LocalCodexUsageReader: Sendable {
     /// 解析 ACTIVE automation 的简单键值，复杂 TOML 语法留给 Codex 自身处理。
     private func automationTasks() -> [LocalCodexTaskItem] {
         automationFiles.compactMap { url in
-            guard let contents = try? String(contentsOf: url, encoding: .utf8) else {
+            let contents: String
+            do {
+                contents = try String(contentsOf: url, encoding: .utf8)
+            } catch {
+                diagnostics.warning("自动化配置读取失败；路径=\(url.path)；错误=\(error.localizedDescription)", category: Self.diagnosticCategory)
                 return nil
             }
             let values = Self.simpleKeyValues(contents)
@@ -377,11 +532,16 @@ struct LocalCodexUsageReader: Sendable {
 
     /// 定位 CODEX_HOME 或默认 ~/.codex 下当前使用的状态库。
     private static func defaultDatabaseURL() -> URL? {
+        databaseCandidates().first { FileManager.default.fileExists(atPath: $0.path) }
+    }
+
+    /// 返回当前支持的状态库候选路径，日志沿用同一列表避免诊断与实际读取不一致。
+    private static func databaseCandidates() -> [URL] {
         let home = codexHomeURL()
         return [
             home.appendingPathComponent("state_5.sqlite"),
             home.appendingPathComponent("sqlite/state_5.sqlite")
-        ].first { FileManager.default.fileExists(atPath: $0.path) }
+        ]
     }
 
     /// 定位 Codex 侧边栏使用的会话名称索引。
@@ -413,24 +573,77 @@ struct LocalCodexUsageReader: Sendable {
     private static func runQuery(databaseURL: URL, sql: String) -> Data? {
         let executable = ["/usr/bin/sqlite3", "/opt/homebrew/bin/sqlite3", "/usr/local/bin/sqlite3"]
             .first { FileManager.default.isExecutableFile(atPath: $0) }
-        guard let executable else { return nil }
+        guard let executable else {
+            AppDiagnosticLog.shared.error("未找到可执行的 sqlite3", category: Self.diagnosticCategory)
+            return nil
+        }
 
+        for attempt in 0...1 {
+            do {
+                let result = try runQueryAttempt(executable: executable, databaseURL: databaseURL, sql: sql)
+                guard result.terminationStatus != 0 else { return result.data }
+                if attempt == 0,
+                   shouldRetrySQLite(
+                       terminationStatus: result.terminationStatus,
+                       errorText: result.errorText
+                   ) {
+                    AppDiagnosticLog.shared.warning(
+                        "sqlite3 暂时无法打开状态库；200毫秒后重试",
+                        category: Self.diagnosticCategory
+                    )
+                    Thread.sleep(forTimeInterval: 0.2)
+                    continue
+                }
+                AppDiagnosticLog.shared.error(
+                    "sqlite3 执行失败；状态=\(result.terminationStatus)；错误=\(result.errorText.isEmpty ? "无详细信息" : result.errorText)",
+                    category: Self.diagnosticCategory
+                )
+                return nil
+            } catch {
+                AppDiagnosticLog.shared.error(
+                    "sqlite3 启动失败；错误=\(error.localizedDescription)",
+                    category: Self.diagnosticCategory
+                )
+                return nil
+            }
+        }
+        return nil
+    }
+
+    /// 执行单次 sqlite3 子进程，把退出状态和错误文本交给上层判断是否重试。
+    private static func runQueryAttempt(
+        executable: String,
+        databaseURL: URL,
+        sql: String
+    ) throws -> (data: Data, terminationStatus: Int32, errorText: String) {
         let process = Process()
         let output = Pipe()
+        let errorOutput = Pipe()
         process.executableURL = URL(fileURLWithPath: executable)
         process.arguments = ["-readonly", "-json", databaseURL.path, sql]
         process.standardOutput = output
-        process.standardError = FileHandle.nullDevice
-        do {
-            try process.run()
-            // 必须在 wait 前读取 stdout：会话路径查询可能超过 Pipe 缓冲区，否则 sqlite3 与父进程会互相等待。
-            let data = output.fileHandleForReading.readDataToEndOfFile()
-            process.waitUntilExit()
-            guard process.terminationStatus == 0 else { return nil }
-            return data
-        } catch {
-            return nil
-        }
+        process.standardError = errorOutput
+        try process.run()
+        // 必须在 wait 前读取 stdout：会话路径查询可能超过 Pipe 缓冲区，否则 sqlite3 与父进程会互相等待。
+        let data = output.fileHandleForReading.readDataToEndOfFile()
+        process.waitUntilExit()
+        let errorText = String(decoding: errorOutput.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return (data, process.terminationStatus, errorText)
+    }
+
+    /// 两代 sqlite3 CLI 分别使用状态 1 和 14 报告 CANTOPEN，统一按错误码或文本识别。
+    static func shouldRetrySQLite(terminationStatus: Int32, errorText: String) -> Bool {
+        terminationStatus == 14
+            || errorText.localizedCaseInsensitiveContains("unable to open database file")
+    }
+
+    /// 返回日志所需的应用展示版本和构建号，字段缺失时使用问号占位。
+    private static func applicationVersionDescription() -> String {
+        let info = Bundle.main.infoDictionary
+        let version = info?["CFBundleShortVersionString"] as? String ?? "?"
+        let build = info?["CFBundleVersion"] as? String ?? "?"
+        return "\(version) (\(build))"
     }
 
     /// 生成累计、今日和近七天 token 汇总查询。

@@ -252,7 +252,6 @@ final class UsageViewModelTests: XCTestCase {
             contentsOf: projectRoot.appendingPathComponent("CodexMeter/MenuBarView.swift"),
             encoding: .utf8
         )
-
         XCTAssertTrue(source.contains("if updater.isUpdateAvailable"))
         XCTAssertTrue(source.contains("updater.showAvailableUpdate()"))
         XCTAssertTrue(source.contains("Label(AppLocalization.string(\"更新\")"))
@@ -265,6 +264,14 @@ final class UsageViewModelTests: XCTestCase {
             .deletingLastPathComponent()
         let source = try String(
             contentsOf: projectRoot.appendingPathComponent("CodexMeter/MenuBarView.swift"),
+            encoding: .utf8
+        )
+        let settingsSource = try String(
+            contentsOf: projectRoot.appendingPathComponent("CodexMeter/SettingsView.swift"),
+            encoding: .utf8
+        )
+        let appSource = try String(
+            contentsOf: projectRoot.appendingPathComponent("CodexMeter/CodexMeterApp.swift"),
             encoding: .utf8
         )
 
@@ -285,6 +292,13 @@ final class UsageViewModelTests: XCTestCase {
         XCTAssertTrue(source.contains("ForEach(Array(snapshot.taskBoard.items.prefix(6)))"))
         XCTAssertTrue(source.contains("Text(item.title)"))
         XCTAssertTrue(source.contains(".onHover { isInside in"))
+        let diagnosticsGroup = try XCTUnwrap(
+            settingsSource.range(of: "DisclosureGroup(AppLocalization.string(\"诊断与维护\"))")
+        )
+        let logAction = try XCTUnwrap(settingsSource.range(of: "openAppDiagnosticLog()"))
+        XCTAssertLessThan(diagnosticsGroup.lowerBound, logAction.lowerBound)
+        XCTAssertFalse(settingsSource.contains("Section(AppLocalization.string(\"诊断日志\"))"))
+        XCTAssertTrue(appSource.contains("Task { await viewModel.refreshLocalCodexUsage() }"))
     }
 
     func testSettingsWindowPresenterCreatesAndReusesSettingsWindow() {
@@ -1166,6 +1180,38 @@ final class UsageViewModelTests: XCTestCase {
         XCTAssertEqual(client.fetchCount, 1)
     }
 
+    /// 验证启动和弹窗同时请求时本机统计仅读一次，额度自动刷新不会再读 SQLite。
+    func testAutomaticRefreshReadsLocalUsageOnlyOnceAtStartup() async {
+        let localLoadCount = CallCounter()
+        let client = CountingRateLimitClient(snapshot: Self.emptyRateLimits())
+        let viewModel = UsageViewModel(
+            client: client,
+            store: UsageSnapshotStore(
+                appGroupIdentifier: "",
+                fallbackDirectory: FileManager.default.temporaryDirectory
+                    .appendingPathComponent(UUID().uuidString, isDirectory: true)
+            ),
+            reloadWidgetTimelines: {},
+            refreshCadenceProvider: { .minutes5 },
+            localCodexUsageLoader: {
+                await localLoadCount.increment()
+                try? await Task.sleep(nanoseconds: 50_000_000)
+                return nil
+            }
+        )
+
+        viewModel.start()
+        async let popoverRefresh: Void = viewModel.refreshLocalCodexUsage()
+        await popoverRefresh
+        for _ in 0..<10 where client.fetchCount == 0 {
+            await Task.yield()
+        }
+
+        let count = await localLoadCount.value
+        XCTAssertEqual(client.fetchCount, 1)
+        XCTAssertEqual(count, 1)
+    }
+
     /// 验证重置卡开关快速关再开时，会按通知携带的状态触发一次强制刷新。
     func testResetCreditsToggleOffThenOnTriggersForcedRefresh() async {
         let visibility = LockedBoolean(true)
@@ -1501,7 +1547,8 @@ final class UsageViewModelTests: XCTestCase {
             store: store,
             reloadWidgetTimelines: {
                 reloadCount += 1
-            }
+            },
+            localCodexUsageLoader: { nil }
         )
 
         await viewModel.refresh()
@@ -1919,6 +1966,16 @@ private final class LockedBoolean: @unchecked Sendable {
                 protectedValue = newValue
             }
         }
+    }
+}
+
+/// 串行记录异步闭包调用次数，避免并发测试直接捕获可变整数。
+private actor CallCounter {
+    private(set) var value = 0
+
+    /// 记录一次调用。
+    func increment() {
+        value += 1
     }
 }
 
