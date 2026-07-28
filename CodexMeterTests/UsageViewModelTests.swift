@@ -754,6 +754,37 @@ final class UsageViewModelTests: XCTestCase {
         XCTAssertEqual(hiddenWidth, idleWidth)
     }
 
+    /// 验证活动图标迫使单行继续走 SwiftUI 时，宽度使用同一套单行字体而不会裁切末尾。
+    func testSingleLineWithVisibleActivityUsesSwiftUITypographyWidth() {
+        let settings = MenuBarDisplayPreset.balanced.settings
+        let line = StatusLineDisplay(id: "weekly", label: "7d", value: "100%", tone: .good)
+        let snapshot = CodexHookActivitySnapshot(
+            state: .running,
+            sessionID: "session-1",
+            turnID: "turn-1",
+            eventName: "PreToolUse",
+            toolName: "Bash",
+            message: "准备运行 Bash",
+            updatedAt: Date().timeIntervalSince1970
+        )
+        let activityDisplay = CodexHookActivityDisplay(snapshot: snapshot)
+        let textWidth = StatusBarDisplayMetrics.lineWidth(
+            for: line,
+            settings: settings,
+            usesSingleLineTypography: true
+        )
+
+        XCTAssertEqual(
+            StatusBarDisplayMetrics.statusItemWidth(
+                for: [line],
+                settings: settings,
+                activityDisplay: activityDisplay
+            ),
+            ceil(activityDisplay.statusItemWidth + textWidth),
+            accuracy: 0.001
+        )
+    }
+
     func testMenuBarDisplaySettingsDefaultInitializerIgnoresSharedDefaults() {
         let suiteName = "CodexMeterTests.shared.\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: suiteName)!
@@ -1604,6 +1635,29 @@ final class UsageViewModelTests: XCTestCase {
         XCTAssertNotNil(viewModel.snapshot)
         XCTAssertNil(viewModel.localCodexUsage)
         XCTAssertNil(viewModel.errorMessage)
+    }
+
+    /// 验证本机事件不完整时清除共享缓存中的旧统计，避免 Widget 继续展示已知不可信数据。
+    func testLocalCodexUsageFailureClearsCachedLocalUsage() async throws {
+        let storeDirectory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let store = UsageSnapshotStore(appGroupIdentifier: "", fallbackDirectory: storeDirectory)
+        try store.save(UsageSnapshot(
+            fetchedAt: Date(timeIntervalSince1970: 1_800_000),
+            rateLimits: Self.emptyRateLimits(),
+            localCodexUsage: Self.localUsageSnapshot().summary
+        ))
+        let viewModel = UsageViewModel(
+            client: StubRateLimitClient(snapshot: Self.emptyRateLimits()),
+            store: store,
+            reloadWidgetTimelines: {},
+            localCodexUsageLoader: { nil }
+        )
+
+        await viewModel.refreshLocalCodexUsage()
+
+        XCTAssertNil(viewModel.snapshot?.localCodexUsage)
+        XCTAssertNil(try store.load()?.localCodexUsage)
     }
 
     /// 验证网络失败时仍会把本机统计合并到额度缓存并刷新本机 Widget。

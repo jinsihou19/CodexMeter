@@ -279,7 +279,15 @@ final class UsageViewModel: ObservableObject {
         self.processUsageNotifications = processUsageNotifications
         self.localCodexUsageLoader = localCodexUsageLoader
         self.lastShowsResetCredits = resetCreditsVisibilityProvider()
-        self.snapshot = try? store.load()
+        if let cachedSnapshot = try? store.load() {
+            let snapshotWithoutUnverifiedLocalUsage = cachedSnapshot.withLocalCodexUsage(nil)
+            self.snapshot = snapshotWithoutUnverifiedLocalUsage
+            if cachedSnapshot.localCodexUsage != nil {
+                try? store.save(snapshotWithoutUnverifiedLocalUsage)
+            }
+        } else {
+            self.snapshot = nil
+        }
     }
 
     deinit {
@@ -392,15 +400,16 @@ final class UsageViewModel: ObservableObject {
         await localUsageTask.value
     }
 
-    /// 串行刷新本机统计并合并进已有额度缓存；已有读取进行时跳过重复请求。
+    /// 串行刷新本机统计并合并进已有额度缓存；读取失败时清除旧统计，避免继续展示已知不可信数据。
     func refreshLocalCodexUsage() async {
         guard !isRefreshingLocalUsage else { return }
         isRefreshingLocalUsage = true
         defer { isRefreshingLocalUsage = false }
-        guard let loadedLocalCodexUsage = await localCodexUsageLoader() else { return }
+        let loadedLocalCodexUsage = await localCodexUsageLoader()
         localCodexUsage = loadedLocalCodexUsage
         guard let cachedSnapshot = snapshot else { return }
-        let updatedSnapshot = cachedSnapshot.withLocalCodexUsage(loadedLocalCodexUsage.summary)
+        guard cachedSnapshot.localCodexUsage != loadedLocalCodexUsage?.summary else { return }
+        let updatedSnapshot = cachedSnapshot.withLocalCodexUsage(loadedLocalCodexUsage?.summary)
         try? store.save(updatedSnapshot)
         snapshot = updatedSnapshot
         reloadWidgetTimelines()

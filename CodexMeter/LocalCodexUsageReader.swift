@@ -145,6 +145,7 @@ struct LocalCodexUsageReader: Sendable {
     private let sessionIndexURL: URL?
     private let automationFiles: [URL]
     private let diagnostics: AppDiagnosticLog
+    private let usageCacheURL: URL
     private let query: Query
 
     init(
@@ -153,6 +154,7 @@ struct LocalCodexUsageReader: Sendable {
         sessionIndexURL: URL? = nil,
         automationFiles: [URL]? = nil,
         diagnostics: AppDiagnosticLog = .shared,
+        usageCacheURL: URL? = nil,
         query: @escaping Query = LocalCodexUsageReader.runQuery
     ) {
         self.now = now
@@ -162,6 +164,8 @@ struct LocalCodexUsageReader: Sendable {
             ?? Self.defaultSessionIndexURL()
         self.automationFiles = automationFiles ?? Self.defaultAutomationFiles()
         self.diagnostics = diagnostics
+        self.usageCacheURL = usageCacheURL
+            ?? diagnostics.directoryURL.appendingPathComponent("LocalUsageCache.json")
         self.query = query
     }
 
@@ -210,7 +214,7 @@ struct LocalCodexUsageReader: Sendable {
         let sessionTitles = sessionTitlesByThreadID()
 
         guard let totals: [TotalsRow] = rows(
-            for: totalsSQL(todayStart: todayStart, sevenDayStart: sevenDayStart),
+            for: totalsSQL(),
             databaseURL: databaseURL,
             context: "总览"
         ) else { return nil }
@@ -218,10 +222,19 @@ struct LocalCodexUsageReader: Sendable {
             diagnostics.error("总览查询未返回聚合行；数据库 schema 可能不兼容", category: Self.diagnosticCategory)
             return nil
         }
-        guard let projectRows: [ProjectRow] = rows(
-            for: projectsSQL(sevenDayStart: sevenDayStart),
+        guard let usageSources: [UsageSourceRow] = rows(
+            for: usageSourcesSQL(),
             databaseURL: databaseURL,
-            context: "项目"
+            context: "用量事件索引"
+        ) else { return nil }
+        guard let usage = aggregateUsage(
+            sources: usageSources,
+            historyStart: historyStart,
+            sevenDayStart: sevenDayStart,
+            todayStart: todayStart,
+            monthStart: monthStart,
+            calendar: calendar,
+            catalog: pricingCatalog
         ) else { return nil }
         guard let openRows: [TaskRow] = rows(
             for: openTasksSQL(todayStart: todayStart),
@@ -234,7 +247,7 @@ struct LocalCodexUsageReader: Sendable {
             context: "已归档任务"
         ) else { return nil }
 
-        let mappedProjects = projectRows.map { Self.projectUsage(from: $0) }
+        let mappedProjects = usage.projects.map { Self.projectUsage(from: $0) }
         let sortedProjects = mappedProjects.sorted { left, right in
             if left.tokens == right.tokens { return left.name < right.name }
             return left.tokens > right.tokens
@@ -250,22 +263,11 @@ struct LocalCodexUsageReader: Sendable {
         let completedTasks = doneRows.map { task(from: $0, kind: .done, sessionTitles: sessionTitles) }
         let threadTasks = openTasks + completedTasks
         let taskBoard = LocalCodexTaskBoard(items: Self.sortedTasks(threadTasks + automationTasks()))
-        let dailyRows: [DailyUsageRow] = rows(
-            for: dailyUsageSQL(historyStart: historyStart),
-            databaseURL: databaseURL,
-            context: "每日趋势"
-        ) ?? []
-        let monthSources: [MonthSessionRow] = rows(
-            for: monthSessionsSQL(monthStart: monthStart),
-            databaseURL: databaseURL,
-            context: "本月会话"
-        ) ?? []
-        let monthCost = Self.monthCost(sources: monthSources, catalog: pricingCatalog)
         let summary = LocalCodexUsageSummary(
             fetchedAt: fetchedAt,
-            todayTokens: total.todayTokens,
-            sevenDayTokens: total.sevenDayTokens,
-            lifetimeTokens: total.lifetimeTokens,
+            todayTokens: usage.todayTokens,
+            sevenDayTokens: usage.sevenDayTokens,
+            lifetimeTokens: usage.lifetimeTokens,
             threadCount: total.threadCount,
             projects: projects,
             taskCounts: LocalCodexTaskCounts(
@@ -275,41 +277,31 @@ struct LocalCodexUsageReader: Sendable {
                 done: taskBoard.doneCount
             ),
             dailyBuckets: Self.dailyBuckets(
-                from: dailyRows,
-                monthCost: monthCost,
-                monthStart: monthStart,
+                from: usage.dailyRows,
                 endingAt: todayStart,
                 calendar: calendar
             ),
-            monthCost: monthCost
+            monthCost: usage.monthCost
         )
         diagnostics.info(
-            "本机统计读取成功；线程=\(total.threadCount)；项目=\(projects.count)；日聚合=\(dailyRows.count)；本月会话=\(monthSources.count)",
+            "本机统计读取成功；线程=\(total.threadCount)；项目=\(projects.count)；日聚合=\(usage.dailyRows.count)；事件会话=\(usageSources.count)",
             category: Self.diagnosticCategory
         )
         return LocalCodexUsageSnapshot(summary: summary, taskBoard: taskBoard)
     }
 
-    /// 将稀疏 SQLite 日聚合补成连续 190 天，并按本月 Token 权重分摊已有的 API 等效成本。
+    /// 将稀疏事件日聚合补成连续 190 天；费用只展示已完整识别模型价格的日期。
     private static func dailyBuckets(
         from rows: [DailyUsageRow],
-        monthCost: LocalCodexCostSummary?,
-        monthStart: Date,
         endingAt endDate: Date,
         calendar: Calendar
     ) -> [LocalCodexDailyUsageBucket] {
-        let tokensByDay = Dictionary(uniqueKeysWithValues: rows.map { ($0.day, $0.tokens) })
+        let rowsByDay = Dictionary(uniqueKeysWithValues: rows.map { ($0.day, $0) })
         let identifierFormatter = DateFormatter()
         identifierFormatter.calendar = calendar
         identifierFormatter.locale = Locale(identifier: "en_US_POSIX")
         identifierFormatter.timeZone = calendar.timeZone
         identifierFormatter.dateFormat = "yyyy-MM-dd"
-        let monthStartIdentifier = identifierFormatter.string(from: monthStart)
-        let monthTokens = rows
-            .filter { $0.day >= monthStartIdentifier }
-            .reduce(Int64(0)) { $0 + $1.tokens }
-        let hasEstimatedCost = (monthCost?.pricedSessionCount ?? 0) > 0
-        let costPerToken = (monthCost?.estimatedCostUSD ?? 0) / Double(max(1, monthTokens))
         let labelFormatter = DateFormatter()
         labelFormatter.calendar = calendar
         labelFormatter.locale = Locale(identifier: "en_US_POSIX")
@@ -319,76 +311,261 @@ struct LocalCodexUsageReader: Sendable {
         return (0..<190).compactMap { offset in
             guard let date = calendar.date(byAdding: .day, value: offset - 189, to: endDate) else { return nil }
             let identifier = identifierFormatter.string(from: date)
-            let tokens = tokensByDay[identifier] ?? 0
+            let row = rowsByDay[identifier]
             return LocalCodexDailyUsageBucket(
                 id: identifier,
                 label: labelFormatter.string(from: date),
-                tokens: tokens,
-                estimatedCostUSD: identifier >= monthStartIdentifier && tokens > 0 && hasEstimatedCost
-                    ? Double(tokens) * costPerToken
-                    : nil
+                tokens: row?.tokens ?? 0,
+                estimatedCostUSD: row?.estimatedCostUSD
             )
         }
     }
 
-    /// 读取本月 session 末尾的累计 token，按模型价格计算 API 等效价值。
-    private static func monthCost(
-        sources: [MonthSessionRow],
+    /// 从 rollout 增量事件统一生成时间段、项目和费用统计；任一有用量的日志不完整时拒绝输出快照。
+    private func aggregateUsage(
+        sources: [UsageSourceRow],
+        historyStart: Date,
+        sevenDayStart: Date,
+        todayStart: Date,
+        monthStart: Date,
+        calendar: Calendar,
         catalog: LocalCodexPricingCatalog?
-    ) -> LocalCodexCostSummary? {
-        var input: Int64 = 0
-        var cached: Int64 = 0
-        var output: Int64 = 0
-        var estimatedCost = 0.0
-        var pricedCount = 0
-        var seenPaths = Set<String>()
+    ) -> LocalUsageAggregation? {
+        let dayFormatter = Self.dayFormatter(calendar: calendar)
+        let historyDay = dayFormatter.string(from: historyStart)
+        let sevenDay = dayFormatter.string(from: sevenDayStart)
+        let today = dayFormatter.string(from: todayStart)
+        let monthDay = dayFormatter.string(from: monthStart)
+        var cache = loadUsageCache(timeZoneIdentifier: calendar.timeZone.identifier)
+        let sourcePaths = Set(sources.map(\.rolloutPath))
+        cache.sessions = cache.sessions.filter { sourcePaths.contains($0.key) }
+        var incompletePaths: [String] = []
 
-        for source in sources where seenPaths.insert(source.rolloutPath).inserted {
-            guard let tokens = latestTokenUsage(at: URL(fileURLWithPath: source.rolloutPath)) else { continue }
-            input += tokens.input
-            cached += tokens.cachedInput
-            output += tokens.output
-            if let price = catalog?.price(for: source.model) ?? LocalCodexPricingCatalog.fallbackPrice(for: source.model) {
-                estimatedCost += Self.estimatedCost(for: tokens, price: price)
-                pricedCount += 1
+        for source in sources {
+            let url = URL(fileURLWithPath: source.rolloutPath)
+            guard let entry = Self.updatedUsageCacheEntry(
+                at: url,
+                previous: cache.sessions[source.rolloutPath],
+                historyDay: historyDay,
+                dayFormatter: dayFormatter
+            ) else {
+                if source.tokensUsed > 0 { incompletePaths.append(source.rolloutPath) }
+                continue
+            }
+            cache.sessions[source.rolloutPath] = entry
+            if source.tokensUsed > 0, entry.latestTotal == nil {
+                incompletePaths.append(source.rolloutPath)
+            }
+        }
+        saveUsageCache(cache)
+        guard incompletePaths.isEmpty else {
+            diagnostics.error(
+                "rollout 用量事件不完整，已隐藏本机统计；缺失会话=\(incompletePaths.count)",
+                category: Self.diagnosticCategory
+            )
+            return nil
+        }
+
+        var daily: [String: SessionTokenUsage] = [:]
+        var dailyCosts: [String: Double] = [:]
+        var unpricedDays = Set<String>()
+        var projects: [String: ProjectAccumulator] = [:]
+        var monthUsage = SessionTokenUsage.zero
+        var monthCost = 0.0
+        var monthSessionCount = 0
+        var pricedMonthSessionCount = 0
+        var lifetimeTokens: Int64 = 0
+
+        for source in sources {
+            guard let entry = cache.sessions[source.rolloutPath] else { continue }
+            lifetimeTokens += entry.lifetimeUsage.total
+            let price = catalog?.price(for: source.model) ?? LocalCodexPricingCatalog.fallbackPrice(for: source.model)
+            var sourceSevenDayUsage = SessionTokenUsage.zero
+            var sourceMonthUsage = SessionTokenUsage.zero
+            for (day, usage) in entry.dailyUsage where day >= historyDay && day <= today {
+                daily[day, default: .zero].add(usage)
+                if let price {
+                    dailyCosts[day, default: 0] += Self.estimatedCost(for: usage, price: price)
+                } else if usage.total > 0 {
+                    unpricedDays.insert(day)
+                }
+                if day >= sevenDay { sourceSevenDayUsage.add(usage) }
+                if day >= monthDay { sourceMonthUsage.add(usage) }
+            }
+            if sourceSevenDayUsage.total > 0 {
+                projects[source.cwd, default: .init()].add(
+                    tokens: sourceSevenDayUsage.total,
+                    threadID: source.rolloutPath
+                )
+            }
+            if sourceMonthUsage.total > 0 {
+                monthSessionCount += 1
+                monthUsage.add(sourceMonthUsage)
+                if let price {
+                    pricedMonthSessionCount += 1
+                    monthCost += Self.estimatedCost(for: sourceMonthUsage, price: price)
+                }
             }
         }
 
-        guard input > 0 || cached > 0 || output > 0 else { return nil }
-        return LocalCodexCostSummary(
-            inputTokens: input,
-            cachedInputTokens: cached,
-            outputTokens: output,
-            estimatedCostUSD: estimatedCost,
-            pricedSessionCount: pricedCount,
-            sessionCount: seenPaths.count
+        let dailyRows = daily.map { day, usage in
+            DailyUsageRow(
+                day: day,
+                tokens: usage.total,
+                estimatedCostUSD: unpricedDays.contains(day) ? nil : dailyCosts[day]
+            )
+        }.sorted { $0.day < $1.day }
+        let projectRows = projects.map { cwd, value in
+            ProjectRow(cwd: cwd, tokens: value.tokens, threadCount: value.threadIDs.count)
+        }
+        let trustedMonthCost = monthSessionCount > 0 && monthSessionCount == pricedMonthSessionCount
+            ? LocalCodexCostSummary(
+                inputTokens: monthUsage.input,
+                cachedInputTokens: monthUsage.cachedInput,
+                outputTokens: monthUsage.output,
+                estimatedCostUSD: monthCost,
+                pricedSessionCount: pricedMonthSessionCount,
+                sessionCount: monthSessionCount
+            )
+            : nil
+        return LocalUsageAggregation(
+            todayTokens: daily[today]?.total ?? 0,
+            sevenDayTokens: daily
+                .filter { $0.key >= sevenDay && $0.key <= today }
+                .reduce(Int64(0)) { $0 + $1.value.total },
+            lifetimeTokens: lifetimeTokens,
+            projects: projectRows,
+            dailyRows: dailyRows,
+            monthCost: trustedMonthCost
         )
     }
 
-    /// 从 JSONL 文件末尾向前查找最后一条累计 token 事件，最多读取 4 MB。
-    private static func latestTokenUsage(at url: URL) -> SessionTokenUsage? {
+    /// 读取增量缓存；损坏或时区变化时从空缓存重建，避免沿用错误日期边界。
+    private func loadUsageCache(timeZoneIdentifier: String) -> LocalUsageCache {
+        guard let data = try? Data(contentsOf: usageCacheURL),
+              let cache = try? JSONDecoder().decode(LocalUsageCache.self, from: data),
+              cache.version == LocalUsageCache.currentVersion,
+              cache.timeZoneIdentifier == timeZoneIdentifier
+        else { return LocalUsageCache(timeZoneIdentifier: timeZoneIdentifier) }
+        return cache
+    }
+
+    /// 原子保存已验证到文件末尾的缓存；保存失败只影响下次扫描性能，不改变本次统计结果。
+    private func saveUsageCache(_ cache: LocalUsageCache) {
+        guard let data = try? JSONEncoder().encode(cache) else { return }
+        do {
+            try FileManager.default.createDirectory(
+                at: usageCacheURL.deletingLastPathComponent(),
+                withIntermediateDirectories: true
+            )
+            try data.write(to: usageCacheURL, options: .atomic)
+        } catch {
+            diagnostics.warning("本机用量缓存保存失败；错误=\(error.localizedDescription)", category: Self.diagnosticCategory)
+        }
+    }
+
+    /// 从上次完整换行偏移继续解析 JSONL；文件被截断时自动重建该会话缓存。
+    private static func updatedUsageCacheEntry(
+        at url: URL,
+        previous: SessionUsageCache?,
+        historyDay: String,
+        dayFormatter: DateFormatter
+    ) -> SessionUsageCache? {
         guard let handle = try? FileHandle(forReadingFrom: url) else { return nil }
         defer { try? handle.close() }
-        let fileSize = (try? handle.seekToEnd()) ?? 0
-        let readSize = min(fileSize, 4 * 1_024 * 1_024)
-        guard readSize > 0, (try? handle.seek(toOffset: fileSize - readSize)) != nil,
-              let data = try? handle.read(upToCount: Int(readSize))
-        else { return nil }
-        for line in data.split(separator: 0x0A).reversed() where String(decoding: line, as: UTF8.self).contains("\"token_count\"") {
-            guard let object = try? JSONSerialization.jsonObject(with: Data(line)) as? [String: Any],
-                  object["type"] as? String == "event_msg",
-                  let payload = object["payload"] as? [String: Any],
-                  payload["type"] as? String == "token_count",
-                  let info = payload["info"] as? [String: Any],
-                  let usage = info["total_token_usage"] as? [String: Any]
-            else { continue }
-            return SessionTokenUsage(
-                input: int64(usage["input_tokens"]),
-                cachedInput: int64(usage["cached_input_tokens"]),
-                output: int64(usage["output_tokens"])
-            )
+        guard let fileSize = try? handle.seekToEnd() else { return nil }
+        var entry = previous ?? SessionUsageCache()
+        // ponytail: Codex rollout 当前为追加写；若未来支持同路径原地改写，应增加文件标识并强制重建缓存。
+        if entry.readOffset > fileSize { entry = SessionUsageCache() }
+        guard entry.readOffset < fileSize else {
+            entry.dailyUsage = entry.dailyUsage.filter { $0.key >= historyDay }
+            return entry
         }
-        return nil
+        guard (try? handle.seek(toOffset: entry.readOffset)) != nil else { return nil }
+
+        let fractionalTimestampFormatter = ISO8601DateFormatter()
+        fractionalTimestampFormatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        let timestampFormatter = ISO8601DateFormatter()
+        var pending = Data()
+        var committedOffset = entry.readOffset
+        while let chunk = try? handle.read(upToCount: 1_048_576), !chunk.isEmpty {
+            pending.append(chunk)
+            var lineStart = pending.startIndex
+            while lineStart < pending.endIndex,
+                  let newline = pending[lineStart...].firstIndex(of: 0x0A)
+            {
+                if newline > lineStart {
+                    let line = pending[lineStart..<newline]
+                    if String(decoding: line.prefix(512), as: UTF8.self).contains("\"token_count\"") {
+                        parseUsageLine(
+                            Data(line),
+                            entry: &entry,
+                            historyDay: historyDay,
+                            dayFormatter: dayFormatter,
+                            fractionalTimestampFormatter: fractionalTimestampFormatter,
+                            timestampFormatter: timestampFormatter
+                        )
+                    }
+                }
+                committedOffset += UInt64(pending.distance(from: lineStart, to: newline) + 1)
+                lineStart = pending.index(after: newline)
+            }
+            if lineStart > pending.startIndex { pending.removeSubrange(..<lineStart) }
+        }
+        if !pending.isEmpty, (try? JSONSerialization.jsonObject(with: pending)) != nil {
+            parseUsageLine(
+                pending,
+                entry: &entry,
+                historyDay: historyDay,
+                dayFormatter: dayFormatter,
+                fractionalTimestampFormatter: fractionalTimestampFormatter,
+                timestampFormatter: timestampFormatter
+            )
+            committedOffset += UInt64(pending.count)
+        }
+        entry.readOffset = committedOffset
+        entry.dailyUsage = entry.dailyUsage.filter { $0.key >= historyDay }
+        return entry
+    }
+
+    /// 解析单条 token_count，优先采用事件增量；旧日志缺少增量字段时才用相邻累计值之差。
+    private static func parseUsageLine(
+        _ data: Data,
+        entry: inout SessionUsageCache,
+        historyDay: String,
+        dayFormatter: DateFormatter,
+        fractionalTimestampFormatter: ISO8601DateFormatter,
+        timestampFormatter: ISO8601DateFormatter
+    ) {
+        guard let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              object["type"] as? String == "event_msg",
+              let timestamp = object["timestamp"] as? String,
+              let payload = object["payload"] as? [String: Any],
+              payload["type"] as? String == "token_count",
+              let info = payload["info"] as? [String: Any],
+              let totalObject = info["total_token_usage"] as? [String: Any]
+        else { return }
+        let total = SessionTokenUsage(json: totalObject)
+        let last = (info["last_token_usage"] as? [String: Any]).map(SessionTokenUsage.init(json:))
+        let delta = last ?? total.increment(after: entry.latestTotal)
+        entry.latestTotal = total
+        entry.lifetimeUsage.add(delta)
+        guard delta.total > 0,
+              let date = fractionalTimestampFormatter.date(from: timestamp) ?? timestampFormatter.date(from: timestamp)
+        else { return }
+        let day = dayFormatter.string(from: date)
+        guard day >= historyDay else { return }
+        entry.dailyUsage[day, default: .zero].add(delta)
+    }
+
+    /// 创建跟随当前日历时区的稳定日期键格式器。
+    private static func dayFormatter(calendar: Calendar) -> DateFormatter {
+        let formatter = DateFormatter()
+        formatter.calendar = calendar
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = calendar.timeZone
+        formatter.dateFormat = "yyyy-MM-dd"
+        return formatter
     }
 
     /// 按标准单价计算某次 token 增量的 API 等效金额；累计事件无法可靠判定长上下文阈值。
@@ -404,7 +581,7 @@ struct LocalCodexUsageReader: Sendable {
     }
 
     /// 将 JSON 数字安全转换为非负 Int64。
-    private static func int64(_ value: Any?) -> Int64 {
+    fileprivate static func int64(_ value: Any?) -> Int64 {
         max(0, (value as? NSNumber)?.int64Value ?? 0)
     }
 
@@ -646,53 +823,22 @@ struct LocalCodexUsageReader: Sendable {
         return "\(version) (\(build))"
     }
 
-    /// 生成累计、今日和近七天 token 汇总查询。
-    private func totalsSQL(todayStart: Date, sevenDayStart: Date) -> String {
-        let today = Int64(todayStart.timeIntervalSince1970)
-        let sevenDay = Int64(sevenDayStart.timeIntervalSince1970)
+    /// 生成不带时间归属的累计 token 与线程总览查询。
+    private func totalsSQL() -> String {
         return """
-        SELECT COALESCE(SUM(CASE WHEN updated_at >= \(today) OR recency_at >= \(today) THEN tokens_used ELSE 0 END), 0) AS todayTokens,
-               COALESCE(SUM(CASE WHEN updated_at >= \(sevenDay) OR recency_at >= \(sevenDay) THEN tokens_used ELSE 0 END), 0) AS sevenDayTokens,
-               COALESCE(SUM(tokens_used), 0) AS lifetimeTokens,
-               COUNT(*) AS threadCount,
+        SELECT COUNT(*) AS threadCount,
                COALESCE(MAX(CASE WHEN COALESCE(recency_at, 0) > updated_at THEN recency_at ELSE updated_at END), 0) AS lastUpdatedAt
         FROM threads;
         """
     }
 
-    /// 生成近七天项目 Top 5 查询。
-    private func projectsSQL(sevenDayStart: Date) -> String {
-        let start = Int64(sevenDayStart.timeIntervalSince1970)
+    /// 枚举全部 rollout；缓存保留全量有效累计，同时只持久化近半年的日聚合。
+    private func usageSourcesSQL() -> String {
         return """
-        SELECT COALESCE(cwd, '') AS cwd, COALESCE(SUM(tokens_used), 0) AS tokens, COUNT(*) AS threadCount,
-               COALESCE(MAX(CASE WHEN COALESCE(recency_at, 0) > updated_at THEN recency_at ELSE updated_at END), 0) AS lastActiveAt
+        SELECT rollout_path AS rolloutPath, COALESCE(cwd, '') AS cwd, COALESCE(model, '') AS model,
+               COALESCE(tokens_used, 0) AS tokensUsed
         FROM threads
-        WHERE updated_at >= \(start) OR recency_at >= \(start)
-        GROUP BY cwd ORDER BY tokens DESC LIMIT 5;
-        """
-    }
-
-    /// 按线程最近活动日生成近半年趋势，普通看板只取末七天。
-    private func dailyUsageSQL(historyStart: Date) -> String {
-        let start = Int64(historyStart.timeIntervalSince1970)
-        return """
-        SELECT strftime('%Y-%m-%d', datetime(
-                   CASE WHEN COALESCE(recency_at, 0) > updated_at THEN recency_at ELSE updated_at END,
-                   'unixepoch', 'localtime')) AS day,
-               COALESCE(SUM(tokens_used), 0) AS tokens
-        FROM threads
-        WHERE updated_at >= \(start) OR recency_at >= \(start)
-        GROUP BY day ORDER BY day;
-        """
-    }
-
-    /// 只枚举本月新建线程的日志路径，避免在高频刷新时全量扫描历史归档。
-    private func monthSessionsSQL(monthStart: Date) -> String {
-        let start = Int64(monthStart.timeIntervalSince1970)
-        return """
-        SELECT rollout_path AS rolloutPath, COALESCE(model, '') AS model
-        FROM threads
-        WHERE created_at >= \(start) AND rollout_path IS NOT NULL AND rollout_path <> '';
+        WHERE rollout_path IS NOT NULL AND rollout_path <> '';
         """
     }
 
@@ -726,9 +872,6 @@ struct LocalCodexUsageReader: Sendable {
 
 /// sqlite3 汇总行。
 private struct TotalsRow: Decodable {
-    let todayTokens: Int64
-    let sevenDayTokens: Int64
-    let lifetimeTokens: Int64
     let threadCount: Int
     let lastUpdatedAt: TimeInterval
 }
@@ -738,7 +881,14 @@ private struct ProjectRow: Decodable {
     let cwd: String
     let tokens: Int64
     let threadCount: Int
-    let lastActiveAt: TimeInterval
+}
+
+/// SQLite 中供 rollout 增量聚合使用的线程索引。
+private struct UsageSourceRow: Decodable {
+    let rolloutPath: String
+    let cwd: String
+    let model: String
+    let tokensUsed: Int64
 }
 
 /// sqlite3 今日任务行。
@@ -762,23 +912,94 @@ private struct SessionIndexRow: Decodable {
     }
 }
 
-/// sqlite3 每日 token 聚合行。
-private struct DailyUsageRow: Decodable {
+/// rollout 事件生成的每日 token 与可信费用聚合。
+private struct DailyUsageRow {
     let day: String
     let tokens: Int64
+    let estimatedCostUSD: Double?
 }
 
-/// sqlite3 本月 session 日志索引行。
-private struct MonthSessionRow: Decodable {
-    let rolloutPath: String
-    let model: String
-}
-
-/// 描述单个 session 最新累计 token 拆分。
-private struct SessionTokenUsage {
+/// 描述单个事件或时间段的 token 拆分；输入已包含缓存输入，total 不重复相加缓存部分。
+private struct SessionTokenUsage: Codable, Sendable {
     let input: Int64
     let cachedInput: Int64
     let output: Int64
+
+    static let zero = SessionTokenUsage(input: 0, cachedInput: 0, output: 0)
+
+    var total: Int64 { input + output }
+    /// 从 JSON 数字读取非负 token，供累计和单次用量共用。
+    init(json: [String: Any]) {
+        self.init(
+            input: LocalCodexUsageReader.int64(json["input_tokens"]),
+            cachedInput: LocalCodexUsageReader.int64(json["cached_input_tokens"]),
+            output: LocalCodexUsageReader.int64(json["output_tokens"])
+        )
+    }
+
+    init(input: Int64, cachedInput: Int64, output: Int64) {
+        self.input = max(0, input)
+        self.cachedInput = max(0, cachedInput)
+        self.output = max(0, output)
+    }
+
+    /// 累加另一个事件增量。
+    mutating func add(_ other: SessionTokenUsage) {
+        self = SessionTokenUsage(
+            input: input + other.input,
+            cachedInput: cachedInput + other.cachedInput,
+            output: output + other.output
+        )
+    }
+
+    /// 旧日志缺少 last_token_usage 时，以相邻累计值差作为兼容增量。
+    func increment(after previous: SessionTokenUsage?) -> SessionTokenUsage {
+        guard let previous, total >= previous.total else { return self }
+        return SessionTokenUsage(
+            input: max(0, input - previous.input),
+            cachedInput: max(0, cachedInput - previous.cachedInput),
+            output: max(0, output - previous.output)
+        )
+    }
+}
+
+/// 单个 rollout 的增量扫描进度和近半年日聚合，避免每次刷新重读大型历史日志。
+private struct SessionUsageCache: Codable, Sendable {
+    var readOffset: UInt64 = 0
+    var latestTotal: SessionTokenUsage?
+    var dailyUsage: [String: SessionTokenUsage] = [:]
+    var lifetimeUsage = SessionTokenUsage.zero
+}
+
+/// 所有 rollout 的持久化增量缓存；时区改变时必须整体重建日期键。
+private struct LocalUsageCache: Codable, Sendable {
+    static let currentVersion = 2
+
+    var version = currentVersion
+    let timeZoneIdentifier: String
+    var sessions: [String: SessionUsageCache] = [:]
+}
+
+/// 项目近七天用量的内部累加器，线程集合避免重复路径被多算。
+private struct ProjectAccumulator {
+    var tokens: Int64 = 0
+    var threadIDs = Set<String>()
+
+    /// 累加单个线程在时间窗内的用量。
+    mutating func add(tokens: Int64, threadID: String) {
+        self.tokens += tokens
+        threadIDs.insert(threadID)
+    }
+}
+
+/// rollout 事件完成完整性校验后交给摘要层的统一结果。
+private struct LocalUsageAggregation {
+    let todayTokens: Int64
+    let sevenDayTokens: Int64
+    let lifetimeTokens: Int64
+    let projects: [ProjectRow]
+    let dailyRows: [DailyUsageRow]
+    let monthCost: LocalCodexCostSummary?
 }
 
 /// 保存 models.dev 的 OpenAI 模型价格快照，并在网络不可用时提供小型内置兜底表。

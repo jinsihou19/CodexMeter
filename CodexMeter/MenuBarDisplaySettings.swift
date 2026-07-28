@@ -466,7 +466,7 @@ enum StatusBarDisplayMetrics {
         settings: MenuBarDisplaySettings,
         activityDisplay: CodexHookActivityDisplay = CodexHookActivityDisplay(snapshot: nil)
     ) -> CGFloat {
-        if let title = NativeStatusBarTitle.text(for: lines) {
+        if !activityDisplay.isVisible, let title = NativeStatusBarTitle.text(for: lines) {
             let textWidth = textWidth(title, font: NativeStatusBarTitle.font(settings: settings))
             let iconWidth = showsCodexIcon(settings: settings, activityDisplay: activityDisplay)
                 ? MenuBarDisplaySettings.menuBarIconWidth + MenuBarDisplaySettings.menuBarIconTextSpacing
@@ -474,8 +474,15 @@ enum StatusBarDisplayMetrics {
             let activityWidth = settings.showsHookActivityLight ? activityDisplay.statusItemWidth : 0
             return ceil(textWidth + iconWidth + activityWidth)
         }
+        let usesSingleLineTypography = lines.count == 1
         let textWidth = lines
-            .map { lineWidth(for: $0, settings: settings) }
+            .map {
+                lineWidth(
+                    for: $0,
+                    settings: settings,
+                    usesSingleLineTypography: usesSingleLineTypography
+                )
+            }
             .max() ?? minimumTextWidth(settings: settings)
         let iconWidth = showsCodexIcon(settings: settings, activityDisplay: activityDisplay)
             ? MenuBarDisplaySettings.menuBarIconWidth + MenuBarDisplaySettings.menuBarIconTextSpacing
@@ -492,11 +499,19 @@ enum StatusBarDisplayMetrics {
     /// 根据标签和值分别测量单行宽度，只有剩余额度模式会因为 label 额外变宽。
     static func lineWidth(
         for line: StatusLineDisplay,
-        settings: MenuBarDisplaySettings
+        settings: MenuBarDisplaySettings,
+        usesSingleLineTypography: Bool = false
     ) -> CGFloat {
+        let fontSize = usesSingleLineTypography
+            ? NativeStatusBarTitle.font(settings: settings).pointSize
+            : settings.numberFontSize
+        let fontWeight = usesSingleLineTypography
+            && MenuBarLayoutChoice.matching(settings: settings) != .custom
+            ? NSFont.Weight.regular
+            : settings.numberFontWeight.nsFontWeight
         let font = NSFont.monospacedDigitSystemFont(
-            ofSize: settings.numberFontSize,
-            weight: settings.numberFontWeight.nsFontWeight
+            ofSize: fontSize,
+            weight: fontWeight
         )
         let valueWidth = textWidth(line.value, font: font)
         guard !line.label.isEmpty else {

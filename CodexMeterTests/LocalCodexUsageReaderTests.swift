@@ -6,7 +6,7 @@ import XCTest
 final class LocalCodexUsageReaderTests: XCTestCase {
     /// 验证注入的 SQLite 行会生成 token 汇总、项目排行和四类今日任务。
     func testReaderBuildsUsageAndTaskBoard() async throws {
-        let now = Date(timeIntervalSince1970: 1_800_000)
+        let now = try XCTUnwrap(ISO8601DateFormatter().date(from: "2026-07-28T12:00:00Z"))
         let databaseURL = try temporaryFile(named: "state_5.sqlite", contents: Data())
         let automationURL = try temporaryFile(
             named: "automation.toml",
@@ -15,7 +15,8 @@ final class LocalCodexUsageReaderTests: XCTestCase {
         let sessionURL = try temporaryFile(
             named: "rollout-test.jsonl",
             contents: Data("""
-            {"timestamp":"1970-01-21T20:00:00Z","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":1000000,"cached_input_tokens":400000,"output_tokens":100000}}}}
+            {"timestamp":"2025-01-01T02:00:00Z","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":900000,"cached_input_tokens":360000,"output_tokens":90000},"last_token_usage":{"input_tokens":900000,"cached_input_tokens":360000,"output_tokens":90000}}}}
+            {"timestamp":"2026-07-28T02:00:00Z","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":1000000,"cached_input_tokens":400000,"output_tokens":100000},"last_token_usage":{"input_tokens":100000,"cached_input_tokens":40000,"output_tokens":10000}}}}
             """.utf8)
         )
         let sessionIndexURL = try temporaryFile(
@@ -29,36 +30,23 @@ final class LocalCodexUsageReaderTests: XCTestCase {
             automationFiles: [automationURL],
             diagnostics: testDiagnosticLog(),
             query: { _, sql in
-                if sql.contains("AS lifetimeTokens") {
-                    return Self.json([["todayTokens": 120, "sevenDayTokens": 560, "lifetimeTokens": 2_400, "threadCount": 4, "lastUpdatedAt": 1_799_900]])
+                if sql.contains("AS threadCount") {
+                    return Self.json([["threadCount": 4, "lastUpdatedAt": 1_799_900]])
                 }
-                if sql.contains("GROUP BY cwd") {
+                if sql.contains("AS rolloutPath") {
                     return Self.json([
-                        ["cwd": "", "tokens": 100, "threadCount": 1, "lastActiveAt": 1_799_700],
-                        ["cwd": "/Users/test/Beta", "tokens": 900, "threadCount": 2, "lastActiveAt": 1_799_800],
-                        ["cwd": "/Users/test/Alpha", "tokens": 400, "threadCount": 1, "lastActiveAt": 1_799_600]
-                    ])
-                }
-                if sql.contains("GROUP BY day") {
-                    return Self.json([
-                        ["day": "1970-01-20", "tokens": 200],
-                        ["day": "1970-01-21", "tokens": 360]
-                    ])
-                }
-                if sql.contains("rollout_path") {
-                    return Self.json([
-                        ["rolloutPath": sessionURL.path, "model": "gpt-5.5"]
+                        ["rolloutPath": sessionURL.path, "cwd": "/Users/test/Beta", "model": "gpt-5.5", "tokensUsed": 1_100_000]
                     ])
                 }
                 if sql.contains("archived = 0") {
                     return Self.json([
-                        ["id": "active", "title": "正在实现", "preview": "", "cwd": "/Users/test/Beta", "tokens": 300, "updatedAt": 1_799_000],
-                        ["id": "pending", "title": "", "preview": "待处理预览", "cwd": "", "tokens": 50, "updatedAt": 1_780_000]
+                        ["id": "active", "title": "正在实现", "preview": "", "cwd": "/Users/test/Beta", "tokens": 300, "updatedAt": now.timeIntervalSince1970 - 60],
+                        ["id": "pending", "title": "", "preview": "待处理预览", "cwd": "", "tokens": 50, "updatedAt": now.timeIntervalSince1970 - 10_800]
                     ])
                 }
                 if sql.contains("archived = 1") {
                     return Self.json([
-                        ["id": "done", "title": "已经完成", "preview": "", "cwd": "/Users/test/Alpha", "tokens": 80, "updatedAt": 1_790_000]
+                        ["id": "done", "title": "已经完成", "preview": "", "cwd": "/Users/test/Alpha", "tokens": 80, "updatedAt": now.timeIntervalSince1970 - 120]
                     ])
                 }
                 return nil
@@ -68,26 +56,40 @@ final class LocalCodexUsageReaderTests: XCTestCase {
         let loadedSnapshot = await reader.load()
         let snapshot = try XCTUnwrap(loadedSnapshot)
 
-        XCTAssertEqual(snapshot.summary.todayTokens, 120)
-        XCTAssertEqual(snapshot.summary.sevenDayTokens, 560)
-        XCTAssertEqual(snapshot.summary.lifetimeTokens, 2_400)
+        XCTAssertEqual(snapshot.summary.todayTokens, 110_000)
+        XCTAssertEqual(snapshot.summary.sevenDayTokens, 110_000)
+        XCTAssertEqual(snapshot.summary.lifetimeTokens, 1_100_000)
         XCTAssertEqual(snapshot.summary.threadCount, 4)
-        XCTAssertEqual(snapshot.summary.projects.map(\.name), ["Beta", "Alpha", "未归类"])
+        XCTAssertEqual(snapshot.summary.projects.map(\.name), ["Beta"])
+        XCTAssertEqual(snapshot.summary.projects.first?.tokens, 110_000)
         XCTAssertEqual(snapshot.summary.dailyBuckets?.count, 190)
-        XCTAssertEqual(snapshot.summary.dailyBuckets?.first(where: { $0.id == "1970-01-20" })?.tokens, 200)
-        XCTAssertEqual(snapshot.summary.dailyBuckets?.first(where: { $0.id == "1970-01-21" })?.tokens, 360)
-        XCTAssertEqual(snapshot.summary.dailyBuckets?.first(where: { $0.id == "1970-01-21" })?.estimatedCostUSD ?? 0, 6.2 * 360 / 560, accuracy: 0.001)
-        XCTAssertEqual(snapshot.summary.dailyBuckets?.last?.tokens, 0)
-        XCTAssertEqual(snapshot.summary.monthCost?.inputTokens, 1_000_000)
-        XCTAssertEqual(snapshot.summary.monthCost?.cachedInputTokens, 400_000)
-        XCTAssertEqual(snapshot.summary.monthCost?.outputTokens, 100_000)
-        XCTAssertEqual(snapshot.summary.monthCost?.estimatedCostUSD ?? 0, 6.2, accuracy: 0.001)
+        XCTAssertEqual(snapshot.summary.dailyBuckets?.first(where: { $0.id == "2026-07-28" })?.tokens, 110_000)
+        XCTAssertEqual(snapshot.summary.dailyBuckets?.first(where: { $0.id == "2025-01-01" })?.tokens, nil)
+        XCTAssertEqual(snapshot.summary.dailyBuckets?.last?.tokens, 110_000)
+        XCTAssertEqual(snapshot.summary.monthCost?.inputTokens, 100_000)
+        XCTAssertEqual(snapshot.summary.monthCost?.cachedInputTokens, 40_000)
+        XCTAssertEqual(snapshot.summary.monthCost?.outputTokens, 10_000)
+        XCTAssertEqual(snapshot.summary.monthCost?.estimatedCostUSD ?? 0, 0.62, accuracy: 0.001)
         XCTAssertEqual(snapshot.taskBoard.activeCount, 1)
         XCTAssertEqual(snapshot.taskBoard.pendingCount, 1)
         XCTAssertEqual(snapshot.taskBoard.scheduledCount, 1)
         XCTAssertEqual(snapshot.taskBoard.doneCount, 1)
         XCTAssertEqual(snapshot.taskBoard.items.first(where: { $0.kind == .active })?.title, "侧边栏会话名称")
         XCTAssertEqual(snapshot.taskBoard.items.first(where: { $0.kind == .pending })?.title, "待处理预览")
+
+        let handle = try FileHandle(forWritingTo: sessionURL)
+        defer { try? handle.close() }
+        try handle.seekToEnd()
+        try handle.write(contentsOf: Data("""
+
+        {"timestamp":"2026-07-28T03:00:00Z","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":1020000,"cached_input_tokens":408000,"output_tokens":102000},"last_token_usage":{"input_tokens":20000,"cached_input_tokens":8000,"output_tokens":2000}}}}
+        """.utf8))
+
+        let refreshed = await reader.load()
+        let refreshedSnapshot = try XCTUnwrap(refreshed)
+        XCTAssertEqual(refreshedSnapshot.summary.todayTokens, 132_000)
+        XCTAssertEqual(refreshedSnapshot.summary.sevenDayTokens, 132_000)
+        XCTAssertEqual(refreshedSnapshot.summary.lifetimeTokens, 1_122_000)
     }
 
     /// 验证数据库不存在或 sqlite3 查询失败时返回 nil，并留下可供设置页查看的诊断记录。
@@ -132,10 +134,10 @@ final class LocalCodexUsageReaderTests: XCTestCase {
             automationFiles: [],
             diagnostics: testDiagnosticLog(),
             query: { _, sql in
-                if sql.contains("AS lifetimeTokens") {
-                    return Self.json([["todayTokens": 10, "sevenDayTokens": 20, "lifetimeTokens": 30, "threadCount": 1, "lastUpdatedAt": 1_800_000]])
+                if sql.contains("AS threadCount") {
+                    return Self.json([["threadCount": 1, "lastUpdatedAt": 1_800_000]])
                 }
-                if sql.contains("GROUP BY cwd") {
+                if sql.contains("AS rolloutPath") {
                     return Self.json([])
                 }
                 if sql.contains("archived = 0") {
@@ -150,8 +152,42 @@ final class LocalCodexUsageReaderTests: XCTestCase {
 
         let loadedSnapshot = await reader.load()
         let snapshot = try XCTUnwrap(loadedSnapshot)
-        XCTAssertEqual(snapshot.summary.todayTokens, 10)
+        XCTAssertEqual(snapshot.summary.todayTokens, 0)
         XCTAssertEqual(snapshot.taskBoard.doneCount, 0)
+    }
+
+    /// 验证有累计用量但 rollout 缺少事件时不输出猜测值，避免旧缓存继续展示虚假的时间段统计。
+    func testReaderRejectsIncompleteRolloutUsage() async throws {
+        let databaseURL = try temporaryFile(named: "state_5.sqlite", contents: Data())
+        let sessionURL = try temporaryFile(
+            named: "rollout-incomplete.jsonl",
+            contents: Data("{\"type\":\"session_meta\"}\n".utf8)
+        )
+        let diagnostics = testDiagnosticLog()
+        let reader = LocalCodexUsageReader(
+            databaseURL: databaseURL,
+            automationFiles: [],
+            diagnostics: diagnostics,
+            query: { _, sql in
+                if sql.contains("AS threadCount") {
+                    return Self.json([["threadCount": 1, "lastUpdatedAt": 1_800_000]])
+                }
+                if sql.contains("AS rolloutPath") {
+                    return Self.json([[
+                        "rolloutPath": sessionURL.path,
+                        "cwd": "/Users/test/Beta",
+                        "model": "gpt-5.5",
+                        "tokensUsed": 100
+                    ]])
+                }
+                return Self.json([])
+            }
+        )
+
+        let snapshot = await reader.load()
+        XCTAssertNil(snapshot)
+        let log = try String(contentsOf: diagnostics.fileURL, encoding: .utf8)
+        XCTAssertTrue(log.contains("已隐藏本机统计"))
     }
 
     /// 验证两代 sqlite3 CLI 的 CANTOPEN 形式都会触发一次重试，其他错误不重试。
