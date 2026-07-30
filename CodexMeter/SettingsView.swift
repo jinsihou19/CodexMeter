@@ -294,6 +294,9 @@ struct SettingsView: View {
                     } icon: {
                         Image(systemName: pane.symbolName)
                     }
+                        .font(.system(size: 13))
+                        .padding(.leading, 6)
+                        .frame(maxWidth: .infinity, minHeight: 32, alignment: .leading)
                         .tag(pane)
                 }
             }
