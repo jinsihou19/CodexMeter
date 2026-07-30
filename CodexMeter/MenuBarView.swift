@@ -1426,11 +1426,13 @@ private struct ResetCreditRow: View {
                 .font(.caption2.monospacedDigit().weight(.semibold))
                 .lineLimit(1)
             Spacer(minLength: 4)
-            Text(formatter.resetCreditExpirationRemaining(credit.expiresAt))
-                .font(.caption2)
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
-                .minimumScaleFactor(0.78)
+            TimelineView(.periodic(from: .now, by: 60)) { context in
+                Text(formatter.resetCreditExpirationRemaining(credit.expiresAt, now: context.date))
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.78)
+            }
         }
     }
 
