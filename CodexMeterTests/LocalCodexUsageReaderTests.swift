@@ -35,7 +35,7 @@ final class LocalCodexUsageReaderTests: XCTestCase {
                 }
                 if sql.contains("AS rolloutPath") {
                     return Self.json([
-                        ["rolloutPath": sessionURL.path, "cwd": "/Users/test/Beta", "model": "gpt-5.5", "tokensUsed": 1_100_000]
+                        ["threadID": "usage", "rolloutPath": sessionURL.path, "cwd": "/Users/test/Beta", "model": "gpt-5.5", "tokensUsed": 1_100_000]
                     ])
                 }
                 if sql.contains("archived = 0") {
@@ -174,6 +174,7 @@ final class LocalCodexUsageReaderTests: XCTestCase {
                 }
                 if sql.contains("AS rolloutPath") {
                     return Self.json([[
+                        "threadID": "incomplete",
                         "rolloutPath": sessionURL.path,
                         "cwd": "/Users/test/Beta",
                         "model": "gpt-5.5",
@@ -188,6 +189,97 @@ final class LocalCodexUsageReaderTests: XCTestCase {
         XCTAssertNil(snapshot)
         let log = try String(contentsOf: diagnostics.fileURL, encoding: .utf8)
         XCTAssertTrue(log.contains("已隐藏本机统计"))
+    }
+
+    /// 验证累计未增长事件只计算一次，并从 fork 子会话中剔除与父会话相同的归一化前缀。
+    func testReaderNormalizesSnapshotsAndDeduplicatesForkPrefix() async throws {
+        let now = try XCTUnwrap(ISO8601DateFormatter().date(from: "2026-07-28T12:00:00Z"))
+        let databaseURL = try temporaryFile(named: "state_5.sqlite", contents: Data())
+        let parentURL = try temporaryFile(
+            named: "rollout-parent.jsonl",
+            contents: Data("""
+            {"timestamp":"2026-07-28T01:00:00Z","type":"session_meta","payload":{"id":"parent"}}
+            {"timestamp":"2026-07-28T01:01:00Z","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":100,"cached_input_tokens":80,"output_tokens":10,"reasoning_output_tokens":2,"total_tokens":110},"last_token_usage":{"input_tokens":100,"cached_input_tokens":80,"output_tokens":10,"reasoning_output_tokens":2,"total_tokens":110}}}}
+            {"timestamp":"2026-07-28T01:02:00Z","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":250,"cached_input_tokens":200,"output_tokens":20,"reasoning_output_tokens":4,"total_tokens":270},"last_token_usage":{"input_tokens":150,"cached_input_tokens":120,"output_tokens":10,"reasoning_output_tokens":2,"total_tokens":160}}}}
+            {"timestamp":"2026-07-28T01:03:00Z","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":250,"cached_input_tokens":200,"output_tokens":20,"reasoning_output_tokens":4,"total_tokens":270},"last_token_usage":{"input_tokens":150,"cached_input_tokens":120,"output_tokens":10,"reasoning_output_tokens":2,"total_tokens":160}}}}
+            """.utf8)
+        )
+        let childURL = try temporaryFile(
+            named: "rollout-child.jsonl",
+            contents: Data("""
+            {"timestamp":"2026-07-28T02:00:00Z","type":"session_meta","payload":{"id":"child","forked_from_id":"parent"}}
+            {"timestamp":"2026-07-28T02:00:01Z","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":100,"cached_input_tokens":80,"output_tokens":10,"reasoning_output_tokens":2,"total_tokens":110},"last_token_usage":{"input_tokens":100,"cached_input_tokens":80,"output_tokens":10,"reasoning_output_tokens":2,"total_tokens":110}}}}
+            {"timestamp":"2026-07-28T02:00:02Z","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":250,"cached_input_tokens":200,"output_tokens":20,"reasoning_output_tokens":4,"total_tokens":270},"last_token_usage":{"input_tokens":150,"cached_input_tokens":120,"output_tokens":10,"reasoning_output_tokens":2,"total_tokens":160}}}}
+            {"timestamp":"2026-07-28T02:00:03Z","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":250,"cached_input_tokens":200,"output_tokens":20,"reasoning_output_tokens":4,"total_tokens":270},"last_token_usage":{"input_tokens":150,"cached_input_tokens":120,"output_tokens":10,"reasoning_output_tokens":2,"total_tokens":160}}}}
+            {"timestamp":"2026-07-28T02:01:00Z","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":300,"cached_input_tokens":220,"output_tokens":30,"reasoning_output_tokens":6,"total_tokens":330},"last_token_usage":{"input_tokens":50,"cached_input_tokens":20,"output_tokens":10,"reasoning_output_tokens":2,"total_tokens":60}}}}
+            """.utf8)
+        )
+        let reader = LocalCodexUsageReader(
+            now: { now },
+            databaseURL: databaseURL,
+            automationFiles: [],
+            diagnostics: testDiagnosticLog(),
+            query: { _, sql in
+                if sql.contains("AS threadCount") {
+                    return Self.json([["threadCount": 2, "lastUpdatedAt": now.timeIntervalSince1970]])
+                }
+                if sql.contains("AS rolloutPath") {
+                    return Self.json([
+                        ["threadID": "parent", "rolloutPath": parentURL.path, "cwd": "/Users/test/Fork", "model": "gpt-5.5", "tokensUsed": 270],
+                        ["threadID": "child", "rolloutPath": childURL.path, "cwd": "/Users/test/Fork", "model": "gpt-5.5", "tokensUsed": 330]
+                    ])
+                }
+                return Self.json([])
+            }
+        )
+
+        let loadedSnapshot = await reader.load()
+        let snapshot = try XCTUnwrap(loadedSnapshot)
+
+        XCTAssertEqual(snapshot.summary.todayTokens, 330)
+        XCTAssertEqual(snapshot.summary.sevenDayTokens, 330)
+        XCTAssertEqual(snapshot.summary.lifetimeTokens, 330)
+        XCTAssertEqual(snapshot.summary.projects.first?.tokens, 330)
+        XCTAssertEqual(snapshot.summary.monthCost?.inputTokens, 300)
+        XCTAssertEqual(snapshot.summary.monthCost?.cachedInputTokens, 220)
+        XCTAssertEqual(snapshot.summary.monthCost?.outputTokens, 30)
+    }
+
+    /// 验证 fork 父会话不可用时拒绝展示无法去重的估算值。
+    func testReaderRejectsForkWhenParentIsMissing() async throws {
+        let databaseURL = try temporaryFile(named: "state_5.sqlite", contents: Data())
+        let childURL = try temporaryFile(
+            named: "rollout-child.jsonl",
+            contents: Data("""
+            {"timestamp":"2026-07-28T02:00:00Z","type":"session_meta","payload":{"id":"child","forked_from_id":"missing-parent"}}
+            {"timestamp":"2026-07-28T02:01:00Z","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":100,"cached_input_tokens":80,"output_tokens":10,"total_tokens":110},"last_token_usage":{"input_tokens":100,"cached_input_tokens":80,"output_tokens":10,"total_tokens":110}}}}
+            """.utf8)
+        )
+        let diagnostics = testDiagnosticLog()
+        let reader = LocalCodexUsageReader(
+            databaseURL: databaseURL,
+            automationFiles: [],
+            diagnostics: diagnostics,
+            query: { _, sql in
+                if sql.contains("AS threadCount") {
+                    return Self.json([["threadCount": 1, "lastUpdatedAt": 1_800_000]])
+                }
+                if sql.contains("AS rolloutPath") {
+                    return Self.json([[
+                        "threadID": "child",
+                        "rolloutPath": childURL.path,
+                        "cwd": "/Users/test/Fork",
+                        "model": "gpt-5.5",
+                        "tokensUsed": 110
+                    ]])
+                }
+                return Self.json([])
+            }
+        )
+
+        let snapshot = await reader.load()
+        XCTAssertNil(snapshot)
+        XCTAssertTrue(try String(contentsOf: diagnostics.fileURL, encoding: .utf8).contains("fork 父会话缺失"))
     }
 
     /// 验证两代 sqlite3 CLI 的 CANTOPEN 形式都会触发一次重试，其他错误不重试。

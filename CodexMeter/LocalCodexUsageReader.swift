@@ -339,6 +339,27 @@ struct LocalCodexUsageReader: Sendable {
         var cache = loadUsageCache(timeZoneIdentifier: calendar.timeZone.identifier)
         let sourcePaths = Set(sources.map(\.rolloutPath))
         cache.sessions = cache.sessions.filter { sourcePaths.contains($0.key) }
+        var sourcesByThreadID: [String: UsageSourceRow] = [:]
+        var forkParentIDByPath: [String: String] = [:]
+        for source in sources {
+            sourcesByThreadID[source.threadID] = source
+            if let parentID = Self.forkParentID(at: URL(fileURLWithPath: source.rolloutPath)) {
+                forkParentIDByPath[source.rolloutPath] = parentID
+            }
+        }
+        let missingForkParents = forkParentIDByPath.values.filter { sourcesByThreadID[$0] == nil }
+        guard missingForkParents.isEmpty else {
+            diagnostics.error(
+                "fork 父会话缺失，已隐藏本机统计；缺失父会话=\(Set(missingForkParents).count)",
+                category: Self.diagnosticCategory
+            )
+            return nil
+        }
+        let forkEventPaths = Set(
+            forkParentIDByPath.flatMap { childPath, parentID in
+                [childPath, sourcesByThreadID[parentID]!.rolloutPath]
+            }
+        )
         var incompletePaths: [String] = []
 
         for source in sources {
@@ -346,6 +367,7 @@ struct LocalCodexUsageReader: Sendable {
             guard let entry = Self.updatedUsageCacheEntry(
                 at: url,
                 previous: cache.sessions[source.rolloutPath],
+                collectEvents: forkEventPaths.contains(source.rolloutPath),
                 historyDay: historyDay,
                 dayFormatter: dayFormatter
             ) else {
@@ -365,6 +387,21 @@ struct LocalCodexUsageReader: Sendable {
             )
             return nil
         }
+        guard let forkExclusions = Self.forkExclusions(
+            parentIDByChildPath: forkParentIDByPath,
+            sourcesByThreadID: sourcesByThreadID,
+            cache: cache
+        ) else {
+            diagnostics.error("fork 事件序列不完整，已隐藏本机统计", category: Self.diagnosticCategory)
+            return nil
+        }
+        let excludedForkTokens = forkExclusions.values.reduce(Int64(0)) { $0 + $1.lifetimeUsage.total }
+        if excludedForkTokens > 0 {
+            diagnostics.info(
+                "已排除 fork 继承前缀；会话=\(forkExclusions.count)；Token=\(excludedForkTokens)",
+                category: Self.diagnosticCategory
+            )
+        }
 
         var daily: [String: SessionTokenUsage] = [:]
         var dailyCosts: [String: Double] = [:]
@@ -378,19 +415,21 @@ struct LocalCodexUsageReader: Sendable {
 
         for source in sources {
             guard let entry = cache.sessions[source.rolloutPath] else { continue }
-            lifetimeTokens += entry.lifetimeUsage.total
+            let exclusion = forkExclusions[source.rolloutPath] ?? .zero
+            lifetimeTokens += entry.lifetimeUsage.subtracting(exclusion.lifetimeUsage).total
             let price = catalog?.price(for: source.model) ?? LocalCodexPricingCatalog.fallbackPrice(for: source.model)
             var sourceSevenDayUsage = SessionTokenUsage.zero
             var sourceMonthUsage = SessionTokenUsage.zero
             for (day, usage) in entry.dailyUsage where day >= historyDay && day <= today {
-                daily[day, default: .zero].add(usage)
+                let effectiveUsage = usage.subtracting(exclusion.dailyUsage[day] ?? .zero)
+                daily[day, default: .zero].add(effectiveUsage)
                 if let price {
-                    dailyCosts[day, default: 0] += Self.estimatedCost(for: usage, price: price)
-                } else if usage.total > 0 {
+                    dailyCosts[day, default: 0] += Self.estimatedCost(for: effectiveUsage, price: price)
+                } else if effectiveUsage.total > 0 {
                     unpricedDays.insert(day)
                 }
-                if day >= sevenDay { sourceSevenDayUsage.add(usage) }
-                if day >= monthDay { sourceMonthUsage.add(usage) }
+                if day >= sevenDay { sourceSevenDayUsage.add(effectiveUsage) }
+                if day >= monthDay { sourceMonthUsage.add(effectiveUsage) }
             }
             if sourceSevenDayUsage.total > 0 {
                 projects[source.cwd, default: .init()].add(
@@ -468,15 +507,19 @@ struct LocalCodexUsageReader: Sendable {
     private static func updatedUsageCacheEntry(
         at url: URL,
         previous: SessionUsageCache?,
+        collectEvents: Bool,
         historyDay: String,
         dayFormatter: DateFormatter
     ) -> SessionUsageCache? {
         guard let handle = try? FileHandle(forReadingFrom: url) else { return nil }
         defer { try? handle.close() }
         guard let fileSize = try? handle.seekToEnd() else { return nil }
-        var entry = previous ?? SessionUsageCache()
+        var entry = previous ?? SessionUsageCache(collectsEvents: collectEvents)
+        if collectEvents, !entry.collectsEvents {
+            entry = SessionUsageCache(collectsEvents: true)
+        }
         // ponytail: Codex rollout 当前为追加写；若未来支持同路径原地改写，应增加文件标识并强制重建缓存。
-        if entry.readOffset > fileSize { entry = SessionUsageCache() }
+        if entry.readOffset > fileSize { entry = SessionUsageCache(collectsEvents: collectEvents) }
         guard entry.readOffset < fileSize else {
             entry.dailyUsage = entry.dailyUsage.filter { $0.key >= historyDay }
             return entry
@@ -528,7 +571,7 @@ struct LocalCodexUsageReader: Sendable {
         return entry
     }
 
-    /// 解析单条 token_count，优先采用事件增量；旧日志缺少增量字段时才用相邻累计值之差。
+    /// 解析单条 token_count；只有累计高水位实际增长时才接受事件增量，避免重复快照被再次计费。
     private static func parseUsageLine(
         _ data: Data,
         entry: inout SessionUsageCache,
@@ -542,20 +585,110 @@ struct LocalCodexUsageReader: Sendable {
               let timestamp = object["timestamp"] as? String,
               let payload = object["payload"] as? [String: Any],
               payload["type"] as? String == "token_count",
-              let info = payload["info"] as? [String: Any],
-              let totalObject = info["total_token_usage"] as? [String: Any]
+              let info = payload["info"] as? [String: Any]
         else { return }
-        let total = SessionTokenUsage(json: totalObject)
-        let last = (info["last_token_usage"] as? [String: Any]).map(SessionTokenUsage.init(json:))
-        let delta = last ?? total.increment(after: entry.latestTotal)
-        entry.latestTotal = total
+        let cumulative = (info["total_token_usage"] as? [String: Any]).map(SessionTokenSample.init(json:))
+        let lastUsage = (info["last_token_usage"] as? [String: Any]).map(SessionTokenSample.init(json:))
+        let identity = SessionTokenEventIdentity(cumulative: cumulative, lastUsage: lastUsage)
+        guard let delta = normalizedDelta(
+            cumulative: cumulative,
+            lastUsage: lastUsage,
+            latestTotal: &entry.latestTotal
+        ) else { return }
         entry.lifetimeUsage.add(delta)
-        guard delta.total > 0,
-              let date = fractionalTimestampFormatter.date(from: timestamp) ?? timestampFormatter.date(from: timestamp)
-        else { return }
-        let day = dayFormatter.string(from: date)
+        let date = fractionalTimestampFormatter.date(from: timestamp) ?? timestampFormatter.date(from: timestamp)
+        let day = date.map(dayFormatter.string(from:))
+        if entry.collectsEvents {
+            entry.events.append(SessionUsageEvent(identity: identity, day: day, usage: delta))
+        }
+        guard let day else { return }
         guard day >= historyDay else { return }
         entry.dailyUsage[day, default: .zero].add(delta)
+    }
+
+    /// 按累计高水位生成可信增量；计数器重置时保留新周期首个事件，累计未增长时拒绝 last_token_usage。
+    private static func normalizedDelta(
+        cumulative: SessionTokenSample?,
+        lastUsage: SessionTokenSample?,
+        latestTotal: inout SessionTokenUsage?
+    ) -> SessionTokenUsage? {
+        let lastDelta = lastUsage.flatMap { sample in
+            sample.hasNegativeValue ? nil : sample.snapshot().nonzero
+        }
+        guard let cumulative, !cumulative.hasNegativeValue else { return lastDelta }
+
+        guard let previous = latestTotal else {
+            let current = cumulative.snapshot()
+            latestTotal = current
+            return lastDelta ?? current.nonzero
+        }
+        if cumulative.isConfirmedReset(comparedWith: previous) {
+            let current = cumulative.snapshot()
+            latestTotal = current
+            return lastDelta ?? current.nonzero
+        }
+
+        let observed = cumulative.snapshot(missingFrom: previous)
+        let highWater = previous.componentwiseMaximum(with: observed)
+        let fallback = highWater.increment(after: previous)
+        latestTotal = highWater
+        guard !fallback.isZero else { return nil }
+        return lastDelta ?? fallback
+    }
+
+    /// 从 rollout 首个 session_meta 读取父会话；读取只覆盖头部，避免为普通会话加载整份日志。
+    private static func forkParentID(at url: URL) -> String? {
+        guard let handle = try? FileHandle(forReadingFrom: url) else { return nil }
+        defer { try? handle.close() }
+        var pending = Data()
+        let maximumHeaderBytes = 8 * 1_024 * 1_024
+        while pending.count < maximumHeaderBytes,
+              let chunk = try? handle.read(upToCount: 65_536),
+              !chunk.isEmpty
+        {
+            pending.append(chunk)
+            guard let newline = pending.firstIndex(of: 0x0A) else { continue }
+            let line = pending[..<newline]
+            guard let object = try? JSONSerialization.jsonObject(with: line) as? [String: Any],
+                  object["type"] as? String == "session_meta",
+                  let payload = object["payload"] as? [String: Any]
+            else { return nil }
+            return (payload["forked_from_id"] as? String).flatMap { $0.isEmpty ? nil : $0 }
+        }
+        // ponytail: session_meta 超过 8 MB 时按非 fork 处理；出现真实样本后再改成无上限流式解码。
+        return nil
+    }
+
+    /// 在归一化事件序列上匹配父子相同前缀，并返回子会话需要排除的分日与累计用量。
+    private static func forkExclusions(
+        parentIDByChildPath: [String: String],
+        sourcesByThreadID: [String: UsageSourceRow],
+        cache: LocalUsageCache
+    ) -> [String: SessionUsageExclusion]? {
+        var result: [String: SessionUsageExclusion] = [:]
+        for (childPath, parentID) in parentIDByChildPath {
+            guard let parentPath = sourcesByThreadID[parentID]?.rolloutPath,
+                  let child = cache.sessions[childPath], child.collectsEvents,
+                  let parent = cache.sessions[parentPath], parent.collectsEvents
+            else { return nil }
+            var prefixLength = 0
+            let upperBound = min(child.events.count, parent.events.count)
+            while prefixLength < upperBound,
+                  child.events[prefixLength].identity == parent.events[prefixLength].identity
+            {
+                prefixLength += 1
+            }
+            guard prefixLength > 0 else { continue }
+            var exclusion = SessionUsageExclusion.zero
+            for event in child.events.prefix(prefixLength) {
+                exclusion.lifetimeUsage.add(event.usage)
+                if let day = event.day {
+                    exclusion.dailyUsage[day, default: .zero].add(event.usage)
+                }
+            }
+            result[childPath] = exclusion
+        }
+        return result
     }
 
     /// 创建跟随当前日历时区的稳定日期键格式器。
@@ -835,7 +968,7 @@ struct LocalCodexUsageReader: Sendable {
     /// 枚举全部 rollout；缓存保留全量有效累计，同时只持久化近半年的日聚合。
     private func usageSourcesSQL() -> String {
         return """
-        SELECT rollout_path AS rolloutPath, COALESCE(cwd, '') AS cwd, COALESCE(model, '') AS model,
+        SELECT id AS threadID, rollout_path AS rolloutPath, COALESCE(cwd, '') AS cwd, COALESCE(model, '') AS model,
                COALESCE(tokens_used, 0) AS tokensUsed
         FROM threads
         WHERE rollout_path IS NOT NULL AND rollout_path <> '';
@@ -885,6 +1018,7 @@ private struct ProjectRow: Decodable {
 
 /// SQLite 中供 rollout 增量聚合使用的线程索引。
 private struct UsageSourceRow: Decodable {
+    let threadID: String
     let rolloutPath: String
     let cwd: String
     let model: String
@@ -919,28 +1053,101 @@ private struct DailyUsageRow {
     let estimatedCostUSD: Double?
 }
 
-/// 描述单个事件或时间段的 token 拆分；输入已包含缓存输入，total 不重复相加缓存部分。
+/// 保留 token_count 原始可选计数，用于识别负值、累计重置和 fork 事件身份。
+private struct SessionTokenSample: Codable, Equatable, Sendable {
+    let input: Int64?
+    let cachedInput: Int64?
+    let output: Int64?
+    let reasoningOutput: Int64?
+    let totalTokens: Int64?
+
+    var hasNegativeValue: Bool {
+        [input, cachedInput, output, reasoningOutput, totalTokens]
+            .compactMap { $0 }
+            .contains { $0 < 0 }
+    }
+
+    /// 从 JSON 保留字段缺失与负值语义，归一化层再决定是否接受该样本。
+    init(json: [String: Any]) {
+        input = (json["input_tokens"] as? NSNumber)?.int64Value
+        cachedInput = (json["cached_input_tokens"] as? NSNumber)?.int64Value
+        output = (json["output_tokens"] as? NSNumber)?.int64Value
+        reasoningOutput = (json["reasoning_output_tokens"] as? NSNumber)?.int64Value
+        totalTokens = (json["total_tokens"] as? NSNumber)?.int64Value
+    }
+
+    /// 将缺失字段沿用上一高水位，并把已验证样本转换成聚合所需的三类 Token。
+    func snapshot(missingFrom previous: SessionTokenUsage = .zero) -> SessionTokenUsage {
+        SessionTokenUsage(
+            input: input ?? previous.input,
+            cachedInput: cachedInput ?? previous.cachedInput,
+            output: output ?? previous.output,
+            reasoningOutput: reasoningOutput ?? previous.reasoningOutput,
+            reportedTotal: totalTokens ?? previous.reportedTotal
+        )
+    }
+
+    /// 只有规范总量和主输入计数同时下降时才确认重置，避免缓存分类调整误触发新周期。
+    func isConfirmedReset(comparedWith previous: SessionTokenUsage) -> Bool {
+        guard let totalTokens, let input else { return false }
+        return totalTokens >= 0
+            && input >= 0
+            && totalTokens < previous.reportedTotal
+            && input < previous.input
+    }
+}
+
+/// 使用原始累计与单次计数组成 fork 前缀事件身份；时间戳不参与继承判断。
+private struct SessionTokenEventIdentity: Codable, Equatable, Sendable {
+    let cumulative: SessionTokenSample?
+    let lastUsage: SessionTokenSample?
+}
+
+/// 保存需要参与 fork 去重的归一化事件；只为 fork 子会话及其父会话持久化。
+private struct SessionUsageEvent: Codable, Sendable {
+    let identity: SessionTokenEventIdentity
+    let day: String?
+    let usage: SessionTokenUsage
+}
+
+/// 描述单个事件或时间段的 token 拆分；总量优先采用事件规范字段，旧日志缺失时回退为输入加输出。
 private struct SessionTokenUsage: Codable, Sendable {
     let input: Int64
     let cachedInput: Int64
     let output: Int64
+    let reasoningOutput: Int64
+    let reportedTotal: Int64
 
-    static let zero = SessionTokenUsage(input: 0, cachedInput: 0, output: 0)
+    static let zero = SessionTokenUsage(
+        input: 0,
+        cachedInput: 0,
+        output: 0,
+        reasoningOutput: 0,
+        reportedTotal: 0
+    )
 
-    var total: Int64 { input + output }
-    /// 从 JSON 数字读取非负 token，供累计和单次用量共用。
-    init(json: [String: Any]) {
-        self.init(
-            input: LocalCodexUsageReader.int64(json["input_tokens"]),
-            cachedInput: LocalCodexUsageReader.int64(json["cached_input_tokens"]),
-            output: LocalCodexUsageReader.int64(json["output_tokens"])
-        )
+    var total: Int64 { reportedTotal > 0 ? reportedTotal : input + output }
+    var isZero: Bool {
+        input == 0
+            && cachedInput == 0
+            && output == 0
+            && reasoningOutput == 0
+            && reportedTotal == 0
     }
+    var nonzero: SessionTokenUsage? { isZero ? nil : self }
 
-    init(input: Int64, cachedInput: Int64, output: Int64) {
+    init(
+        input: Int64,
+        cachedInput: Int64,
+        output: Int64,
+        reasoningOutput: Int64 = 0,
+        reportedTotal: Int64? = nil
+    ) {
         self.input = max(0, input)
         self.cachedInput = max(0, cachedInput)
         self.output = max(0, output)
+        self.reasoningOutput = max(0, reasoningOutput)
+        self.reportedTotal = max(0, reportedTotal ?? input + output)
     }
 
     /// 累加另一个事件增量。
@@ -948,7 +1155,31 @@ private struct SessionTokenUsage: Codable, Sendable {
         self = SessionTokenUsage(
             input: input + other.input,
             cachedInput: cachedInput + other.cachedInput,
-            output: output + other.output
+            output: output + other.output,
+            reasoningOutput: reasoningOutput + other.reasoningOutput,
+            reportedTotal: reportedTotal + other.reportedTotal
+        )
+    }
+
+    /// 逐字段保留累计最大值，防止临时回退后的恢复量再次被统计。
+    func componentwiseMaximum(with other: SessionTokenUsage) -> SessionTokenUsage {
+        SessionTokenUsage(
+            input: max(input, other.input),
+            cachedInput: max(cachedInput, other.cachedInput),
+            output: max(output, other.output),
+            reasoningOutput: max(reasoningOutput, other.reasoningOutput),
+            reportedTotal: max(reportedTotal, other.reportedTotal)
+        )
+    }
+
+    /// 扣除已验证的 fork 继承用量；异常越界时按零收敛，避免生成负统计。
+    func subtracting(_ other: SessionTokenUsage) -> SessionTokenUsage {
+        SessionTokenUsage(
+            input: max(0, input - other.input),
+            cachedInput: max(0, cachedInput - other.cachedInput),
+            output: max(0, output - other.output),
+            reasoningOutput: max(0, reasoningOutput - other.reasoningOutput),
+            reportedTotal: max(0, reportedTotal - other.reportedTotal)
         )
     }
 
@@ -958,7 +1189,9 @@ private struct SessionTokenUsage: Codable, Sendable {
         return SessionTokenUsage(
             input: max(0, input - previous.input),
             cachedInput: max(0, cachedInput - previous.cachedInput),
-            output: max(0, output - previous.output)
+            output: max(0, output - previous.output),
+            reasoningOutput: max(0, reasoningOutput - previous.reasoningOutput),
+            reportedTotal: max(0, reportedTotal - previous.reportedTotal)
         )
     }
 }
@@ -969,15 +1202,30 @@ private struct SessionUsageCache: Codable, Sendable {
     var latestTotal: SessionTokenUsage?
     var dailyUsage: [String: SessionTokenUsage] = [:]
     var lifetimeUsage = SessionTokenUsage.zero
+    var collectsEvents: Bool
+    var events: [SessionUsageEvent] = []
+
+    /// 新缓存默认不保存事件序列；只有 fork 关系涉及的会话才开启，控制缓存体积。
+    init(collectsEvents: Bool = false) {
+        self.collectsEvents = collectsEvents
+    }
 }
 
 /// 所有 rollout 的持久化增量缓存；时区改变时必须整体重建日期键。
 private struct LocalUsageCache: Codable, Sendable {
-    static let currentVersion = 2
+    static let currentVersion = 4
 
     var version = currentVersion
     let timeZoneIdentifier: String
     var sessions: [String: SessionUsageCache] = [:]
+}
+
+/// 汇总一个 fork 子会话应排除的继承用量，供累计、分日、项目和费用共用同一口径。
+private struct SessionUsageExclusion {
+    static let zero = SessionUsageExclusion()
+
+    var lifetimeUsage = SessionTokenUsage.zero
+    var dailyUsage: [String: SessionTokenUsage] = [:]
 }
 
 /// 项目近七天用量的内部累加器，线程集合避免重复路径被多算。
