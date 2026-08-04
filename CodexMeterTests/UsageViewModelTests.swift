@@ -1621,6 +1621,49 @@ final class UsageViewModelTests: XCTestCase {
         XCTAssertFalse(storedJSON.contains("仅内存任务"))
     }
 
+    /// 验证本机用量高于云端时仍发布实际解析值，云端差异只用于诊断而不隐藏数据。
+    func testRefreshPublishesLocalUsageWhenPublishedCloudDayIsLower() async throws {
+        let storeDirectory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let store = UsageSnapshotStore(appGroupIdentifier: "", fallbackDirectory: storeDirectory)
+        let local = Self.localUsageSnapshot(dailyBucket: LocalCodexDailyUsageBucket(
+            id: "2026-07-14",
+            label: "07/14",
+            tokens: 240
+        ))
+        let profile = CodexProfileStats(
+            lifetimeTokens: nil,
+            peakDailyTokens: nil,
+            longestRunningTurnSeconds: nil,
+            currentStreakDays: nil,
+            longestStreakDays: nil,
+            fastModeUsagePercentage: nil,
+            mostUsedReasoningEffort: nil,
+            mostUsedReasoningEffortPercentage: nil,
+            totalThreads: nil,
+            totalSkillsUsed: nil,
+            uniqueSkillsUsed: nil,
+            dailyUsageBuckets: [CodexTokenUsageBucket(startDate: "2026-07-14", tokens: 200)]
+        )
+        let client = RecordingUsageSnapshotClient(snapshot: UsageSnapshot(
+            fetchedAt: Date(timeIntervalSince1970: 1_800_000),
+            rateLimits: Self.emptyRateLimits(),
+            profileStats: profile
+        ))
+        let viewModel = UsageViewModel(
+            client: client,
+            store: store,
+            reloadWidgetTimelines: {},
+            localCodexUsageLoader: { local }
+        )
+
+        await viewModel.refresh()
+
+        XCTAssertEqual(viewModel.localCodexUsage?.summary.dailyBuckets?.first?.tokens, 240)
+        XCTAssertEqual(viewModel.snapshot?.localCodexUsage?.dailyBuckets?.first?.tokens, 240)
+        XCTAssertEqual(try store.load()?.localCodexUsage?.dailyBuckets?.first?.tokens, 240)
+    }
+
     /// 验证本机统计失败不会覆盖成功的网络快照或设置主错误信息。
     func testLocalCodexUsageFailureDoesNotAffectNetworkRefresh() async {
         let viewModel = UsageViewModel(
@@ -1701,7 +1744,9 @@ final class UsageViewModelTests: XCTestCase {
     }
 
     /// 构造含任务标题的应用内快照，验证共享缓存只保存 summary。
-    private static func localUsageSnapshot() -> LocalCodexUsageSnapshot {
+    private static func localUsageSnapshot(
+        dailyBucket: LocalCodexDailyUsageBucket? = nil
+    ) -> LocalCodexUsageSnapshot {
         let task = LocalCodexTaskItem(
             id: "task",
             title: "仅内存任务",
@@ -1717,7 +1762,8 @@ final class UsageViewModelTests: XCTestCase {
             lifetimeTokens: 2_400,
             threadCount: 4,
             projects: [],
-            taskCounts: LocalCodexTaskCounts(active: 1, pending: 0, scheduled: 0, done: 0)
+            taskCounts: LocalCodexTaskCounts(active: 1, pending: 0, scheduled: 0, done: 0),
+            dailyBuckets: dailyBucket.map { [$0] }
         )
         return LocalCodexUsageSnapshot(summary: summary, taskBoard: LocalCodexTaskBoard(items: [task]))
     }

@@ -392,7 +392,7 @@ struct LocalCodexUsageReader: Sendable {
         let excludedForkTokens = forkExclusions.values.reduce(Int64(0)) { $0 + $1.lifetimeUsage.total }
         if excludedForkTokens > 0 {
             diagnostics.info(
-                "已排除 fork 继承前缀；会话=\(forkExclusions.count)；Token=\(excludedForkTokens)",
+                "已排除 fork 继承片段；会话=\(forkExclusions.count)；Token=\(excludedForkTokens)",
                 category: Self.diagnosticCategory
             )
         }
@@ -654,7 +654,7 @@ struct LocalCodexUsageReader: Sendable {
         return lastDelta ?? fallback
     }
 
-    /// 从 rollout 首个 session_meta 读取父会话；读取只覆盖头部，避免为普通会话加载整份日志。
+    /// 从 rollout 首个 session_meta 读取父会话；兼容直接 fork 字段和旧版子任务 source 结构。
     private static func forkParentID(at url: URL) -> String? {
         guard let handle = try? FileHandle(forReadingFrom: url) else { return nil }
         defer { try? handle.close() }
@@ -671,13 +671,19 @@ struct LocalCodexUsageReader: Sendable {
                   object["type"] as? String == "session_meta",
                   let payload = object["payload"] as? [String: Any]
             else { return nil }
-            return (payload["forked_from_id"] as? String).flatMap { $0.isEmpty ? nil : $0 }
+            if let directParentID = payload["forked_from_id"] as? String, !directParentID.isEmpty {
+                return directParentID
+            }
+            let source = payload["source"] as? [String: Any]
+            let subagent = source?["subagent"] as? [String: Any]
+            let spawn = subagent?["thread_spawn"] as? [String: Any]
+            return (spawn?["parent_thread_id"] as? String).flatMap { $0.isEmpty ? nil : $0 }
         }
         // ponytail: session_meta 超过 8 MB 时按非 fork 处理；出现真实样本后再改成无上限流式解码。
         return nil
     }
 
-    /// 在归一化事件序列上匹配父子相同前缀，并返回子会话需要排除的分日与累计用量。
+    /// 在归一化事件序列上匹配子会话继承前缀，并返回需要排除的分日与累计用量。
     private static func forkExclusions(
         parentIDByChildPath: [String: String],
         sourcesByThreadID: [String: UsageSourceRow],
@@ -689,13 +695,7 @@ struct LocalCodexUsageReader: Sendable {
                   let child = cache.sessions[childPath], child.collectsEvents,
                   let parent = cache.sessions[parentPath], parent.collectsEvents
             else { return nil }
-            var prefixLength = 0
-            let upperBound = min(child.events.count, parent.events.count)
-            while prefixLength < upperBound,
-                  child.events[prefixLength].identity == parent.events[prefixLength].identity
-            {
-                prefixLength += 1
-            }
+            let prefixLength = inheritedPrefixLength(child: child.events, parent: parent.events)
             guard prefixLength > 0 else { continue }
             var exclusion = SessionUsageExclusion(prefixLength: prefixLength)
             for event in child.events.prefix(prefixLength) {
@@ -704,6 +704,26 @@ struct LocalCodexUsageReader: Sendable {
             result[childPath] = exclusion
         }
         return result
+    }
+
+    /// 返回子会话开头与父会话任一连续片段的最长匹配长度，兼容旧版只复制父会话尾段的子任务日志。
+    private static func inheritedPrefixLength(
+        child: [SessionUsageEvent],
+        parent: [SessionUsageEvent]
+    ) -> Int {
+        guard let firstChildEvent = child.first else { return 0 }
+        var longest = 0
+        for parentStart in parent.indices where parent[parentStart].identity == firstChildEvent.identity {
+            var length = 0
+            while length < child.count,
+                  parentStart + length < parent.count,
+                  child[length].identity == parent[parentStart + length].identity
+            {
+                length += 1
+            }
+            longest = max(longest, length)
+        }
+        return longest
     }
 
     /// 创建跟随当前日历时区的稳定日期键格式器。
