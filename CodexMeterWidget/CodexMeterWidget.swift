@@ -247,10 +247,21 @@ private struct LocalCodexUsageWidgetView: View {
         HStack(alignment: .firstTextBaseline, spacing: 6) {
             Label(AppLocalization.string("Codex 概览"), systemImage: "chart.bar.xaxis")
                 .font(.headline)
+            if usage.hasIncompleteUsage == true {
+                Label(AppLocalization.string("部分统计"), systemImage: "exclamationmark.triangle.fill")
+                    .font(.caption2)
+                    .foregroundStyle(.orange)
+            }
             Spacer(minLength: 4)
-            if let cost = usage.monthCost {
-                Text("\(AppLocalization.string("本月估算"))  \(Self.currency(cost.estimatedCostUSD))")
-                    .font(.subheadline.weight(.semibold))
+            VStack(alignment: .trailing, spacing: 1) {
+                if let cost = usage.monthCost {
+                    Text("\(AppLocalization.string("本月估算"))  \(Self.currency(cost.estimatedCostUSD))")
+                        .font(.subheadline.weight(.semibold))
+                        .monospacedDigit()
+                }
+                Text("\(AppLocalization.string("同步")) \(formatter.fetchedAt(usage.fetchedAt))")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
                     .monospacedDigit()
             }
         }

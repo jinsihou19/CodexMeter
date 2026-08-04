@@ -230,8 +230,8 @@ final class LocalCodexUsageReaderTests: XCTestCase {
         XCTAssertEqual(snapshot.taskBoard.doneCount, 0)
     }
 
-    /// 验证有累计用量但 rollout 缺少事件时不输出猜测值，避免旧缓存继续展示虚假的时间段统计。
-    func testReaderRejectsIncompleteRolloutUsage() async throws {
+    /// 验证 rollout 缺少事件时使用 SQLite 总量兜底累计统计，并记录缺失会话。
+    func testReaderPublishesAvailableUsageWhenRolloutIsIncomplete() async throws {
         let databaseURL = try temporaryFile(named: "state_5.sqlite", contents: Data())
         let sessionURL = try temporaryFile(
             named: "rollout-incomplete.jsonl",
@@ -259,10 +259,12 @@ final class LocalCodexUsageReaderTests: XCTestCase {
             }
         )
 
-        let snapshot = await reader.load()
-        XCTAssertNil(snapshot)
+        let loadedSnapshot = await reader.load()
+        let snapshot = try XCTUnwrap(loadedSnapshot)
+        XCTAssertEqual(snapshot.summary.lifetimeTokens, 100)
+        XCTAssertEqual(snapshot.summary.hasIncompleteUsage, true)
         let log = try String(contentsOf: diagnostics.fileURL, encoding: .utf8)
-        XCTAssertTrue(log.contains("已隐藏本机统计"))
+        XCTAssertTrue(log.contains("按可解析事件继续统计"))
     }
 
     /// 验证累计未增长事件只计算一次，并剔除旧版子任务从父会话中段继承的事件。
@@ -317,8 +319,51 @@ final class LocalCodexUsageReaderTests: XCTestCase {
         XCTAssertEqual(snapshot.summary.monthCost?.outputTokens, 30)
     }
 
-    /// 验证 fork 父会话不可用时拒绝展示无法去重的估算值。
-    func testReaderRejectsForkWhenParentIsMissing() async throws {
+    /// 验证 fork rollout 不完整时不直接累加包含继承量的 SQLite 总量。
+    func testReaderDoesNotUseSQLiteLifetimeFallbackForIncompleteFork() async throws {
+        let now = try XCTUnwrap(ISO8601DateFormatter().date(from: "2026-07-28T12:00:00Z"))
+        let databaseURL = try temporaryFile(named: "state_5.sqlite", contents: Data())
+        let parentURL = try temporaryFile(
+            named: "rollout-parent-complete.jsonl",
+            contents: Data("""
+            {"timestamp":"2026-07-28T01:00:00Z","type":"session_meta","payload":{"id":"parent"}}
+            {"timestamp":"2026-07-28T01:01:00Z","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":250,"cached_input_tokens":200,"output_tokens":20,"total_tokens":270},"last_token_usage":{"input_tokens":250,"cached_input_tokens":200,"output_tokens":20,"total_tokens":270}}}}
+            """.utf8)
+        )
+        let childURL = try temporaryFile(
+            named: "rollout-child-incomplete.jsonl",
+            contents: Data("{\"timestamp\":\"2026-07-28T02:00:00Z\",\"type\":\"session_meta\",\"payload\":{\"id\":\"child\",\"forked_from_id\":\"parent\"}}\n".utf8)
+        )
+        let diagnostics = testDiagnosticLog()
+        let reader = LocalCodexUsageReader(
+            now: { now },
+            databaseURL: databaseURL,
+            automationFiles: [],
+            diagnostics: diagnostics,
+            query: { _, sql in
+                if sql.contains("AS threadCount") {
+                    return Self.json([["threadCount": 2, "lastUpdatedAt": now.timeIntervalSince1970]])
+                }
+                if sql.contains("AS rolloutPath") {
+                    return Self.json([
+                        ["threadID": "parent", "rolloutPath": parentURL.path, "cwd": "/Users/test/Fork", "model": "gpt-5.5", "tokensUsed": 270],
+                        ["threadID": "child", "rolloutPath": childURL.path, "cwd": "/Users/test/Fork", "model": "gpt-5.5", "tokensUsed": 330]
+                    ])
+                }
+                return Self.json([])
+            }
+        )
+
+        let loadedSnapshot = await reader.load()
+        let snapshot = try XCTUnwrap(loadedSnapshot)
+
+        XCTAssertEqual(snapshot.summary.lifetimeTokens, 270)
+        XCTAssertEqual(snapshot.summary.hasIncompleteUsage, true)
+        XCTAssertTrue(try String(contentsOf: diagnostics.fileURL, encoding: .utf8).contains("累计仅采用已解析事件"))
+    }
+
+    /// 验证 fork 父会话不可用时按子会话原始事件继续展示。
+    func testReaderPublishesForkWhenParentIsMissing() async throws {
         let databaseURL = try temporaryFile(named: "state_5.sqlite", contents: Data())
         let childURL = try temporaryFile(
             named: "rollout-child.jsonl",
@@ -349,8 +394,9 @@ final class LocalCodexUsageReaderTests: XCTestCase {
             }
         )
 
-        let snapshot = await reader.load()
-        XCTAssertNil(snapshot)
+        let loadedSnapshot = await reader.load()
+        let snapshot = try XCTUnwrap(loadedSnapshot)
+        XCTAssertEqual(snapshot.summary.lifetimeTokens, 110)
         XCTAssertTrue(try String(contentsOf: diagnostics.fileURL, encoding: .utf8).contains("fork 父会话缺失"))
     }
 

@@ -332,7 +332,8 @@ struct MenuBarView: View {
                 LocalCodexUsageSection(
                     snapshot: localCodexUsage,
                     formatter: formatter,
-                    settings: activePopoverSettings
+                    settings: activePopoverSettings,
+                    freshness: viewModel.localCodexUsageFreshness
                 )
             }
 
@@ -395,7 +396,8 @@ struct MenuBarView: View {
                     LocalCodexUsageSection(
                         snapshot: localCodexUsage,
                         formatter: formatter,
-                        settings: popoverSettings
+                        settings: popoverSettings,
+                        freshness: viewModel.localCodexUsageFreshness
                     )
                 }
             }
@@ -831,6 +833,7 @@ private struct LocalCodexUsageSection: View {
     let snapshot: LocalCodexUsageSnapshot
     let formatter: UsageFormatter
     let settings: PopoverDisplaySettings
+    let freshness: LocalCodexUsageFreshness
     @State private var heatmapMode = LocalUsageHeatmapMode.daily
 
     var body: some View {
@@ -840,6 +843,21 @@ private struct LocalCodexUsageSection: View {
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(.secondary)
                 Spacer()
+            }
+
+            if let freshnessTitle {
+                Label(
+                    "\(AppLocalization.string(freshnessTitle)) · \(AppLocalization.string("同步")) \(formatter.fetchedAt(snapshot.summary.fetchedAt))",
+                    systemImage: freshness == .failed ? "exclamationmark.triangle" : "clock"
+                )
+                .font(.caption2)
+                .foregroundStyle(freshness == .failed ? .orange : .secondary)
+            }
+
+            if snapshot.summary.hasIncompleteUsage == true {
+                Label(AppLocalization.string("部分统计仅包含可解析数据"), systemImage: "exclamationmark.triangle")
+                    .font(.caption2)
+                    .foregroundStyle(.orange)
             }
 
             if let cost = snapshot.summary.monthCost {
@@ -875,6 +893,15 @@ private struct LocalCodexUsageSection: View {
             }
         }
         .menuSectionCard(padding: 6)
+    }
+
+    /// 返回需要展示的缓存状态；实时数据不额外占用菜单空间。
+    private var freshnessTitle: String? {
+        switch freshness {
+        case .current: nil
+        case .cached: "本机缓存"
+        case .failed: "本机读取失败"
+        }
     }
 
     /// 生成纵向栏目的紧凑标题，和趋势标题保持同一视觉层级。

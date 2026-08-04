@@ -453,6 +453,8 @@ public struct LocalCodexUsageSummary: Codable, Equatable, Sendable {
     public let taskCounts: LocalCodexTaskCounts
     public let dailyBuckets: [LocalCodexDailyUsageBucket]?
     public let monthCost: LocalCodexCostSummary?
+    /// 为 true 时至少一个统计维度只包含可解析数据，界面必须明确提示。
+    public let hasIncompleteUsage: Bool?
 
     public init(
         fetchedAt: Date,
@@ -463,7 +465,8 @@ public struct LocalCodexUsageSummary: Codable, Equatable, Sendable {
         projects: [LocalCodexProjectUsage],
         taskCounts: LocalCodexTaskCounts,
         dailyBuckets: [LocalCodexDailyUsageBucket]? = nil,
-        monthCost: LocalCodexCostSummary? = nil
+        monthCost: LocalCodexCostSummary? = nil,
+        hasIncompleteUsage: Bool? = nil
     ) {
         self.fetchedAt = fetchedAt
         self.todayTokens = max(0, todayTokens)
@@ -474,6 +477,7 @@ public struct LocalCodexUsageSummary: Codable, Equatable, Sendable {
         self.taskCounts = taskCounts
         self.dailyBuckets = dailyBuckets
         self.monthCost = monthCost
+        self.hasIncompleteUsage = hasIncompleteUsage
     }
 }
 

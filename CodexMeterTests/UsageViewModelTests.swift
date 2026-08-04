@@ -274,6 +274,10 @@ final class UsageViewModelTests: XCTestCase {
             contentsOf: projectRoot.appendingPathComponent("CodexMeter/CodexMeterApp.swift"),
             encoding: .utf8
         )
+        let widgetSource = try String(
+            contentsOf: projectRoot.appendingPathComponent("CodexMeterWidget/CodexMeterWidget.swift"),
+            encoding: .utf8
+        )
 
         XCTAssertTrue(source.contains("SectionTitle(\"额度与用量\")"))
         XCTAssertTrue(source.contains("Label(AppLocalization.string(\"消耗与成本\"), systemImage: \"dollarsign.circle\")"))
@@ -299,6 +303,9 @@ final class UsageViewModelTests: XCTestCase {
         XCTAssertLessThan(diagnosticsGroup.lowerBound, logAction.lowerBound)
         XCTAssertFalse(settingsSource.contains("Section(AppLocalization.string(\"诊断日志\"))"))
         XCTAssertTrue(appSource.contains("Task { await viewModel.refreshLocalCodexUsage() }"))
+        XCTAssertTrue(widgetSource.contains("formatter.fetchedAt(usage.fetchedAt)"))
+        XCTAssertTrue(widgetSource.contains("let time = formatter.fetchedAt(snapshot.fetchedAt)"))
+        XCTAssertFalse(widgetSource.contains("snapshot.localCodexUsage?.fetchedAt ?? snapshot.fetchedAt"))
     }
 
     func testSettingsWindowPresenterCreatesAndReusesSettingsWindow() {
@@ -1614,6 +1621,7 @@ final class UsageViewModelTests: XCTestCase {
 
         await viewModel.refresh()
 
+        XCTAssertEqual(viewModel.localCodexUsageFreshness, .current)
         XCTAssertEqual(viewModel.localCodexUsage?.summary.todayTokens, 120)
         XCTAssertEqual(viewModel.localCodexUsage?.taskBoard.items.first?.title, "仅内存任务")
         XCTAssertEqual(try store.load()?.localCodexUsage?.todayTokens, 120)
@@ -1666,9 +1674,11 @@ final class UsageViewModelTests: XCTestCase {
 
     /// 验证本机统计失败不会覆盖成功的网络快照或设置主错误信息。
     func testLocalCodexUsageFailureDoesNotAffectNetworkRefresh() async {
+        let storeDirectory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
         let viewModel = UsageViewModel(
             client: StubRateLimitClient(snapshot: Self.emptyRateLimits()),
-            store: UsageSnapshotStore(appGroupIdentifier: "", fallbackDirectory: FileManager.default.temporaryDirectory),
+            store: UsageSnapshotStore(appGroupIdentifier: "", fallbackDirectory: storeDirectory),
             reloadWidgetTimelines: {},
             localCodexUsageLoader: { nil }
         )
@@ -1680,8 +1690,8 @@ final class UsageViewModelTests: XCTestCase {
         XCTAssertNil(viewModel.errorMessage)
     }
 
-    /// 验证本机事件不完整时清除共享缓存中的旧统计，避免 Widget 继续展示已知不可信数据。
-    func testLocalCodexUsageFailureClearsCachedLocalUsage() async throws {
+    /// 验证本机读取失败时继续展示并保存最近一次成功的统计。
+    func testLocalCodexUsageFailureKeepsCachedLocalUsage() async throws {
         let storeDirectory = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString, isDirectory: true)
         let store = UsageSnapshotStore(appGroupIdentifier: "", fallbackDirectory: storeDirectory)
@@ -1697,10 +1707,16 @@ final class UsageViewModelTests: XCTestCase {
             localCodexUsageLoader: { nil }
         )
 
+        XCTAssertEqual(viewModel.localCodexUsageFreshness, .cached)
+
         await viewModel.refreshLocalCodexUsage()
 
-        XCTAssertNil(viewModel.snapshot?.localCodexUsage)
-        XCTAssertNil(try store.load()?.localCodexUsage)
+        XCTAssertEqual(viewModel.localCodexUsageFreshness, .failed)
+        XCTAssertEqual(viewModel.localCodexUsage?.summary.todayTokens, 120)
+        XCTAssertEqual(viewModel.localCodexUsage?.taskBoard.activeCount, 1)
+        XCTAssertTrue(viewModel.localCodexUsage?.taskBoard.items.isEmpty == true)
+        XCTAssertEqual(viewModel.snapshot?.localCodexUsage?.todayTokens, 120)
+        XCTAssertEqual(try store.load()?.localCodexUsage?.todayTokens, 120)
     }
 
     /// 验证网络失败时仍会把本机统计合并到额度缓存并刷新本机 Widget。

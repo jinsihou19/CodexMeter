@@ -229,10 +229,18 @@ final class UsageNotificationController {
 
 }
 
+/// 描述本机统计相对于当前读取周期的新鲜度，供界面区分实时结果与保留缓存。
+enum LocalCodexUsageFreshness: Equatable, Sendable {
+    case current
+    case cached
+    case failed
+}
+
 @MainActor
 final class UsageViewModel: ObservableObject {
     @Published private(set) var snapshot: UsageSnapshot?
     @Published private(set) var localCodexUsage: LocalCodexUsageSnapshot?
+    @Published private(set) var localCodexUsageFreshness = LocalCodexUsageFreshness.current
     @Published private(set) var isRefreshing = false
     @Published private(set) var errorMessage: String?
 
@@ -280,10 +288,14 @@ final class UsageViewModel: ObservableObject {
         self.localCodexUsageLoader = localCodexUsageLoader
         self.lastShowsResetCredits = resetCreditsVisibilityProvider()
         if let cachedSnapshot = try? store.load() {
-            let snapshotWithoutUnverifiedLocalUsage = cachedSnapshot.withLocalCodexUsage(nil)
-            self.snapshot = snapshotWithoutUnverifiedLocalUsage
-            if cachedSnapshot.localCodexUsage != nil {
-                try? store.save(snapshotWithoutUnverifiedLocalUsage)
+            self.snapshot = cachedSnapshot
+            if let cachedLocalUsage = cachedSnapshot.localCodexUsage {
+                // 共享缓存不保存任务标题；启动后先展示最近成功的统计，任务明细等待本次读取补齐。
+                self.localCodexUsage = LocalCodexUsageSnapshot(
+                    summary: cachedLocalUsage,
+                    taskBoard: LocalCodexTaskBoard(items: [], fallbackCounts: cachedLocalUsage.taskCounts)
+                )
+                self.localCodexUsageFreshness = .cached
             }
         } else {
             self.snapshot = nil
@@ -400,16 +412,20 @@ final class UsageViewModel: ObservableObject {
         await localUsageTask.value
     }
 
-    /// 串行刷新本机统计并合并进已有额度缓存；读取失败时清除旧统计，避免继续展示已知不可信数据。
+    /// 串行刷新本机统计并合并进已有额度缓存；读取失败时保留最近一次成功结果。
     func refreshLocalCodexUsage() async {
         guard !isRefreshingLocalUsage else { return }
         isRefreshingLocalUsage = true
         defer { isRefreshingLocalUsage = false }
-        let loadedLocalCodexUsage = await localCodexUsageLoader()
+        guard let loadedLocalCodexUsage = await localCodexUsageLoader() else {
+            localCodexUsageFreshness = .failed
+            return
+        }
         localCodexUsage = loadedLocalCodexUsage
+        localCodexUsageFreshness = .current
         guard let cachedSnapshot = snapshot else { return }
-        guard cachedSnapshot.localCodexUsage != loadedLocalCodexUsage?.summary else { return }
-        let updatedSnapshot = cachedSnapshot.withLocalCodexUsage(loadedLocalCodexUsage?.summary)
+        guard cachedSnapshot.localCodexUsage != loadedLocalCodexUsage.summary else { return }
+        let updatedSnapshot = cachedSnapshot.withLocalCodexUsage(loadedLocalCodexUsage.summary)
         try? store.save(updatedSnapshot)
         snapshot = updatedSnapshot
         reloadWidgetTimelines()

@@ -123,11 +123,18 @@ struct LocalCodexTaskItem: Identifiable, Sendable {
 /// 保存今日任务条目并提供四类计数。
 struct LocalCodexTaskBoard: Sendable {
     let items: [LocalCodexTaskItem]
+    private let fallbackCounts: LocalCodexTaskCounts?
 
-    var activeCount: Int { count(.active) }
-    var pendingCount: Int { count(.pending) }
-    var scheduledCount: Int { count(.scheduled) }
-    var doneCount: Int { count(.done) }
+    var activeCount: Int { fallbackCounts?.active ?? count(.active) }
+    var pendingCount: Int { fallbackCounts?.pending ?? count(.pending) }
+    var scheduledCount: Int { fallbackCounts?.scheduled ?? count(.scheduled) }
+    var doneCount: Int { fallbackCounts?.done ?? count(.done) }
+
+    /// 使用实时任务条目计数；仅恢复共享缓存时才传入不含标题的汇总计数。
+    init(items: [LocalCodexTaskItem], fallbackCounts: LocalCodexTaskCounts? = nil) {
+        self.items = items
+        self.fallbackCounts = fallbackCounts
+    }
 
     /// 返回指定分类的任务数量。
     private func count(_ kind: LocalCodexTaskKind) -> Int {
@@ -223,14 +230,14 @@ struct LocalCodexUsageReader: Sendable {
             databaseURL: databaseURL,
             context: "用量事件索引"
         ) else { return nil }
-        guard let usage = aggregateUsage(
+        let usage = aggregateUsage(
             sources: usageSources,
             historyStart: historyStart,
             sevenDayStart: sevenDayStart,
             todayStart: todayStart,
             monthStart: monthStart,
             calendar: calendar
-        ) else { return nil }
+        )
         guard let openRows: [TaskRow] = rows(
             for: openTasksSQL(todayStart: todayStart),
             databaseURL: databaseURL,
@@ -276,7 +283,8 @@ struct LocalCodexUsageReader: Sendable {
                 endingAt: todayStart,
                 calendar: calendar
             ),
-            monthCost: usage.monthCost
+            monthCost: usage.monthCost,
+            hasIncompleteUsage: usage.hasIncompleteUsage ? true : nil
         )
         diagnostics.info(
             "本机统计读取成功；线程=\(total.threadCount)；项目=\(projects.count)；日聚合=\(usage.dailyRows.count)；事件会话=\(usageSources.count)",
@@ -316,7 +324,7 @@ struct LocalCodexUsageReader: Sendable {
         }
     }
 
-    /// 从 rollout 增量事件统一生成时间段、项目和费用统计；任一有用量的日志不完整时拒绝输出快照。
+    /// 从 rollout 增量事件统一生成时间段、项目和费用统计；无法解析的日志跳过后继续输出可用数据。
     private func aggregateUsage(
         sources: [UsageSourceRow],
         historyStart: Date,
@@ -324,7 +332,7 @@ struct LocalCodexUsageReader: Sendable {
         todayStart: Date,
         monthStart: Date,
         calendar: Calendar
-    ) -> LocalUsageAggregation? {
+    ) -> LocalUsageAggregation {
         let dayFormatter = Self.dayFormatter(calendar: calendar)
         let historyDay = dayFormatter.string(from: historyStart)
         let sevenDay = dayFormatter.string(from: sevenDayStart)
@@ -342,19 +350,20 @@ struct LocalCodexUsageReader: Sendable {
             }
         }
         let missingForkParents = forkParentIDByPath.values.filter { sourcesByThreadID[$0] == nil }
-        guard missingForkParents.isEmpty else {
-            diagnostics.error(
-                "fork 父会话缺失，已隐藏本机统计；缺失父会话=\(Set(missingForkParents).count)",
+        if !missingForkParents.isEmpty {
+            diagnostics.warning(
+                "fork 父会话缺失，按子会话原始事件继续统计；缺失父会话=\(Set(missingForkParents).count)",
                 category: Self.diagnosticCategory
             )
-            return nil
         }
+        let availableForkParentIDByPath = forkParentIDByPath.filter { sourcesByThreadID[$0.value] != nil }
         let forkEventPaths = Set(
-            forkParentIDByPath.flatMap { childPath, parentID in
+            availableForkParentIDByPath.flatMap { childPath, parentID in
                 [childPath, sourcesByThreadID[parentID]!.rolloutPath]
             }
         )
         var incompletePaths: [String] = []
+        var sqliteLifetimeFallbackPaths = Set<String>()
 
         for source in sources {
             let url = URL(fileURLWithPath: source.rolloutPath)
@@ -365,37 +374,37 @@ struct LocalCodexUsageReader: Sendable {
                 historyDay: historyDay,
                 dayFormatter: dayFormatter
             ) else {
-                if source.tokensUsed > 0 { incompletePaths.append(source.rolloutPath) }
+                if source.tokensUsed > 0 {
+                    incompletePaths.append(source.rolloutPath)
+                    sqliteLifetimeFallbackPaths.insert(source.rolloutPath)
+                }
                 continue
             }
             cache.sessions[source.rolloutPath] = entry
             if source.tokensUsed > 0, entry.latestTotal == nil {
                 incompletePaths.append(source.rolloutPath)
+                sqliteLifetimeFallbackPaths.insert(source.rolloutPath)
             }
         }
         saveUsageCache(cache)
-        guard incompletePaths.isEmpty else {
-            diagnostics.error(
-                "rollout 用量事件不完整，已隐藏本机统计；缺失会话=\(incompletePaths.count)",
+        if !incompletePaths.isEmpty {
+            diagnostics.warning(
+                "rollout 用量事件不完整，按可解析事件继续统计；缺失会话=\(incompletePaths.count)",
                 category: Self.diagnosticCategory
             )
-            return nil
         }
-        guard let forkExclusions = Self.forkExclusions(
-            parentIDByChildPath: forkParentIDByPath,
+        let incompleteForkPaths = sqliteLifetimeFallbackPaths.intersection(forkParentIDByPath.keys)
+        if !incompleteForkPaths.isEmpty {
+            diagnostics.warning(
+                "fork rollout 不完整，累计仅采用已解析事件；会话=\(incompleteForkPaths.count)",
+                category: Self.diagnosticCategory
+            )
+        }
+        let forkExclusions = Self.forkExclusions(
+            parentIDByChildPath: availableForkParentIDByPath,
             sourcesByThreadID: sourcesByThreadID,
             cache: cache
-        ) else {
-            diagnostics.error("fork 事件序列不完整，已隐藏本机统计", category: Self.diagnosticCategory)
-            return nil
-        }
-        let excludedForkTokens = forkExclusions.values.reduce(Int64(0)) { $0 + $1.lifetimeUsage.total }
-        if excludedForkTokens > 0 {
-            diagnostics.info(
-                "已排除 fork 继承片段；会话=\(forkExclusions.count)；Token=\(excludedForkTokens)",
-                category: Self.diagnosticCategory
-            )
-        }
+        )
 
         var daily: [String: SessionTokenUsage] = [:]
         var dailyCosts: [String: Double] = [:]
@@ -408,9 +417,19 @@ struct LocalCodexUsageReader: Sendable {
         var lifetimeTokens: Int64 = 0
 
         for source in sources {
-            guard let entry = cache.sessions[source.rolloutPath] else { continue }
+            let entry = cache.sessions[source.rolloutPath]
             let exclusion = forkExclusions[source.rolloutPath] ?? .zero
-            lifetimeTokens += entry.lifetimeUsage.subtracting(exclusion.lifetimeUsage).total
+            // SQLite 只有会话总量，没有逐日拆分；rollout 不完整时只兜底累计值，时间趋势仍使用可解析事件。
+            if sqliteLifetimeFallbackPaths.contains(source.rolloutPath) {
+                if incompleteForkPaths.contains(source.rolloutPath) {
+                    lifetimeTokens += entry?.lifetimeUsage.subtracting(exclusion.lifetimeUsage).total ?? 0
+                } else {
+                    lifetimeTokens += source.tokensUsed
+                }
+            } else if let entry {
+                lifetimeTokens += entry.lifetimeUsage.subtracting(exclusion.lifetimeUsage).total
+            }
+            guard let entry else { continue }
             var sourceSevenDayUsage = SessionTokenUsage.zero
             var sourceMonthUsage = SessionTokenUsage.zero
             var sourceMonthCost = 0.0
@@ -475,7 +494,8 @@ struct LocalCodexUsageReader: Sendable {
             lifetimeTokens: lifetimeTokens,
             projects: projectRows,
             dailyRows: dailyRows,
-            monthCost: trustedMonthCost
+            monthCost: trustedMonthCost,
+            hasIncompleteUsage: !incompletePaths.isEmpty
         )
     }
 
@@ -688,13 +708,13 @@ struct LocalCodexUsageReader: Sendable {
         parentIDByChildPath: [String: String],
         sourcesByThreadID: [String: UsageSourceRow],
         cache: LocalUsageCache
-    ) -> [String: SessionUsageExclusion]? {
+    ) -> [String: SessionUsageExclusion] {
         var result: [String: SessionUsageExclusion] = [:]
         for (childPath, parentID) in parentIDByChildPath {
             guard let parentPath = sourcesByThreadID[parentID]?.rolloutPath,
                   let child = cache.sessions[childPath], child.collectsEvents,
                   let parent = cache.sessions[parentPath], parent.collectsEvents
-            else { return nil }
+            else { continue }
             let prefixLength = inheritedPrefixLength(child: child.events, parent: parent.events)
             guard prefixLength > 0 else { continue }
             var exclusion = SessionUsageExclusion(prefixLength: prefixLength)
@@ -1293,6 +1313,7 @@ private struct LocalUsageAggregation {
     let projects: [ProjectRow]
     let dailyRows: [DailyUsageRow]
     let monthCost: LocalCodexCostSummary?
+    let hasIncompleteUsage: Bool
 }
 
 /// 保存已核对的 OpenAI 模型历史价格；未知模型拒绝猜价。
