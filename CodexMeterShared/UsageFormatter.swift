@@ -147,7 +147,7 @@ public struct UsageFormatter: Sendable {
             return "\(tokens)"
         }
         if absoluteTokens >= 100_000_000 {
-            return decimal(Double(tokens) / 100_000_000) + "亿"
+            return decimal(Double(tokens) / 100_000_000, fractionDigits: 2) + "亿"
         }
         if absoluteTokens >= 10_000 {
             return decimal(Double(tokens) / 10_000) + "万"
@@ -204,9 +204,14 @@ public struct UsageFormatter: Sendable {
         }
     }
 
-    private func decimal(_ value: Double) -> String {
-        String(format: "%.1f", locale: Locale(identifier: localeIdentifier), arguments: [value])
-            .replacingOccurrences(of: ".0", with: "")
+    /// 按指定小数位格式化缩写数值；一位小数时保留原有的整数去零行为。
+    private func decimal(_ value: Double, fractionDigits: Int = 1) -> String {
+        let formatted = String(
+            format: "%.\(fractionDigits)f",
+            locale: Locale(identifier: localeIdentifier),
+            arguments: [value]
+        )
+        return fractionDigits == 1 ? formatted.replacingOccurrences(of: ".0", with: "") : formatted
     }
 
     /// 使用构造时捕获的地区和时区格式化日期，避免自动时区变化让同一快照前后显示不一致。

@@ -62,6 +62,14 @@ final class UsageFormatterTests: XCTestCase {
         XCTAssertEqual(formatter.reasoningEffort("xhigh"), "Extra High")
     }
 
+    /// 验证中文亿级 Token 始终保留两位小数，避免近似数造成较大视觉偏差。
+    func testChineseHundredMillionTokenCountKeepsTwoDecimals() {
+        let formatter = UsageFormatter(locale: Locale(identifier: "zh_CN"), timeZone: .gmt)
+
+        XCTAssertEqual(formatter.tokenCount(212_082_143), "2.12亿")
+        XCTAssertEqual(formatter.tokenCount(100_000_000), "1.00亿")
+    }
+
     func testCreditsStatusCoversUnlimitedBalanceAndNoCredits() {
         let formatter = UsageFormatter(locale: Locale(identifier: "en_US_POSIX"), timeZone: .gmt)
 

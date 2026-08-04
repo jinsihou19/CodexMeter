@@ -175,12 +175,8 @@ struct LocalCodexUsageReader: Sendable {
             "开始读取本机统计；应用版本=\(Self.applicationVersionDescription())",
             category: Self.diagnosticCategory
         )
-        let pricingCatalog = LocalCodexPricingCatalog.loadCached()
-        Task.detached(priority: .background) {
-            await LocalCodexPricingCatalog.refreshIfNeeded()
-        }
         let snapshot = await Task.detached(priority: .utility) {
-            loadSynchronously(pricingCatalog: pricingCatalog)
+            loadSynchronously()
         }.value
         if snapshot == nil {
             diagnostics.error("本机统计读取结束：未生成可用快照", category: Self.diagnosticCategory)
@@ -188,8 +184,8 @@ struct LocalCodexUsageReader: Sendable {
         return snapshot
     }
 
-    /// 执行聚合查询并组装内存快照；动态价格缺失时使用内置官方价格兜底。
-    private func loadSynchronously(pricingCatalog: LocalCodexPricingCatalog?) -> LocalCodexUsageSnapshot? {
+    /// 执行聚合查询并组装内存快照；价格仅使用带生效日的内置官方口径。
+    private func loadSynchronously() -> LocalCodexUsageSnapshot? {
         guard let databaseURL else {
             let candidates = Self.databaseCandidates().map(\.path).joined(separator: "；")
             diagnostics.error("未找到 Codex 状态库；已检查=\(candidates)", category: Self.diagnosticCategory)
@@ -233,8 +229,7 @@ struct LocalCodexUsageReader: Sendable {
             sevenDayStart: sevenDayStart,
             todayStart: todayStart,
             monthStart: monthStart,
-            calendar: calendar,
-            catalog: pricingCatalog
+            calendar: calendar
         ) else { return nil }
         guard let openRows: [TaskRow] = rows(
             for: openTasksSQL(todayStart: todayStart),
@@ -328,8 +323,7 @@ struct LocalCodexUsageReader: Sendable {
         sevenDayStart: Date,
         todayStart: Date,
         monthStart: Date,
-        calendar: Calendar,
-        catalog: LocalCodexPricingCatalog?
+        calendar: Calendar
     ) -> LocalUsageAggregation? {
         let dayFormatter = Self.dayFormatter(calendar: calendar)
         let historyDay = dayFormatter.string(from: historyStart)
@@ -417,19 +411,25 @@ struct LocalCodexUsageReader: Sendable {
             guard let entry = cache.sessions[source.rolloutPath] else { continue }
             let exclusion = forkExclusions[source.rolloutPath] ?? .zero
             lifetimeTokens += entry.lifetimeUsage.subtracting(exclusion.lifetimeUsage).total
-            let price = catalog?.price(for: source.model) ?? LocalCodexPricingCatalog.fallbackPrice(for: source.model)
             var sourceSevenDayUsage = SessionTokenUsage.zero
             var sourceMonthUsage = SessionTokenUsage.zero
-            for (day, usage) in entry.dailyUsage where day >= historyDay && day <= today {
-                let effectiveUsage = usage.subtracting(exclusion.dailyUsage[day] ?? .zero)
-                daily[day, default: .zero].add(effectiveUsage)
+            var sourceMonthCost = 0.0
+            var sourceMonthFullyPriced = true
+            for event in entry.recentEvents where event.sequence >= exclusion.prefixLength {
+                guard let day = event.day, day >= historyDay, day <= today else { continue }
+                daily[day, default: .zero].add(event.usage)
+                let model = event.model ?? source.model
+                let price = LocalCodexPricing.price(for: model, on: day)
                 if let price {
-                    dailyCosts[day, default: 0] += Self.estimatedCost(for: effectiveUsage, price: price)
-                } else if effectiveUsage.total > 0 {
+                    let cost = Self.estimatedCost(for: event.usage, price: price)
+                    dailyCosts[day, default: 0] += cost
+                    if day >= monthDay { sourceMonthCost += cost }
+                } else if event.usage.total > 0 {
                     unpricedDays.insert(day)
+                    if day >= monthDay { sourceMonthFullyPriced = false }
                 }
-                if day >= sevenDay { sourceSevenDayUsage.add(effectiveUsage) }
-                if day >= monthDay { sourceMonthUsage.add(effectiveUsage) }
+                if day >= sevenDay { sourceSevenDayUsage.add(event.usage) }
+                if day >= monthDay { sourceMonthUsage.add(event.usage) }
             }
             if sourceSevenDayUsage.total > 0 {
                 projects[source.cwd, default: .init()].add(
@@ -440,9 +440,9 @@ struct LocalCodexUsageReader: Sendable {
             if sourceMonthUsage.total > 0 {
                 monthSessionCount += 1
                 monthUsage.add(sourceMonthUsage)
-                if let price {
+                if sourceMonthFullyPriced {
                     pricedMonthSessionCount += 1
-                    monthCost += Self.estimatedCost(for: sourceMonthUsage, price: price)
+                    monthCost += sourceMonthCost
                 }
             }
         }
@@ -521,7 +521,7 @@ struct LocalCodexUsageReader: Sendable {
         // ponytail: Codex rollout 当前为追加写；若未来支持同路径原地改写，应增加文件标识并强制重建缓存。
         if entry.readOffset > fileSize { entry = SessionUsageCache(collectsEvents: collectEvents) }
         guard entry.readOffset < fileSize else {
-            entry.dailyUsage = entry.dailyUsage.filter { $0.key >= historyDay }
+            entry.recentEvents = entry.recentEvents.filter { $0.day.map { $0 >= historyDay } == true }
             return entry
         }
         guard (try? handle.seek(toOffset: entry.readOffset)) != nil else { return nil }
@@ -539,7 +539,8 @@ struct LocalCodexUsageReader: Sendable {
             {
                 if newline > lineStart {
                     let line = pending[lineStart..<newline]
-                    if String(decoding: line.prefix(512), as: UTF8.self).contains("\"token_count\"") {
+                    let prefix = String(decoding: line.prefix(512), as: UTF8.self)
+                    if prefix.contains("\"token_count\"") || prefix.contains("\"turn_context\"") {
                         parseUsageLine(
                             Data(line),
                             entry: &entry,
@@ -567,11 +568,11 @@ struct LocalCodexUsageReader: Sendable {
             committedOffset += UInt64(pending.count)
         }
         entry.readOffset = committedOffset
-        entry.dailyUsage = entry.dailyUsage.filter { $0.key >= historyDay }
+        entry.recentEvents = entry.recentEvents.filter { $0.day.map { $0 >= historyDay } == true }
         return entry
     }
 
-    /// 解析单条 token_count；只有累计高水位实际增长时才接受事件增量，避免重复快照被再次计费。
+    /// 解析模型上下文和 token_count；每个增量绑定当时模型，避免用线程最终模型回填历史费用。
     private static func parseUsageLine(
         _ data: Data,
         entry: inout SessionUsageCache,
@@ -581,9 +582,14 @@ struct LocalCodexUsageReader: Sendable {
         timestampFormatter: ISO8601DateFormatter
     ) {
         guard let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              object["type"] as? String == "event_msg",
+              let payload = object["payload"] as? [String: Any]
+        else { return }
+        if object["type"] as? String == "turn_context" {
+            entry.activeModel = (payload["model"] as? String).flatMap(normalizedModelName)
+            return
+        }
+        guard object["type"] as? String == "event_msg",
               let timestamp = object["timestamp"] as? String,
-              let payload = object["payload"] as? [String: Any],
               payload["type"] as? String == "token_count",
               let info = payload["info"] as? [String: Any]
         else { return }
@@ -598,12 +604,24 @@ struct LocalCodexUsageReader: Sendable {
         entry.lifetimeUsage.add(delta)
         let date = fractionalTimestampFormatter.date(from: timestamp) ?? timestampFormatter.date(from: timestamp)
         let day = date.map(dayFormatter.string(from:))
+        let event = SessionUsageEvent(
+            identity: identity,
+            day: day,
+            model: entry.activeModel,
+            usage: delta,
+            sequence: entry.nextEventSequence
+        )
+        entry.nextEventSequence += 1
         if entry.collectsEvents {
-            entry.events.append(SessionUsageEvent(identity: identity, day: day, usage: delta))
+            entry.events.append(event)
         }
-        guard let day else { return }
-        guard day >= historyDay else { return }
-        entry.dailyUsage[day, default: .zero].add(delta)
+        if day.map({ $0 >= historyDay }) == true { entry.recentEvents.append(event) }
+    }
+
+    /// 清理日志模型名中的空白；空值保留为 nil，后续才能明确回退到 SQLite 线程模型。
+    private static func normalizedModelName(_ raw: String) -> String? {
+        let normalized = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        return normalized.isEmpty ? nil : normalized
     }
 
     /// 按累计高水位生成可信增量；计数器重置时保留新周期首个事件，累计未增长时拒绝 last_token_usage。
@@ -679,12 +697,9 @@ struct LocalCodexUsageReader: Sendable {
                 prefixLength += 1
             }
             guard prefixLength > 0 else { continue }
-            var exclusion = SessionUsageExclusion.zero
+            var exclusion = SessionUsageExclusion(prefixLength: prefixLength)
             for event in child.events.prefix(prefixLength) {
                 exclusion.lifetimeUsage.add(event.usage)
-                if let day = event.day {
-                    exclusion.dailyUsage[day, default: .zero].add(event.usage)
-                }
             }
             result[childPath] = exclusion
         }
@@ -701,16 +716,22 @@ struct LocalCodexUsageReader: Sendable {
         return formatter
     }
 
-    /// 按标准单价计算某次 token 增量的 API 等效金额；累计事件无法可靠判定长上下文阈值。
+    /// 按事件级单价计算 API 等效金额；输入超阈值时整个请求使用长上下文价格。
     private static func estimatedCost(
         for tokens: SessionTokenUsage,
-        price: LocalCodexPricingCatalog.Price
+        price: LocalCodexPricing.Price
     ) -> Double {
         let billableCached = min(tokens.cachedInput, tokens.input)
         let uncached = max(0, tokens.input - billableCached)
-        return Double(uncached) / 1_000_000 * price.inputPerMillion
-            + Double(billableCached) / 1_000_000 * price.cachedInputPerMillion
-            + Double(tokens.output) / 1_000_000 * price.outputPerMillion
+        let usesLongContextPrice = price.thresholdTokens.map { tokens.input > $0 } == true
+        let inputPrice = usesLongContextPrice ? price.inputAboveThreshold ?? price.inputPerMillion : price.inputPerMillion
+        let cachedPrice = usesLongContextPrice
+            ? price.cachedInputAboveThreshold ?? price.cachedInputPerMillion
+            : price.cachedInputPerMillion
+        let outputPrice = usesLongContextPrice ? price.outputAboveThreshold ?? price.outputPerMillion : price.outputPerMillion
+        return Double(uncached) / 1_000_000 * inputPrice
+            + Double(billableCached) / 1_000_000 * cachedPrice
+            + Double(tokens.output) / 1_000_000 * outputPrice
     }
 
     /// 将 JSON 数字安全转换为非负 Int64。
@@ -1107,7 +1128,9 @@ private struct SessionTokenEventIdentity: Codable, Equatable, Sendable {
 private struct SessionUsageEvent: Codable, Sendable {
     let identity: SessionTokenEventIdentity
     let day: String?
+    let model: String?
     let usage: SessionTokenUsage
+    let sequence: Int
 }
 
 /// 描述单个事件或时间段的 token 拆分；总量优先采用事件规范字段，旧日志缺失时回退为输入加输出。
@@ -1196,16 +1219,18 @@ private struct SessionTokenUsage: Codable, Sendable {
     }
 }
 
-/// 单个 rollout 的增量扫描进度和近半年日聚合，避免每次刷新重读大型历史日志。
+/// 单个 rollout 的增量扫描进度和近半年事件，避免每次刷新重读大型历史日志。
 private struct SessionUsageCache: Codable, Sendable {
     var readOffset: UInt64 = 0
     var latestTotal: SessionTokenUsage?
-    var dailyUsage: [String: SessionTokenUsage] = [:]
     var lifetimeUsage = SessionTokenUsage.zero
+    var activeModel: String?
+    var nextEventSequence = 0
+    var recentEvents: [SessionUsageEvent] = []
     var collectsEvents: Bool
     var events: [SessionUsageEvent] = []
 
-    /// 新缓存默认不保存事件序列；只有 fork 关系涉及的会话才开启，控制缓存体积。
+    /// 新缓存只为 fork 关系保存全量事件；普通会话仅保留近半年计价事件。
     init(collectsEvents: Bool = false) {
         self.collectsEvents = collectsEvents
     }
@@ -1213,7 +1238,7 @@ private struct SessionUsageCache: Codable, Sendable {
 
 /// 所有 rollout 的持久化增量缓存；时区改变时必须整体重建日期键。
 private struct LocalUsageCache: Codable, Sendable {
-    static let currentVersion = 4
+    static let currentVersion = 5
 
     var version = currentVersion
     let timeZoneIdentifier: String
@@ -1222,10 +1247,10 @@ private struct LocalUsageCache: Codable, Sendable {
 
 /// 汇总一个 fork 子会话应排除的继承用量，供累计、分日、项目和费用共用同一口径。
 private struct SessionUsageExclusion {
-    static let zero = SessionUsageExclusion()
+    static let zero = SessionUsageExclusion(prefixLength: 0)
 
+    let prefixLength: Int
     var lifetimeUsage = SessionTokenUsage.zero
-    var dailyUsage: [String: SessionTokenUsage] = [:]
 }
 
 /// 项目近七天用量的内部累加器，线程集合避免重复路径被多算。
@@ -1250,10 +1275,10 @@ private struct LocalUsageAggregation {
     let monthCost: LocalCodexCostSummary?
 }
 
-/// 保存 models.dev 的 OpenAI 模型价格快照，并在网络不可用时提供小型内置兜底表。
-private struct LocalCodexPricingCatalog: Codable, Sendable {
+/// 保存已核对的 OpenAI 模型历史价格；未知模型拒绝猜价。
+private enum LocalCodexPricing {
     /// 描述每百万 token 的美元单价，可选保存长上下文价格。
-    struct Price: Codable, Sendable {
+    struct Price: Sendable {
         let inputPerMillion: Double
         let cachedInputPerMillion: Double
         let outputPerMillion: Double
@@ -1263,85 +1288,23 @@ private struct LocalCodexPricingCatalog: Codable, Sendable {
         let outputAboveThreshold: Double?
     }
 
-    private struct CacheArtifact: Codable {
-        let fetchedAt: Date
-        let catalog: LocalCodexPricingCatalog
-    }
-
-    let prices: [String: Price]
-
-    /// 按日志模型名归一化查价，优先精确匹配，再兼容日期后缀。
-    func price(for model: String) -> Price? {
-        let normalized = Self.normalizedModel(model)
-        if let exact = prices[normalized] { return exact }
-        return prices.keys
-            .filter { normalized.hasPrefix($0 + "-") || normalized.contains($0) }
-            .sorted { $0.count > $1.count }
-            .compactMap { prices[$0] }
-            .first
-    }
-
-    /// 读取 24 小时内的本地价格缓存，过期数据仍可作为本次刷新的兜底。
-    static func loadCached() -> LocalCodexPricingCatalog? {
-        guard let data = try? Data(contentsOf: cacheURL()),
-              let artifact = try? JSONDecoder().decode(CacheArtifact.self, from: data)
-        else { return nil }
-        return artifact.catalog
-    }
-
-    /// 缓存超过 24 小时时从 models.dev 刷新；任何失败都静默保留旧数据。
-    static func refreshIfNeeded(now: Date = Date()) async {
-        let url = cacheURL()
-        if let data = try? Data(contentsOf: url),
-           let artifact = try? JSONDecoder().decode(CacheArtifact.self, from: data),
-           now.timeIntervalSince(artifact.fetchedAt) < 24 * 60 * 60 {
-            return
-        }
-        guard let endpoint = URL(string: "https://models.dev/api.json"),
-              let (data, response) = try? await URLSession.shared.data(from: endpoint),
-              (response as? HTTPURLResponse).map({ (200..<300).contains($0.statusCode) }) == true,
-              let catalog = parseModelsDev(data), !catalog.prices.isEmpty
-        else { return }
-
-        let artifact = CacheArtifact(fetchedAt: now, catalog: catalog)
-        guard let encoded = try? JSONEncoder().encode(artifact) else { return }
-        try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
-        try? encoded.write(to: url, options: .atomic)
-    }
-
-    /// 解析 models.dev 顶层 provider 映射，只保留 OpenAI 中具备输入和输出价的模型。
-    private static func parseModelsDev(_ data: Data) -> LocalCodexPricingCatalog? {
-        guard let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
-        let providers = root["providers"] as? [String: Any] ?? root
-        guard let openAI = providers.first(where: { $0.key.lowercased() == "openai" })?.value as? [String: Any],
-              let models = openAI["models"] as? [String: Any]
-        else { return nil }
-
-        var prices: [String: Price] = [:]
-        for (mapKey, rawModel) in models {
-            guard let model = rawModel as? [String: Any],
-                  let cost = model["cost"] as? [String: Any],
-                  let input = number(cost["input"]),
-                  let output = number(cost["output"])
-            else { continue }
-            let id = (model["id"] as? String) ?? mapKey
-            let longContext = cost["context_over_200k"] as? [String: Any]
-            prices[normalizedModel(id)] = Price(
-                inputPerMillion: input,
-                cachedInputPerMillion: number(cost["cache_read"]) ?? input,
-                outputPerMillion: output,
-                thresholdTokens: longContext == nil ? nil : 200_000,
-                inputAboveThreshold: number(longContext?["input"]),
-                cachedInputAboveThreshold: number(longContext?["cache_read"]),
-                outputAboveThreshold: number(longContext?["output"])
-            )
-        }
-        return LocalCodexPricingCatalog(prices: prices)
-    }
-
-    /// 为首次启动和断网场景提供已知 OpenAI 标准价；未知模型不猜测费用。
-    static func fallbackPrice(for model: String) -> Price? {
+    /// 为已知模型提供按生效日区分的 OpenAI 官方价；未知模型不猜测费用。
+    static func price(for model: String, on day: String? = nil) -> Price? {
         let normalized = normalizedModel(model)
+        let usesReducedGPT56Price = (day ?? "9999-12-31") >= "2026-07-30"
+        if normalized == "gpt-5.6" || normalized.hasPrefix("gpt-5.6-sol") {
+            return price(input: 5, cachedInput: 0.5, output: 30, longContextMultiplier: (2, 2, 1.5))
+        }
+        if normalized == "gpt-5.6-terra" || normalized.hasPrefix("gpt-5.6-terra-") {
+            return usesReducedGPT56Price
+                ? price(input: 2, cachedInput: 0.2, output: 12, longContextMultiplier: (2, 2, 1.5))
+                : price(input: 2.5, cachedInput: 0.25, output: 15, longContextMultiplier: (2, 2, 1.5))
+        }
+        if normalized == "gpt-5.6-luna" || normalized.hasPrefix("gpt-5.6-luna-") {
+            return usesReducedGPT56Price
+                ? price(input: 0.2, cachedInput: 0.02, output: 1.2, longContextMultiplier: (2, 2, 1.5))
+                : price(input: 1, cachedInput: 0.1, output: 6, longContextMultiplier: (2, 2, 1.5))
+        }
         let table: [(String, Double, Double, Double)] = [
             ("gpt-5.5-pro", 30, 30, 180),
             ("gpt-5.5", 5, 0.5, 30),
@@ -1359,14 +1322,24 @@ private struct LocalCodexPricingCatalog: Codable, Sendable {
         guard let match = table.first(where: { normalized == $0.0 || normalized.hasPrefix($0.0 + "-") }) else {
             return nil
         }
-        return Price(
-            inputPerMillion: match.1,
-            cachedInputPerMillion: match.2,
-            outputPerMillion: match.3,
-            thresholdTokens: nil,
-            inputAboveThreshold: nil,
-            cachedInputAboveThreshold: nil,
-            outputAboveThreshold: nil
+        return price(input: match.1, cachedInput: match.2, output: match.3)
+    }
+
+    /// 构建标准或长上下文价格；GPT-5.6 的阈值为单次输入 272K token。
+    private static func price(
+        input: Double,
+        cachedInput: Double,
+        output: Double,
+        longContextMultiplier: (input: Double, cachedInput: Double, output: Double)? = nil
+    ) -> Price {
+        Price(
+            inputPerMillion: input,
+            cachedInputPerMillion: cachedInput,
+            outputPerMillion: output,
+            thresholdTokens: longContextMultiplier == nil ? nil : 272_000,
+            inputAboveThreshold: longContextMultiplier.map { input * $0.input },
+            cachedInputAboveThreshold: longContextMultiplier.map { cachedInput * $0.cachedInput },
+            outputAboveThreshold: longContextMultiplier.map { output * $0.output }
         )
     }
 
@@ -1376,15 +1349,4 @@ private struct LocalCodexPricingCatalog: Codable, Sendable {
         return lowered.hasPrefix("openai/") ? String(lowered.dropFirst("openai/".count)) : lowered
     }
 
-    /// 返回 models.dev 价格缓存路径，不与 Widget 共享原始目录。
-    private static func cacheURL() -> URL {
-        let root = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first
-            ?? FileManager.default.temporaryDirectory
-        return root.appendingPathComponent("CodexUsage/model-pricing/models-dev-v1.json")
-    }
-
-    /// 将 JSON 价格字段转换为 Double。
-    private static func number(_ value: Any?) -> Double? {
-        (value as? NSNumber)?.doubleValue
-    }
 }

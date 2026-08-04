@@ -92,6 +92,80 @@ final class LocalCodexUsageReaderTests: XCTestCase {
         XCTAssertEqual(refreshedSnapshot.summary.lifetimeTokens, 1_122_000)
     }
 
+    /// 验证费用按事件当时的模型、历史生效价和长上下文阈值计算，增量刷新也保留模型上下文。
+    func testReaderPricesEachTokenEventWithHistoricalModelContext() async throws {
+        let now = try XCTUnwrap(ISO8601DateFormatter().date(from: "2026-07-30T12:00:00Z"))
+        let databaseURL = try temporaryFile(named: "state_5.sqlite", contents: Data())
+        let sessionURL = try temporaryFile(
+            named: "rollout-priced.jsonl",
+            contents: Data("""
+            {"timestamp":"2026-07-28T01:00:00Z","type":"turn_context","payload":{"model":"gpt-5.6-terra"}}
+            {"timestamp":"2026-07-28T01:01:00Z","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":300000,"cached_input_tokens":200000,"output_tokens":100000,"total_tokens":400000},"last_token_usage":{"input_tokens":300000,"cached_input_tokens":200000,"output_tokens":100000,"total_tokens":400000}}}}
+            """.utf8)
+        )
+        let reader = LocalCodexUsageReader(
+            now: { now },
+            databaseURL: databaseURL,
+            automationFiles: [],
+            diagnostics: testDiagnosticLog(),
+            query: { _, sql in
+                if sql.contains("AS threadCount") {
+                    return Self.json([["threadCount": 1, "lastUpdatedAt": now.timeIntervalSince1970]])
+                }
+                if sql.contains("AS rolloutPath") {
+                    return Self.json([[
+                        "threadID": "priced",
+                        "rolloutPath": sessionURL.path,
+                        "cwd": "/Users/test/Pricing",
+                        "model": "gpt-5.4",
+                        "tokensUsed": 510_000
+                    ]])
+                }
+                return Self.json([])
+            }
+        )
+
+        let firstLoadedSnapshot = await reader.load()
+        let firstSnapshot = try XCTUnwrap(firstLoadedSnapshot)
+        XCTAssertEqual(firstSnapshot.summary.lifetimeTokens, 400_000)
+        XCTAssertEqual(firstSnapshot.summary.monthCost?.estimatedCostUSD ?? 0, 2.85, accuracy: 0.000_001)
+        XCTAssertEqual(
+            firstSnapshot.summary.dailyBuckets?.first(where: { $0.id == "2026-07-28" })?.estimatedCostUSD ?? 0,
+            2.85,
+            accuracy: 0.000_001
+        )
+
+        let handle = try FileHandle(forWritingTo: sessionURL)
+        defer { try? handle.close() }
+        try handle.seekToEnd()
+        try handle.write(contentsOf: Data("""
+
+        {"timestamp":"2026-07-30T01:01:00Z","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":400000,"cached_input_tokens":280000,"output_tokens":110000,"total_tokens":510000},"last_token_usage":{"input_tokens":100000,"cached_input_tokens":80000,"output_tokens":10000,"total_tokens":110000}}}}
+        """.utf8))
+
+        let refreshedLoadedSnapshot = await reader.load()
+        let refreshedSnapshot = try XCTUnwrap(refreshedLoadedSnapshot)
+        XCTAssertEqual(refreshedSnapshot.summary.todayTokens, 110_000)
+        XCTAssertEqual(refreshedSnapshot.summary.lifetimeTokens, 510_000)
+        XCTAssertEqual(refreshedSnapshot.summary.monthCost?.estimatedCostUSD ?? 0, 3.026, accuracy: 0.000_001)
+        XCTAssertEqual(
+            refreshedSnapshot.summary.dailyBuckets?.first(where: { $0.id == "2026-07-30" })?.estimatedCostUSD ?? 0,
+            0.176,
+            accuracy: 0.000_001
+        )
+
+        try handle.write(contentsOf: Data("""
+
+        {"timestamp":"2026-07-30T02:00:00Z","type":"turn_context","payload":{"model":"future-unknown"}}
+        {"timestamp":"2026-07-30T02:01:00Z","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":410000,"cached_input_tokens":289000,"output_tokens":111000,"total_tokens":521000},"last_token_usage":{"input_tokens":10000,"cached_input_tokens":9000,"output_tokens":1000,"total_tokens":11000}}}}
+        """.utf8))
+
+        let unknownLoadedSnapshot = await reader.load()
+        let unknownSnapshot = try XCTUnwrap(unknownLoadedSnapshot)
+        XCTAssertNil(unknownSnapshot.summary.monthCost)
+        XCTAssertNil(unknownSnapshot.summary.dailyBuckets?.first(where: { $0.id == "2026-07-30" })?.estimatedCostUSD)
+    }
+
     /// 验证数据库不存在或 sqlite3 查询失败时返回 nil，并留下可供设置页查看的诊断记录。
     func testReaderReturnsNilAndLogsWhyDatabaseIsUnavailable() async throws {
         let logURL = FileManager.default.temporaryDirectory
