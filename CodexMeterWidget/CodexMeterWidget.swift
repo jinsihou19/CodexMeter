@@ -840,6 +840,7 @@ private struct WidgetMetric: View {
             WidgetUsageProgressBar(
                 value: display.progressValue,
                 color: display.tone.statusBarColor(settings: settings),
+                segmentCount: display.progressSegmentCount,
                 family: family
             )
         }
@@ -850,6 +851,7 @@ private struct WidgetMetric: View {
 private struct WidgetUsageProgressBar: View {
     let value: Double
     let color: Color
+    let segmentCount: Int
     let family: WidgetFamily
 
     private var progress: CGFloat {
@@ -864,15 +866,26 @@ private struct WidgetUsageProgressBar: View {
         GeometryReader { proxy in
             let width = progress > 0 ? max(proxy.size.width * progress, height) : 0
             ZStack(alignment: .leading) {
-                Capsule()
-                    .fill(Color.secondary.opacity(0.34))
-                Capsule()
-                    .fill(color)
-                    .frame(width: width)
+                segments(color: Color.secondary.opacity(0.34))
+                if width > 0 {
+                    segments(color: color)
+                        .mask(alignment: .leading) {
+                            Capsule().frame(width: width)
+                        }
+                }
             }
         }
         .frame(height: height)
         .widgetAccentable(false)
+    }
+
+    /// 按窗口时长生成等宽胶囊，和弹窗额度条保持一致的 2pt 间距。
+    private func segments(color: Color) -> some View {
+        HStack(spacing: 2) {
+            ForEach(0..<max(segmentCount, 1), id: \.self) { _ in
+                Capsule().fill(color)
+            }
+        }
     }
 }
 

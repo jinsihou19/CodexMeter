@@ -498,7 +498,7 @@ private struct QuotaSummaryGrid: View {
             paceDisplay: paceDisplay(id: id, title: title, window: window),
             tone: UsageRemainingTone(remainingPercent: window.remainingPercent),
             settings: settings,
-            workdayMarkers: weeklyWorkdayMarkerPercents(
+            workdayMarkers: usageProgressSegmentPercents(
                 workDays: settings.weeklyProgressWorkDays,
                 windowDurationMins: window.windowDurationMins
             ),
@@ -717,9 +717,7 @@ private struct WorkdayMarkedProgressView: View {
 
         context.clip(to: Path(rect))
 
-        let trackPath = Path { path in
-            path.addRoundedRect(in: rect, cornerSize: cornerSize)
-        }
+        let trackPath = segmentPath(size: size, scale: scale)
         context.fill(trackPath, with: .color(Color.primary.opacity(0.10)))
 
         if fillWidth > 0 {
@@ -732,19 +730,10 @@ private struct WorkdayMarkedProgressView: View {
             let fillPath = Path { path in
                 path.addRoundedRect(in: fillRect, cornerSize: cornerSize)
             }
-            context.fill(fillPath, with: .color(tint))
-        }
-
-        for marker in markers.map(Self.clampedPercent).filter({ $0 > 0 && $0 < 100 }) {
-            let x = size.width * marker / 100
-            let markerRect = Self.markerRect(x: x, size: size, scale: scale)
-            let markerPath = Path { path in
-                path.addRoundedRect(
-                    in: markerRect,
-                    cornerSize: CGSize(width: markerRect.width / 2, height: markerRect.width / 2)
-                )
+            context.drawLayer { layer in
+                layer.clip(to: trackPath)
+                layer.fill(fillPath, with: .color(tint))
             }
-            context.fill(markerPath, with: .color(Color.primary.opacity(0.54)))
         }
 
         if let paceMarker {
@@ -757,20 +746,32 @@ private struct WorkdayMarkedProgressView: View {
         }
     }
 
-    /// 刻度线保持像素对齐和窄线，只占进度条中间一段高度。
-    private static func markerRect(x: CGFloat, size: CGSize, scale rawScale: CGFloat) -> CGRect {
+    /// 按工作日分界生成独立胶囊轨道；没有分界时回退为单个完整胶囊。
+    private func segmentPath(size: CGSize, scale rawScale: CGFloat) -> Path {
         let scale = max(rawScale, 1)
-        let width = max(1 / scale, 1)
-        let height = min(size.height, max(1 / scale, size.height * 0.72))
+        let gap: CGFloat = 2
+        let markerBoundaries = markers.map(Self.clampedPercent).filter({ $0 > 0 && $0 < 100 }).sorted()
+        let boundaries = [0] + markerBoundaries + [100]
         let align: (CGFloat) -> CGFloat = { value in
             (value * scale).rounded() / scale
         }
-        return CGRect(
-            x: align(x - width / 2),
-            y: align((size.height - height) / 2),
-            width: width,
-            height: align(height)
-        )
+        return Path { path in
+            for index in 0..<(boundaries.count - 1) {
+                let start = align(
+                    size.width * boundaries[index] / 100 + (index == 0 ? 0 : gap / 2)
+                )
+                let end = align(
+                    size.width * boundaries[index + 1] / 100
+                        - (index == boundaries.count - 2 ? 0 : gap / 2)
+                )
+                guard end > start else { continue }
+                let segmentRect = CGRect(x: start, y: 0, width: end - start, height: size.height)
+                path.addRoundedRect(
+                    in: segmentRect,
+                    cornerSize: CGSize(width: size.height / 2, height: size.height / 2)
+                )
+            }
+        }
     }
 
     private static func clampedPercent(_ value: Double) -> Double {
@@ -1319,7 +1320,7 @@ private struct AdditionalRateLimitView: View {
             paceDisplay: nil,
             tone: UsageRemainingTone(remainingPercent: window.remainingPercent),
             settings: settings,
-            workdayMarkers: weeklyWorkdayMarkerPercents(
+            workdayMarkers: usageProgressSegmentPercents(
                 workDays: settings.weeklyProgressWorkDays,
                 windowDurationMins: window.windowDurationMins
             ),

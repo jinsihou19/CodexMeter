@@ -102,6 +102,15 @@ final class UsageModelsTests: XCTestCase {
         XCTAssertEqual(weeklyWorkdayMarkerPercents(workDays: 5, windowDurationMins: 300), [])
     }
 
+    func testUsageProgressSegmentPercentsCoverShortAndWeeklyWindows() {
+        XCTAssertEqual(usageProgressSegmentPercents(workDays: 5, windowDurationMins: 300), [20, 40, 60, 80])
+        XCTAssertEqual(
+            usageProgressSegmentPercents(workDays: 5, windowDurationMins: 10_080),
+            [20, 40, 60, 80]
+        )
+        XCTAssertEqual(usageProgressSegmentPercents(workDays: 5, windowDurationMins: 60), [])
+    }
+
     func testUsagePaceDisplayabilityRequiresEnoughElapsedWindowProgress() throws {
         let justResetWindow = RateLimitWindow(
             usedPercent: 12,

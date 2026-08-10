@@ -1659,6 +1659,14 @@ public func weeklyWorkdayMarkerPercents(workDays: Int?, windowDurationMins: Int?
     return (1..<workDays).map { Double($0) * 100.0 / Double(workDays) }
 }
 
+/// 生成额度进度条的胶囊分界；5 小时按小时分段，周窗口沿用用户选择的工作日数量。
+public func usageProgressSegmentPercents(workDays: Int?, windowDurationMins: Int?) -> [Double] {
+    if windowDurationMins == 300 {
+        return [20, 40, 60, 80]
+    }
+    return weeklyWorkdayMarkerPercents(workDays: workDays, windowDurationMins: windowDurationMins)
+}
+
 private extension RateLimitSnapshot {
     var paceComparisonPercentWindow: RateLimitWindow? {
         primary ?? secondary
@@ -1679,6 +1687,7 @@ public struct CodexMeterWidgetDisplay: Equatable, Sendable {
         public let paceProjectionText: String
         public let paceTone: UsageRemainingTone
         public let progressValue: Double
+        public let progressSegmentCount: Int
         public let tone: UsageRemainingTone
     }
 
@@ -1779,6 +1788,10 @@ public struct CodexMeterWidgetDisplay: Equatable, Sendable {
             paceProjectionText: paceDisplay?.widgetProjectionText(language: language) ?? "",
             paceTone: paceDisplay?.tone ?? .unavailable,
             progressValue: Double(remainingPercent ?? 0),
+            progressSegmentCount: usageProgressSegmentPercents(
+                workDays: settings.weeklyProgressWorkDays,
+                windowDurationMins: window?.windowDurationMins
+            ).count + 1,
             tone: UsageRemainingTone(remainingPercent: remainingPercent)
         )
     }
