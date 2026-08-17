@@ -58,6 +58,14 @@ public enum AppLanguagePreferenceKeys {
     public static let selectedLanguage = "app.selectedLanguage"
 }
 
+/// Google AI Pro 的 Gemini 独立展示偏好；不与 Codex 的登录、额度和刷新配置共享。
+public enum GeminiModelsPreferenceKeys {
+    public static let isEnabled = "geminiModels.isEnabled"
+    public static let model = "geminiModels.model"
+    public static let showsInPopover = "geminiModels.showsInPopover"
+    public static let showsInMenuBar = "geminiModels.showsInMenuBar"
+}
+
 /// 应用语言沿用系统语言代码；空值表示不覆盖 macOS 的语言选择。
 public enum AppLanguage: String, CaseIterable, Identifiable, Sendable {
     case system = ""
@@ -91,6 +99,105 @@ public enum AppLanguage: String, CaseIterable, Identifiable, Sendable {
     }
 }
 
+/// Google AI Pro 可展示的模型配额组；对应 Antigravity 返回的 Gemini 与 Claude/GPT 两类额度池。
+public enum GeminiModelOption: String, CaseIterable, Identifiable, Sendable {
+    case all = "all"
+    case geminiModels = "gemini-models"
+    case claudeAndGPTModels = "claude-gpt-models"
+
+    public var id: String { rawValue }
+
+    public var title: String {
+        switch self {
+        case .all:
+            return "全部模型"
+        case .geminiModels:
+            return "Gemini Models"
+        case .claudeAndGPTModels:
+            return "Claude and GPT models"
+        }
+    }
+
+    /// 菜单栏空间有限时使用短标题；完整分组名仍在设置页和下拉面板中展示。
+    public var compactTitle: String {
+        switch self {
+        case .all:
+            return "All"
+        case .geminiModels:
+            return "Antigravity"
+        case .claudeAndGPTModels:
+            return "Claude/GPT"
+        }
+    }
+
+    /// 判断配额组是否属于当前选择；组标识优先，标题用于兼容旧版响应。
+    public func matches(group: GeminiQuotaGroup) -> Bool {
+        let normalizedTitle = group.title.lowercased()
+        switch self {
+        case .all:
+            return true
+        case .geminiModels:
+            return group.id == "gemini-models" || normalizedTitle.contains("gemini")
+        case .claudeAndGPTModels:
+            return group.id == "claude-gpt-models"
+                || normalizedTitle.contains("claude")
+                || normalizedTitle.contains("gpt")
+        }
+    }
+}
+
+/// 保存 Google AI Pro 的 Gemini 展示配置；配额读取由主 app 的 Antigravity 客户端独立完成。
+public struct GeminiModelsSettings: Equatable, Sendable {
+    public static let defaultIsEnabled = false
+    public static let defaultModel = GeminiModelOption.all
+    public static let defaultShowsInPopover = true
+    public static let defaultShowsInMenuBar = false
+
+    public let isEnabled: Bool
+    public let model: GeminiModelOption
+    public let showsInPopover: Bool
+    public let showsInMenuBar: Bool
+
+    public init(
+        isEnabled: Bool = Self.defaultIsEnabled,
+        model: GeminiModelOption = Self.defaultModel,
+        showsInPopover: Bool = Self.defaultShowsInPopover,
+        showsInMenuBar: Bool = Self.defaultShowsInMenuBar
+    ) {
+        self.isEnabled = isEnabled
+        self.model = model
+        self.showsInPopover = showsInPopover
+        self.showsInMenuBar = showsInMenuBar
+    }
+
+    /// 从共享偏好读取并归一化模型组配置；旧版 Pro/Flash 值归入 Gemini Models。
+    public init(defaults: UserDefaults) {
+        let storedModel = defaults.string(forKey: GeminiModelsPreferenceKeys.model) ?? ""
+        let model = GeminiModelOption(rawValue: storedModel)
+            ?? (["gemini-pro", "gemini-flash"].contains(storedModel) ? .geminiModels : Self.defaultModel)
+        self.init(
+            isEnabled: defaults.object(forKey: GeminiModelsPreferenceKeys.isEnabled) as? Bool
+                ?? Self.defaultIsEnabled,
+            model: model,
+            showsInPopover: defaults.object(forKey: GeminiModelsPreferenceKeys.showsInPopover) as? Bool
+                ?? Self.defaultShowsInPopover,
+            showsInMenuBar: defaults.object(forKey: GeminiModelsPreferenceKeys.showsInMenuBar) as? Bool
+                ?? Self.defaultShowsInMenuBar
+        )
+    }
+
+    /// 通知主 app 立即刷新 Gemini 配额；配置变更仍由菜单栏观察者负责重建界面。
+    public static func notifyDidChange(defaults: UserDefaults = MenuBarDisplaySettings.sharedDefaults) {
+        defaults.synchronize()
+        NotificationCenter.default.post(name: .geminiModelsSettingsDidChange, object: defaults)
+        NotificationCenter.default.post(name: UserDefaults.didChangeNotification, object: defaults)
+    }
+
+    public var usesDefaultValues: Bool {
+        self == GeminiModelsSettings()
+    }
+}
+
 /// 为现有硬编码中文提供进程内英文映射；未翻译项安全回退到中文原文。
 public enum AppLocalization {
     /// 判断当前偏好是否使用英文，供带数字插值的动态文案选择格式。
@@ -116,6 +223,23 @@ public enum AppLocalization {
 
     private static let english: [String: String] = [
         "通用": "General",
+        "Antigravity": "Antigravity",
+        "Google AI Pro": "Google AI Pro",
+        "Gemini Models": "Gemini Models",
+        "启用 Antigravity": "Enable Antigravity",
+        "以独立配置显示 Antigravity 模型配额。": "Show Antigravity model quota as an independent configuration.",
+        "模型配额组": "Model Quota Group",
+        "选择菜单和下拉面板展示的配额模型组。": "Choose the quota model group shown in the menu bar and popover.",
+        "显示在下拉面板": "Show in Popover",
+        "在下拉面板中展示 Antigravity 配额卡片。": "Show the Antigravity quota card in the popover.",
+        "显示在菜单栏": "Show in Menu Bar",
+        "在菜单栏中显示当前配额模型组。": "Show the selected quota model group in the menu bar.",
+        "全部模型": "All Models",
+        "Claude and GPT models": "Claude and GPT models",
+        "独立配置": "Independent Configuration",
+        "配额优先读取正在运行的 Antigravity，本地服务不可用时尝试已保存的 Google OAuth。": "Quotas are read from the running Antigravity local service first, then saved Google OAuth credentials.",
+        "当前模型没有可用配额窗口。": "No quota window is available for the selected model.",
+        "等待 Antigravity 配额刷新。": "Waiting for the Antigravity quota refresh.",
         "通知": "Notifications",
         "菜单栏": "Menu Bar",
         "下拉面板": "Popover",
@@ -167,7 +291,7 @@ public enum AppLocalization {
         "半透明": "Translucent",
         "显示内容": "Content",
         "菜单栏内容": "Menu Bar Content",
-        "选择显示剩余额度或相对预期的用量节奏。": "Show remaining quota or usage pace against expectations.",
+        "剩余额度：显示 7d/5h；预期消耗对比：5h 剩余% · 7d 消耗偏差，窗口独立交叉。": "Remaining quota shows 7d/5h; Expected Pace crosses 5h remaining % with 7d usage variance.",
         "工作日刻度线": "Workday Scale",
         "用于每周用量条刻度和节奏计算。": "Used for weekly scale marks and pace calculations.",
         "显示 5 小时窗口": "Show 5-Hour Window",
@@ -1434,6 +1558,7 @@ public extension Notification.Name {
     static let widgetDisplaySettingsDidChange = Notification.Name("CodexUsage.widgetDisplaySettingsDidChange")
     static let popoverDisplaySettingsDidChange = Notification.Name("CodexUsage.popoverDisplaySettingsDidChange")
     static let codexRadarSettingsDidChange = Notification.Name("CodexUsage.codexRadarSettingsDidChange")
+    static let geminiModelsSettingsDidChange = Notification.Name("CodexUsage.geminiModelsSettingsDidChange")
 }
 
 /// 统一封装预期消耗速度的展示模型，供菜单栏、弹窗和小组件共享同一套 Pace 判断。

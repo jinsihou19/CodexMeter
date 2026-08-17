@@ -861,3 +861,950 @@ private struct WhamTopInvocation: Decodable {
         )
     }
 }
+
+/// 定义 Gemini Models 的独立读取能力；失败时不影响 Codex 用量客户端。
+protocol GeminiModelsUsageFetching: Sendable {
+    /// 读取本地 Antigravity 配额，必要时使用已保存的 Google OAuth 凭据兜底。
+    func fetchGeminiModels() async throws -> GeminiModelsSnapshot
+}
+
+/// 读取 Antigravity 本地语言服务和 Google OAuth 配额；协议字段来自 CodexBar 的公开实现路径。
+struct AntigravityGeminiModelsClient: GeminiModelsUsageFetching, Sendable {
+    typealias Transport = @Sendable (URLRequest) async throws -> (Data, HTTPURLResponse)
+    typealias ProcessList = @Sendable () throws -> String
+    typealias ListeningPorts = @Sendable (Int) throws -> [Int]
+
+    private let timeoutSeconds: TimeInterval
+    private let transport: Transport
+    private let processList: ProcessList
+    private let listeningPorts: ListeningPorts
+    private let homeDirectory: URL
+    private let environment: [String: String]
+    private let currentDate: @Sendable () -> Date
+
+    init(
+        timeoutSeconds: TimeInterval = 8,
+        transport: @escaping Transport = Self.urlSessionTransport,
+        processList: @escaping ProcessList = Self.defaultProcessList,
+        listeningPorts: @escaping ListeningPorts = Self.defaultListeningPorts,
+        homeDirectory: URL = FileManager.default.homeDirectoryForCurrentUser,
+        environment: [String: String] = ProcessInfo.processInfo.environment,
+        currentDate: @escaping @Sendable () -> Date = { Date() }
+    ) {
+        self.timeoutSeconds = timeoutSeconds
+        self.transport = transport
+        self.processList = processList
+        self.listeningPorts = listeningPorts
+        self.homeDirectory = homeDirectory
+        self.environment = environment
+        self.currentDate = currentDate
+    }
+
+    /// 优先探测正在运行的 Antigravity；本地服务不可用时再读取保存的 OAuth 文件。
+    func fetchGeminiModels() async throws -> GeminiModelsSnapshot {
+        do {
+            return try await fetchLocalSnapshot()
+        } catch let localError {
+            do {
+                return try await fetchOAuthSnapshot()
+            } catch let oauthError as GeminiModelsUsageClientError {
+                let action: String
+                if case .credentialsUnavailable = oauthError {
+                    action = "请在终端运行 gemini 完成认证。"
+                } else {
+                    action = "请检查 Gemini 的登录状态和 OAuth 配置。"
+                }
+                throw GeminiModelsUsageClientError.notAvailable(
+                    "未读取到 Antigravity 配额（"
+                        + localError.localizedDescription
+                        + "），也没有可用的 Google OAuth 兜底。"
+                        + action
+                )
+            } catch {
+                throw GeminiModelsUsageClientError.notAvailable(
+                    "未读取到 Antigravity 配额（"
+                        + localError.localizedDescription
+                        + "），也没有可用的 Google OAuth 兜底。请检查 Gemini 的登录状态和 OAuth 配置。"
+                )
+            }
+        }
+    }
+
+    /// 遍历 Antigravity 语言服务进程和监听端口，避免依赖固定端口或 UI 抓取。
+    private func fetchLocalSnapshot() async throws -> GeminiModelsSnapshot {
+        let processes: [LocalAntigravityProcess]
+        do {
+            processes = try Self.parseProcessList(processList())
+        } catch let error as GeminiModelsUsageClientError {
+            throw error
+        } catch {
+            throw GeminiModelsUsageClientError.notAvailable("无法检测 Antigravity 语言服务。")
+        }
+        guard !processes.isEmpty else {
+            throw GeminiModelsUsageClientError.notAvailable("未检测到正在运行的 Antigravity。")
+        }
+
+        var lastError: Error?
+        for process in processes {
+            let ports: [Int]
+            do {
+                ports = try listeningPorts(process.pid)
+            } catch {
+                lastError = error
+                continue
+            }
+            for endpoint in Self.endpoints(for: process, ports: ports) {
+                do {
+                    return try await fetchLocalSnapshot(endpoint: endpoint)
+                } catch {
+                    lastError = error
+                }
+            }
+        }
+        throw lastError ?? GeminiModelsUsageClientError.notAvailable("Antigravity 尚未准备好配额服务。")
+    }
+
+    /// 按 CodexBar 的优先级尝试额度摘要、用户状态和模型配置三个本地接口。
+    private func fetchLocalSnapshot(endpoint: LocalAntigravityEndpoint) async throws -> GeminiModelsSnapshot {
+        _ = try? await sendLocalRequest(
+            path: Self.getUnleashPath,
+            body: Self.unleashBody(),
+            endpoint: endpoint
+        )
+
+        if let summaryData = try? await sendLocalRequest(
+            path: Self.quotaSummaryPath,
+            body: ["forceRefresh": true],
+            endpoint: endpoint
+        ), let summary = try? AntigravityGeminiResponseParser.parseQuotaSummary(
+            summaryData,
+            fetchedAt: currentDate(),
+            source: .antigravityLocal
+        ), summary.hasUsableQuota {
+            let identity: (email: String?, plan: String?)?
+            if let statusData = try? await sendLocalRequest(
+                path: Self.getUserStatusPath,
+                body: Self.defaultRequestBody(),
+                endpoint: endpoint
+            ) {
+                identity = AntigravityGeminiResponseParser.parseIdentity(statusData)
+            } else {
+                identity = nil
+            }
+            return summary.withIdentity(identity)
+        }
+
+        if let statusData = try? await sendLocalRequest(
+            path: Self.getUserStatusPath,
+                body: Self.defaultRequestBody(),
+            endpoint: endpoint
+        ), let status = try? AntigravityGeminiResponseParser.parseUserStatus(
+            statusData,
+            fetchedAt: currentDate(),
+            source: .antigravityLocal
+        ), status.hasUsableQuota {
+            return status
+        }
+
+        let modelData = try await sendLocalRequest(
+            path: Self.commandModelConfigPath,
+            body: Self.defaultRequestBody(),
+            endpoint: endpoint
+        )
+        return try AntigravityGeminiResponseParser.parseUserStatus(
+            modelData,
+            fetchedAt: currentDate(),
+            source: .antigravityLocal
+        )
+    }
+
+    /// 从 CodexBar 兼容路径加载 OAuth；只读取现有 token，不把认证材料写入用量快照。
+    private func fetchOAuthSnapshot() async throws -> GeminiModelsSnapshot {
+        let credentials = try loadOAuthCredentials()
+        guard let accessToken = credentials.accessToken, !accessToken.isEmpty else {
+            throw GeminiModelsUsageClientError.credentialsUnavailable
+        }
+
+        let codeAssistData = try await sendOAuthRequest(
+            path: Self.loadCodeAssistPath,
+            accessToken: accessToken,
+            body: ["metadata": [
+                "ideType": "ANTIGRAVITY",
+                "platform": "PLATFORM_UNSPECIFIED",
+                "pluginType": "GEMINI"
+            ]]
+        )
+        let projectID = credentials.projectID
+            ?? AntigravityGeminiResponseParser.string(
+                in: codeAssistData,
+                keys: ["cloudaicompanionProject", "projectId", "project_id"]
+            )
+
+        let modelsData = try await sendOAuthRequest(
+            path: Self.fetchAvailableModelsPath,
+            accessToken: accessToken,
+            body: projectID.map { ["project": $0] } ?? [:]
+        )
+        let groups = try AntigravityGeminiResponseParser.parseRemoteModels(
+            modelsData,
+            fetchedAt: currentDate(),
+            source: .googleOAuth
+        )
+        guard groups.hasUsableQuota else {
+            throw GeminiModelsUsageClientError.invalidResponse("Google OAuth 未返回可用 Antigravity 配额。")
+        }
+
+        let planName = AntigravityGeminiResponseParser.string(
+            in: codeAssistData,
+            keys: ["planType", "planName", "preferredName", "displayName"]
+        )
+        return GeminiModelsSnapshot(
+            fetchedAt: currentDate(),
+            source: .googleOAuth,
+            accountEmail: credentials.email,
+            planName: planName,
+            groups: groups.groups
+        )
+    }
+
+    /// 发送本地语言服务请求，并只接受成功的 HTTP 响应。
+    private func sendLocalRequest(
+        path: String,
+        body: [String: Any],
+        endpoint: LocalAntigravityEndpoint
+    ) async throws -> Data {
+        let endpointString = endpoint.scheme + "://127.0.0.1:" + String(endpoint.port) + path
+        guard let url = URL(string: endpointString) else {
+            throw GeminiModelsUsageClientError.invalidResponse("本地服务地址无效。")
+        }
+        var request = try Self.makeJSONRequest(url: url, body: body, timeout: timeoutSeconds)
+        request.setValue("1", forHTTPHeaderField: "Connect-Protocol-Version")
+        if endpoint.requiresCSRFToken {
+            request.setValue(endpoint.csrfToken, forHTTPHeaderField: "X-Codeium-Csrf-Token")
+        }
+        return try await send(request)
+    }
+
+    /// 发送 Cloud Code OAuth 请求；Bearer token 只存在于内存中的请求头。
+    private func sendOAuthRequest(
+        path: String,
+        accessToken: String,
+        body: [String: Any]
+    ) async throws -> Data {
+        guard let url = URL(string: "https://cloudcode-pa.googleapis.com/v1internal:\(path)") else {
+            throw GeminiModelsUsageClientError.invalidResponse("Google 配置地址无效。")
+        }
+        var request = try Self.makeJSONRequest(url: url, body: body, timeout: timeoutSeconds)
+        request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
+        request.setValue("antigravity", forHTTPHeaderField: "User-Agent")
+        return try await send(request)
+    }
+
+    /// 统一处理传输、HTTP 状态和响应体，避免本地和远端分支产生不同错误语义。
+    private func send(_ request: URLRequest) async throws -> Data {
+        do {
+            let (data, response) = try await transport(request)
+            guard (200..<300).contains(response.statusCode) else {
+                let message = String(data: data, encoding: .utf8)?
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                    .prefix(240)
+                throw GeminiModelsUsageClientError.httpStatus(response.statusCode, String(message ?? ""))
+            }
+            return data
+        } catch let error as GeminiModelsUsageClientError {
+            throw error
+        } catch {
+            throw GeminiModelsUsageClientError.network(error.localizedDescription)
+        }
+    }
+
+    /// 读取兼容 CodexBar 的环境变量和本地 OAuth 文件，按优先级返回第一个有效文件。
+    private func loadOAuthCredentials() throws -> AntigravityOAuthCredentials {
+        if let value = environment["ANTIGRAVITY_OAUTH_CREDENTIALS_JSON"],
+           let data = value.data(using: .utf8),
+           let credentials = try? JSONDecoder().decode(AntigravityOAuthCredentials.self, from: data) {
+            return credentials
+        }
+
+        let urls = [
+            homeDirectory
+                .appendingPathComponent(".codexbar", isDirectory: true)
+                .appendingPathComponent("antigravity", isDirectory: true)
+                .appendingPathComponent("oauth_creds.json"),
+            homeDirectory
+                .appendingPathComponent(".gemini", isDirectory: true)
+                .appendingPathComponent("oauth_creds.json")
+        ]
+        for url in urls where FileManager.default.fileExists(atPath: url.path) {
+            let data = try Data(contentsOf: url)
+            return try JSONDecoder().decode(AntigravityOAuthCredentials.self, from: data)
+        }
+        throw GeminiModelsUsageClientError.credentialsUnavailable
+    }
+
+    /// 构造 JSON POST 请求；请求体由调用方传入并在发送前完成序列化。
+    private static func makeJSONRequest(url: URL, body: [String: Any], timeout: TimeInterval) throws -> URLRequest {
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.timeoutInterval = timeout
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONSerialization.data(withJSONObject: body, options: [])
+        return request
+    }
+
+    /// 通过带本地主机证书例外的 URLSession 访问 Antigravity 语言服务。
+    private static func urlSessionTransport(_ request: URLRequest) async throws -> (Data, HTTPURLResponse) {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.timeoutIntervalForRequest = request.timeoutInterval
+        configuration.timeoutIntervalForResource = request.timeoutInterval
+        configuration.waitsForConnectivity = false
+        let delegate = AntigravityLocalhostSessionDelegate()
+        let session = URLSession(configuration: configuration, delegate: delegate, delegateQueue: nil)
+        defer { session.invalidateAndCancel() }
+        let (data, response) = try await session.data(for: request)
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw GeminiModelsUsageClientError.invalidResponse("服务响应不是 HTTP。")
+        }
+        return (data, httpResponse)
+    }
+
+    /// 读取进程列表；仅把 PID 和命令行交给解析器，不输出命令行中的认证参数。
+    private static func defaultProcessList() throws -> String {
+        try runProcess(binary: "/bin/ps", arguments: ["-ax", "-o", "pid=,command="])
+    }
+
+    /// 使用 lsof 找到指定 Antigravity 进程监听的 TCP 端口。
+    private static func defaultListeningPorts(pid: Int) throws -> [Int] {
+        let binary = ["/usr/sbin/lsof", "/usr/bin/lsof"].first {
+            FileManager.default.isExecutableFile(atPath: $0)
+        }
+        guard let binary else {
+            throw GeminiModelsUsageClientError.notAvailable("系统缺少 lsof，无法探测 Antigravity 端口。")
+        }
+        let output = try runProcess(
+            binary: binary,
+            arguments: ["-nP", "-iTCP", "-sTCP:LISTEN", "-a", "-p", String(pid)]
+        )
+        let pattern = try NSRegularExpression(pattern: #":(\d+)\s+\(LISTEN\)"#)
+        let range = NSRange(output.startIndex..<output.endIndex, in: output)
+        var ports = Set<Int>()
+        pattern.enumerateMatches(in: output, range: range) { match, _, _ in
+            guard let match,
+                  let portRange = Range(match.range(at: 1), in: output),
+                  let port = Int(output[portRange]) else { return }
+            ports.insert(port)
+        }
+        guard !ports.isEmpty else {
+            throw GeminiModelsUsageClientError.notAvailable("Antigravity 尚未暴露语言服务端口。")
+        }
+        return ports.sorted()
+    }
+
+    /// 执行短生命周期的系统命令；这里只用于 ps/lsof，失败时不把 stderr 写入快照。
+    private static func runProcess(binary: String, arguments: [String]) throws -> String {
+        let process = Process()
+        let outputPipe = Pipe()
+        let errorPipe = Pipe()
+        process.executableURL = URL(fileURLWithPath: binary)
+        process.arguments = arguments
+        process.standardOutput = outputPipe
+        process.standardError = errorPipe
+        try process.run()
+        let output = outputPipe.fileHandleForReading.readDataToEndOfFile()
+        let error = errorPipe.fileHandleForReading.readDataToEndOfFile()
+        process.waitUntilExit()
+        guard process.terminationStatus == 0 else {
+            let message = String(data: error, encoding: .utf8)?
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            throw GeminiModelsUsageClientError.notAvailable(message ?? "系统进程执行失败。")
+        }
+        return String(data: output, encoding: .utf8) ?? ""
+    }
+
+    private static let getUserStatusPath = "/exa.language_server_pb.LanguageServerService/GetUserStatus"
+    private static let commandModelConfigPath = "/exa.language_server_pb.LanguageServerService/GetCommandModelConfigs"
+    private static let quotaSummaryPath = "/exa.language_server_pb.LanguageServerService/RetrieveUserQuotaSummary"
+    private static let getUnleashPath = "/exa.language_server_pb.LanguageServerService/GetUnleashData"
+    private static let loadCodeAssistPath = "loadCodeAssist"
+    private static let fetchAvailableModelsPath = "fetchAvailableModels"
+
+    private static func defaultRequestBody() -> [String: Any] {
+        [
+            "metadata": [
+                "ideName": "antigravity",
+                "extensionName": "antigravity",
+                "ideVersion": "unknown",
+                "locale": "en"
+            ]
+        ]
+    }
+
+    private static func unleashBody() -> [String: Any] {
+        [
+            "context": [
+                "properties": [
+                    "devMode": "false",
+                    "extensionVersion": "unknown",
+                    "hasAnthropicModelAccess": "true",
+                    "ide": "antigravity",
+                    "ideVersion": "unknown",
+                    "installationId": "codexmeter",
+                    "language": "UNSPECIFIED",
+                    "os": "macos",
+                    "requestedModelId": "MODEL_UNSPECIFIED"
+                ]
+            ]
+        ]
+    }
+}
+
+/// 描述本地语言服务进程启动参数；CSRF token 只在内存中用于本次回环请求。
+private struct LocalAntigravityProcess: Sendable {
+    let pid: Int
+    let csrfToken: String
+    let extensionPort: Int?
+    let extensionServerCSRFToken: String?
+}
+
+/// 描述一次本地 HTTP/HTTPS 请求目标及其认证方式。
+private struct LocalAntigravityEndpoint: Hashable, Sendable {
+    let scheme: String
+    let port: Int
+    let csrfToken: String
+    let requiresCSRFToken: Bool
+}
+
+/// 提供 Antigravity 本地和远端请求的用户可读错误，避免吞掉设置页可诊断信息。
+enum GeminiModelsUsageClientError: LocalizedError, Equatable {
+    case credentialsUnavailable
+    case notAvailable(String)
+    case httpStatus(Int, String)
+    case invalidResponse(String)
+    case network(String)
+
+    var errorDescription: String? {
+        switch self {
+        case .credentialsUnavailable:
+            return "没有可用的 Google OAuth 登录信息。"
+        case .notAvailable(let message):
+            return message
+        case .httpStatus(let statusCode, let message):
+            return message.isEmpty
+                ? "Antigravity 配额接口返回 " + String(statusCode) + "。"
+                : "Antigravity 配额接口返回 " + String(statusCode) + "：" + message
+        case .invalidResponse(let message):
+            return "Antigravity 配额响应格式不可识别：" + message
+        case .network(let message):
+            return "读取 Antigravity 配额网络失败：" + message
+        }
+    }
+}
+
+/// 解析 CodexBar 使用的 Antigravity 配额摘要、用户状态和 Cloud Code 模型响应。
+enum AntigravityGeminiResponseParser {
+    /// 解析 RetrieveUserQuotaSummary，并兼容 response、summary 和根节点三种包装层级。
+    static func parseQuotaSummary(
+        _ data: Data,
+        fetchedAt: Date,
+        source: GeminiModelsUsageSource
+    ) throws -> GeminiModelsSnapshot {
+        let root = try jsonDictionary(data)
+        let payload = payloadDictionary(root)
+        let groups = parseGroups(payload["groups"], prefix: "summary")
+        guard !groups.isEmpty else {
+            throw GeminiModelsUsageClientError.invalidResponse("缺少 quota groups。")
+        }
+        return GeminiModelsSnapshot(fetchedAt: fetchedAt, source: source, groups: groups)
+    }
+
+    /// 解析 GetUserStatus 或 GetCommandModelConfigs 的模型级 quotaInfo。
+    static func parseUserStatus(
+        _ data: Data,
+        fetchedAt: Date,
+        source: GeminiModelsUsageSource
+    ) throws -> GeminiModelsSnapshot {
+        let root = try jsonDictionary(data)
+        let status = dictionary(named: "userStatus", in: root) ?? root
+        let configs = (dictionary(named: "cascadeModelConfigData", in: status)?["clientModelConfigs"] as? [Any])
+            ?? (root["clientModelConfigs"] as? [Any])
+            ?? []
+        let groups = parseModelConfigs(configs)
+        guard !groups.isEmpty else {
+            throw GeminiModelsUsageClientError.invalidResponse("缺少 clientModelConfigs。")
+        }
+        let identity = parseIdentity(root)
+        return GeminiModelsSnapshot(
+            fetchedAt: fetchedAt,
+            source: source,
+            accountEmail: identity.email,
+            planName: identity.plan,
+            groups: groups
+        )
+    }
+
+    /// 解析远端 fetchAvailableModels；若服务只返回 buckets，则由模型桶分组逻辑兼容。
+    static func parseRemoteModels(
+        _ data: Data,
+        fetchedAt: Date,
+        source: GeminiModelsUsageSource
+    ) throws -> GeminiModelsSnapshot {
+        let root = try jsonDictionary(data)
+        let payload = payloadDictionary(root)
+        if let models = payload["models"] as? [String: Any] {
+            let windows = models.compactMap { modelID, value -> GeminiQuotaWindow? in
+                guard let model = value as? [String: Any] else {
+                    return nil
+                }
+                let quota = dictionary(named: "quotaInfo", in: model) ?? model
+                return quotaWindow(
+                    id: modelID,
+                    title: string(in: model, keys: ["displayName", "label"]) ?? modelID,
+                    payload: quota
+                )
+            }
+            let groups = modelGroups(windows: windows)
+            if !groups.isEmpty {
+                return GeminiModelsSnapshot(fetchedAt: fetchedAt, source: source, groups: groups)
+            }
+        }
+
+        let buckets = (payload["buckets"] as? [Any] ?? []).compactMap { value -> GeminiQuotaWindow? in
+            guard let bucket = value as? [String: Any],
+                  let modelID = string(in: bucket, keys: ["modelId", "model_id", "id"]) else {
+                return nil
+            }
+            return quotaWindow(id: modelID, title: modelID, payload: bucket)
+        }
+        let groups = modelGroups(windows: buckets)
+        guard !groups.isEmpty else {
+            throw GeminiModelsUsageClientError.invalidResponse("远端未返回模型 quotaInfo。")
+        }
+        return GeminiModelsSnapshot(fetchedAt: fetchedAt, source: source, groups: groups)
+    }
+
+    /// 从用户状态响应中提取账户邮箱和套餐名；身份缺失不影响额度解析。
+    static func parseIdentity(_ data: Data) -> (email: String?, plan: String?) {
+        guard let root = try? jsonDictionary(data) else {
+            return (nil, nil)
+        }
+        return parseIdentity(root)
+    }
+
+    /// 在任意 JSON 字典中按候选字段读取非空字符串，兼容 snake_case 和 camelCase。
+    static func string(in data: Data, keys: [String]) -> String? {
+        guard let root = try? jsonDictionary(data) else {
+            return nil
+        }
+        return string(in: root, keys: keys)
+    }
+
+    /// 将 Gemini 配额快照补上用户状态中的账户信息。
+    static func withIdentity(
+        _ snapshot: GeminiModelsSnapshot,
+        identity: (email: String?, plan: String?)?
+    ) -> GeminiModelsSnapshot {
+        guard let identity else {
+            return snapshot
+        }
+        return GeminiModelsSnapshot(
+            fetchedAt: snapshot.fetchedAt,
+            source: snapshot.source,
+            accountEmail: identity.email,
+            planName: identity.plan,
+            groups: snapshot.groups
+        )
+    }
+
+    /// 读取任意 JSON 的字典根节点，统一转成可宽容解析的 Foundation 值。
+    private static func jsonDictionary(_ data: Data) throws -> [String: Any] {
+        guard let root = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            throw GeminiModelsUsageClientError.invalidResponse("根节点不是 JSON 对象。")
+        }
+        return root
+    }
+
+    /// 选择接口响应中的实际 payload，兼容内部 API 的不同包装字段。
+    private static func payloadDictionary(_ root: [String: Any]) -> [String: Any] {
+        for key in ["response", "summary", "data"] {
+            if let value = root[key] as? [String: Any] {
+                if value["groups"] != nil || value["models"] != nil || value["buckets"] != nil {
+                    return value
+                }
+            }
+        }
+        return root
+    }
+
+    /// 解析 quota summary 的分组和窗口，并忽略没有 bucket 的空分组。
+    private static func parseGroups(_ value: Any?, prefix: String) -> [GeminiQuotaGroup] {
+        guard let values = value as? [Any] else {
+            return []
+        }
+        return values.enumerated().compactMap { index, value in
+            guard let group = value as? [String: Any] else {
+                return nil
+            }
+            let title = string(in: group, keys: ["displayName", "name", "title"]) ?? "Gemini Models"
+            let buckets = (group["buckets"] as? [Any] ?? group["windows"] as? [Any] ?? [])
+                .enumerated()
+                .compactMap { bucketIndex, value -> GeminiQuotaWindow? in
+                    guard let bucket = value as? [String: Any],
+                          let bucketID = string(in: bucket, keys: ["bucketId", "bucket_id", "id"]) else {
+                        return nil
+                    }
+                    return quotaWindow(
+                        id: bucketID,
+                        title: string(in: bucket, keys: ["displayName", "name", "title"]) ?? bucketID,
+                        payload: bucket,
+                        fallbackIndex: bucketIndex
+                    )
+                }
+            guard !buckets.isEmpty else {
+                return nil
+            }
+            return GeminiQuotaGroup(
+                id: string(in: group, keys: ["id", "groupId", "group_id"]) ?? "\(prefix)-\(index)",
+                title: title,
+                description: string(in: group, keys: ["description"]),
+                windows: buckets
+            )
+        }
+    }
+
+    /// 把模型级窗口按 Gemini 与 Claude/GPT 族分组，保持旧接口也能显示在独立卡片中。
+    private static func modelGroups(windows: [GeminiQuotaWindow]) -> [GeminiQuotaGroup] {
+        let grouped = Dictionary(grouping: windows) { window in
+            let value = window.title.lowercased()
+            return value.contains("claude") || value.contains("gpt") ? "claude" : "gemini"
+        }
+        return [
+            grouped["gemini"].map {
+                GeminiQuotaGroup(id: "gemini-models", title: "Gemini Models", windows: $0)
+            },
+            grouped["claude"].map {
+                GeminiQuotaGroup(id: "claude-gpt-models", title: "Claude and GPT models", windows: $0)
+            }
+        ].compactMap { $0 }
+    }
+
+    /// 解析 Antigravity 用户状态中的 clientModelConfigs。
+    private static func parseModelConfigs(_ configs: [Any]) -> [GeminiQuotaGroup] {
+        let windows = configs.compactMap { value -> GeminiQuotaWindow? in
+            guard let config = value as? [String: Any],
+                  let quota = dictionary(named: "quotaInfo", in: config) else {
+                return nil
+            }
+            let modelID = string(in: config, keys: ["modelId", "model_id"])
+                ?? string(in: dictionary(named: "modelOrAlias", in: config) ?? [:], keys: ["model"])
+                ?? UUID().uuidString
+            return quotaWindow(
+                id: modelID,
+                title: string(in: config, keys: ["label", "displayName", "name"]) ?? modelID,
+                payload: quota
+            )
+        }
+        return modelGroups(windows: windows)
+    }
+
+    /// 把单个 quotaInfo 转成共享窗口，兼容嵌套 remaining 和多种时间格式。
+    private static func quotaWindow(
+        id: String,
+        title: String,
+        payload: [String: Any],
+        fallbackIndex: Int = 0
+    ) -> GeminiQuotaWindow {
+        let remainingPayload = dictionary(named: "remaining", in: payload)
+        let remaining = number(in: payload, keys: ["remainingFraction", "remaining_fraction"])
+            ?? remainingPayload.flatMap { number(in: $0, keys: ["remainingFraction", "remaining_fraction", "value"]) }
+        let bucketID = id.isEmpty ? "quota-" + String(fallbackIndex) : id
+        return GeminiQuotaWindow(
+            bucketId: bucketID,
+            title: title,
+            remainingFraction: remaining,
+            resetsAt: date(in: payload, keys: ["resetTime", "reset_time"]),
+            resetDescription: string(in: payload, keys: ["resetDescription", "description"]),
+            disabled: bool(in: payload, keys: ["disabled", "isDisabled"]) ?? false
+        )
+    }
+
+    /// 从字典树中查找名为 key 的第一个对象。
+    private static func dictionary(named key: String, in value: Any) -> [String: Any]? {
+        if let object = value as? [String: Any] {
+            if let result = object[key] as? [String: Any] {
+                return result
+            }
+            for child in object.values {
+                if let result = dictionary(named: key, in: child) {
+                    return result
+                }
+            }
+        } else if let array = value as? [Any] {
+            for child in array {
+                if let result = dictionary(named: key, in: child) {
+                    return result
+                }
+            }
+        }
+        return nil
+    }
+
+    /// 读取用户身份字段，优先使用实际 tier 名称再回退 planInfo。
+    private static func parseIdentity(_ root: [String: Any]) -> (email: String?, plan: String?) {
+        let status = dictionary(named: "userStatus", in: root) ?? root
+        let email = string(in: status, keys: ["email", "accountEmail", "account_email"])
+        let userTier = dictionary(named: "userTier", in: status)
+        let planInfo = dictionary(named: "planInfo", in: status)
+        let plan = string(in: userTier ?? [:], keys: ["preferredName", "name", "displayName"])
+            ?? string(in: planInfo ?? [:], keys: ["preferredName", "displayName", "planName", "productName"])
+            ?? string(in: status, keys: ["planName", "planType", "plan"])
+        return (email, plan)
+    }
+
+    /// 读取字典中的非空字符串，避免把 API 的空值直接展示给用户。
+    private static func string(in dictionary: [String: Any], keys: [String]) -> String? {
+        for key in keys {
+            if let value = dictionary[key] as? String {
+                let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+                if !trimmed.isEmpty {
+                    return trimmed
+                }
+            }
+        }
+        for value in dictionary.values {
+            if let nested = value as? [String: Any], let result = string(in: nested, keys: keys) {
+                return result
+            }
+        }
+        return nil
+    }
+
+    /// 读取 JSON 数字；NSNumber 兼容 API 返回的整数和小数。
+    private static func number(in dictionary: [String: Any], keys: [String]) -> Double? {
+        for key in keys {
+            if let value = dictionary[key] as? NSNumber {
+                return value.doubleValue
+            }
+            if let value = dictionary[key] as? String, let number = Double(value) {
+                return number
+            }
+        }
+        return nil
+    }
+
+    /// 读取 JSON 布尔值。
+    private static func bool(in dictionary: [String: Any], keys: [String]) -> Bool? {
+        for key in keys {
+            if let value = dictionary[key] as? Bool {
+                return value
+            }
+        }
+        return nil
+    }
+
+    /// 解析 ISO8601、秒时间戳和 protobuf timestamp 对象。
+    private static func date(in dictionary: [String: Any], keys: [String]) -> Date? {
+        for key in keys {
+            guard let value = dictionary[key] else { continue }
+            if let number = value as? NSNumber {
+                let seconds = number.doubleValue > 100_000_000_000
+                    ? number.doubleValue / 1_000
+                    : number.doubleValue
+                return Date(timeIntervalSince1970: seconds)
+            }
+            if let value = value as? String {
+                if let seconds = Double(value) {
+                    return Date(timeIntervalSince1970: seconds > 100_000_000_000 ? seconds / 1_000 : seconds)
+                }
+                let formatter = ISO8601DateFormatter()
+                formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+                if let parsed = formatter.date(from: value) {
+                    return parsed
+                }
+                formatter.formatOptions = [.withInternetDateTime]
+                return formatter.date(from: value)
+            }
+            if let timestamp = value as? [String: Any],
+               let seconds = number(in: timestamp, keys: ["seconds", "value"]) {
+                return Date(timeIntervalSince1970: seconds)
+            }
+        }
+        return nil
+    }
+}
+
+private extension GeminiModelsSnapshot {
+    /// 以新身份创建快照；仅供本地摘要请求合并 GetUserStatus 结果。
+    func withIdentity(_ identity: (email: String?, plan: String?)?) -> GeminiModelsSnapshot {
+        AntigravityGeminiResponseParser.withIdentity(self, identity: identity)
+    }
+}
+
+/// 兼容 CodexBar 的 Antigravity OAuth 文件字段；支持 snake_case 和 camelCase。
+private struct AntigravityOAuthCredentials: Decodable, Sendable {
+    let accessToken: String?
+    let refreshToken: String?
+    let expiryDateMilliseconds: Double?
+    let email: String?
+    let projectID: String?
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        accessToken = try container.decodeIfPresent(String.self, forKey: .accessToken)
+            ?? container.decodeIfPresent(String.self, forKey: .accessTokenCamel)
+        refreshToken = try container.decodeIfPresent(String.self, forKey: .refreshToken)
+            ?? container.decodeIfPresent(String.self, forKey: .refreshTokenCamel)
+        email = try container.decodeIfPresent(String.self, forKey: .email)
+        projectID = try container.decodeIfPresent(String.self, forKey: .projectID)
+            ?? container.decodeIfPresent(String.self, forKey: .projectIDCamel)
+        if let milliseconds = try container.decodeIfPresent(Double.self, forKey: .expiryDate) {
+            expiryDateMilliseconds = milliseconds
+        } else if let milliseconds = try container.decodeIfPresent(Int.self, forKey: .expiryDate) {
+            expiryDateMilliseconds = Double(milliseconds)
+        } else if let seconds = try container.decodeIfPresent(Double.self, forKey: .expiresAt) {
+            expiryDateMilliseconds = seconds < 100_000_000_000 ? seconds * 1_000 : seconds
+        } else if let seconds = try container.decodeIfPresent(Int.self, forKey: .expiresAt) {
+            let value = Double(seconds)
+            expiryDateMilliseconds = value < 100_000_000_000 ? value * 1_000 : value
+        } else {
+            expiryDateMilliseconds = nil
+        }
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case accessToken = "access_token"
+        case accessTokenCamel = "accessToken"
+        case refreshToken = "refresh_token"
+        case refreshTokenCamel = "refreshToken"
+        case expiryDate = "expiry_date"
+        case expiresAt
+        case email
+        case projectID = "project_id"
+        case projectIDCamel = "projectId"
+    }
+}
+
+/// 只接受本地主机的自签名证书，远端 HTTPS 仍交给系统默认信任链处理。
+private final class AntigravityLocalhostSessionDelegate: NSObject, URLSessionDelegate, URLSessionTaskDelegate, @unchecked Sendable {
+    /// 处理 session 级 TLS challenge；仅限 127.0.0.1/localhost。
+    func urlSession(
+        _ session: URLSession,
+        didReceive challenge: URLAuthenticationChallenge,
+        completionHandler: @escaping (URLSession.AuthChallengeDisposition, URLCredential?) -> Void
+    ) {
+        completionHandler(challengeResult(challenge).0, challengeResult(challenge).1)
+    }
+
+    /// 处理 task 级 TLS challenge；仅限 127.0.0.1/localhost。
+    func urlSession(
+        _ session: URLSession,
+        task: URLSessionTask,
+        didReceive challenge: URLAuthenticationChallenge,
+        completionHandler: @escaping (URLSession.AuthChallengeDisposition, URLCredential?) -> Void
+    ) {
+        completionHandler(challengeResult(challenge).0, challengeResult(challenge).1)
+    }
+
+    /// 返回本地主机证书例外结果；其他主机使用系统默认处理。
+    private func challengeResult(_ challenge: URLAuthenticationChallenge) -> (
+        URLSession.AuthChallengeDisposition,
+        URLCredential?
+    ) {
+        let protectionSpace = challenge.protectionSpace
+        guard protectionSpace.authenticationMethod == NSURLAuthenticationMethodServerTrust,
+              ["127.0.0.1", "localhost"].contains(protectionSpace.host.lowercased()),
+              let trust = protectionSpace.serverTrust else {
+            return (.performDefaultHandling, nil)
+        }
+        return (.useCredential, URLCredential(trust: trust))
+    }
+}
+
+private extension AntigravityGeminiModelsClient {
+    /// 从 ps 输出筛选 Antigravity language_server，并提取本次请求需要的启动参数。
+    static func parseProcessList(_ output: String) throws -> [LocalAntigravityProcess] {
+        var processes: [LocalAntigravityProcess] = []
+        for line in output.split(separator: "\n") {
+            let parts = line.trimmingCharacters(in: .whitespacesAndNewlines)
+                .split(separator: " ", maxSplits: 1, omittingEmptySubsequences: true)
+            guard parts.count == 2, let pid = Int(parts[0]) else { continue }
+            let command = String(parts[1])
+            let lower = command.lowercased()
+            let isLanguageServer = lower.contains("language_server") || lower.contains("language-server")
+            let isAntigravity = lower.contains("antigravity.app")
+                || lower.contains("override_ide_name antigravity")
+                || lower.contains("--app_data_dir antigravity")
+                || lower.contains("/antigravity/")
+            guard isLanguageServer, isAntigravity,
+                  let csrfToken = extractFlag("--csrf_token", from: command) else {
+                continue
+            }
+            processes.append(LocalAntigravityProcess(
+                pid: pid,
+                csrfToken: csrfToken,
+                extensionPort: extractFlag("--extension_server_port", from: command).flatMap(Int.init),
+                extensionServerCSRFToken: extractFlag("--extension_server_csrf_token", from: command)
+            ))
+        }
+        guard !processes.isEmpty else {
+            throw GeminiModelsUsageClientError.notAvailable("未检测到带 CSRF token 的 Antigravity language_server。")
+        }
+        return processes
+    }
+
+    /// 生成语言服务和扩展服务的 HTTP/HTTPS 候选端点，并去除重复目标。
+    static func endpoints(
+        for process: LocalAntigravityProcess,
+        ports: [Int]
+    ) -> [LocalAntigravityEndpoint] {
+        var endpoints: [LocalAntigravityEndpoint] = []
+        func append(_ endpoint: LocalAntigravityEndpoint) {
+            guard !endpoints.contains(endpoint) else { return }
+            endpoints.append(endpoint)
+        }
+
+        if let extensionPort = process.extensionPort {
+            let csrfTokens = [process.extensionServerCSRFToken, process.csrfToken].compactMap { $0 }
+            for csrfToken in csrfTokens where !endpoints.contains(where: {
+                $0.scheme == "http" && $0.port == extensionPort && $0.csrfToken == csrfToken
+            }) {
+                append(LocalAntigravityEndpoint(
+                    scheme: "http",
+                    port: extensionPort,
+                    csrfToken: csrfToken,
+                    requiresCSRFToken: true
+                ))
+            }
+        }
+        for port in ports {
+            append(LocalAntigravityEndpoint(
+                scheme: "https",
+                port: port,
+                csrfToken: process.csrfToken,
+                requiresCSRFToken: true
+            ))
+            append(LocalAntigravityEndpoint(
+                scheme: "http",
+                port: port,
+                csrfToken: process.csrfToken,
+                requiresCSRFToken: true
+            ))
+        }
+        return endpoints
+    }
+
+    /// 从命令行读取形如 `--flag value` 或 `--flag=value` 的参数。
+    static func extractFlag(_ flag: String, from command: String) -> String? {
+        guard let regex = try? NSRegularExpression(
+            pattern: "\(NSRegularExpression.escapedPattern(for: flag))[=\\s]+([^\\s]+)",
+            options: [.caseInsensitive]
+        ) else {
+            return nil
+        }
+        let range = NSRange(command.startIndex..<command.endIndex, in: command)
+        guard let match = regex.firstMatch(in: command, range: range),
+              let valueRange = Range(match.range(at: 1), in: command) else {
+            return nil
+        }
+        return String(command[valueRange])
+    }
+}

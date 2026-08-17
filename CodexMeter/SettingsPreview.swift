@@ -66,7 +66,34 @@ private struct MenuBarPreviewSample: View {
 
             VStack(alignment: textColumnAlignment, spacing: lineSpacing) {
                 ForEach(previewLines) { line in
-                    previewLine(label: line.label, value: line.value, tone: line.tone)
+                    previewLine(
+                        label: line.label,
+                        value: line.value,
+                        tone: line.tone,
+                        usesSingleLineTypography: previewLines.count == 1
+                    )
+                }
+            }
+
+            if !trailingGeminiLines.isEmpty {
+                Color.clear
+                    .frame(width: StatusBarDisplayMetrics.trailingProviderSeparatorSpacing)
+                Image(systemName: "sparkles")
+                    .font(.system(size: 11, weight: .semibold))
+                    .frame(width: StatusBarDisplayMetrics.trailingGeminiIconWidth)
+                    .foregroundStyle(labelColor)
+                    .accessibilityHidden(true)
+                Color.clear
+                    .frame(width: StatusBarDisplayMetrics.trailingGeminiIconTextSpacing)
+                VStack(alignment: .trailing, spacing: lineSpacing) {
+                    ForEach(trailingGeminiLines) { line in
+                        previewLine(
+                            label: line.label,
+                            value: line.value,
+                            tone: line.tone,
+                            usesSingleLineTypography: trailingGeminiLines.count == 1
+                        )
+                    }
                 }
             }
         }
@@ -81,12 +108,29 @@ private struct MenuBarPreviewSample: View {
         )
     }
 
+    private var previewDisplay: MenuBarStatusDisplay {
+        StatusLineDisplay.menuBarDisplay(
+            snapshot: data.snapshot,
+            settings: settings,
+            geminiSettings: GeminiModelsSettings(defaults: MenuBarDisplaySettings.sharedDefaults),
+            geminiSnapshot: data.snapshot?.geminiModels
+        )
+    }
+
     private var previewLines: [StatusLineDisplay] {
-        StatusLineDisplay.lines(snapshot: data.snapshot, settings: settings)
+        previewDisplay.codexLines
+    }
+
+    private var trailingGeminiLines: [StatusLineDisplay] {
+        previewDisplay.trailingGeminiLines
     }
 
     private var sampleWidth: CGFloat {
-        StatusBarDisplayMetrics.statusItemWidth(for: previewLines, settings: settings)
+        StatusBarDisplayMetrics.statusItemWidth(
+            for: previewLines,
+            settings: settings,
+            trailingLines: trailingGeminiLines
+        )
     }
 
     private var sampleBackground: some View {
@@ -128,27 +172,25 @@ private struct MenuBarPreviewSample: View {
         settings.rowSpacing
     }
 
-    /// 预览直接使用当前真实字号，保证自定义控件和菜单栏显示一致。
-    private var previewFontSize: Double {
-        guard previewLines.count == 1 else { return settings.numberFontSize }
-        return NativeStatusBarTitle.font(settings: settings).pointSize
-    }
-
-    private var previewFontWeight: Font.Weight {
-        guard previewLines.count == 1,
-              MenuBarLayoutChoice.matching(settings: settings) != .custom
-        else {
-            return settings.numberFontWeight.fontWeight
-        }
-        return .regular
-    }
-
     private var textColumnAlignment: HorizontalAlignment {
         settings.showsMenuBarIcon ? .trailing : .center
     }
 
-    private func previewLine(label: String, value: String, tone: UsageRemainingTone) -> some View {
-        HStack(alignment: .firstTextBaseline, spacing: settings.itemSpacing) {
+    /// 预览使用与实际菜单栏相同的单行/双行字体规则。
+    private func previewLine(
+        label: String,
+        value: String,
+        tone: UsageRemainingTone,
+        usesSingleLineTypography: Bool
+    ) -> some View {
+        let fontSize = usesSingleLineTypography
+            ? NativeStatusBarTitle.font(settings: settings).pointSize
+            : settings.numberFontSize
+        let fontWeight = usesSingleLineTypography
+            && MenuBarLayoutChoice.matching(settings: settings) != .custom
+            ? Font.Weight.regular
+            : settings.numberFontWeight.fontWeight
+        return HStack(alignment: .firstTextBaseline, spacing: settings.itemSpacing) {
             if !label.isEmpty {
                 Text(label)
                     .foregroundStyle(labelColor)
@@ -156,7 +198,7 @@ private struct MenuBarPreviewSample: View {
             Text(value)
                 .foregroundStyle(tone.statusBarColor(settings: settings))
         }
-        .font(.system(size: previewFontSize, weight: previewFontWeight).monospacedDigit())
+        .font(.system(size: fontSize, weight: fontWeight).monospacedDigit())
         .fixedSize(horizontal: true, vertical: false)
         .lineLimit(1)
     }

@@ -243,12 +243,16 @@ final class UsageViewModel: ObservableObject {
     @Published private(set) var localCodexUsageFreshness = LocalCodexUsageFreshness.current
     @Published private(set) var isRefreshing = false
     @Published private(set) var errorMessage: String?
+    @Published private(set) var geminiSnapshot: GeminiModelsSnapshot?
+    @Published private(set) var geminiErrorMessage: String?
 
     private let client: any UsageRateLimitFetching
+    private let geminiClient: any GeminiModelsUsageFetching
     private let store: UsageSnapshotStore
     private let reloadWidgetTimelines: () -> Void
     private let refreshCadenceProvider: @MainActor @Sendable () -> UsageRefreshCadence
     private let resetCreditsVisibilityProvider: @MainActor @Sendable () -> Bool
+    private let geminiSettingsProvider: @MainActor @Sendable () -> GeminiModelsSettings
     private let processUsageNotifications: @MainActor @Sendable (UsageSnapshot) -> Void
     private let localCodexUsageLoader: @Sendable () async -> LocalCodexUsageSnapshot?
     private let logger = Logger(subsystem: "com.jinsihou.CodexUsage", category: "Usage")
@@ -257,6 +261,7 @@ final class UsageViewModel: ObservableObject {
     private var isRefreshingLocalUsage = false
     private var appBehaviorObserver: NSObjectProtocol?
     private var popoverDisplayObserver: NSObjectProtocol?
+    private var geminiSettingsObserver: NSObjectProtocol?
     private var lastShowsResetCredits: Bool
 
     init(
@@ -274,21 +279,28 @@ final class UsageViewModel: ObservableObject {
         resetCreditsVisibilityProvider: @escaping @MainActor @Sendable () -> Bool = {
             PopoverDisplaySettings(defaults: MenuBarDisplaySettings.sharedDefaults).showsResetCredits
         },
+        geminiClient: any GeminiModelsUsageFetching = AntigravityGeminiModelsClient(),
+        geminiSettingsProvider: @escaping @MainActor @Sendable () -> GeminiModelsSettings = {
+            GeminiModelsSettings(defaults: MenuBarDisplaySettings.sharedDefaults)
+        },
         processUsageNotifications: @escaping @MainActor @Sendable (UsageSnapshot) -> Void = { _ in },
         localCodexUsageLoader: @escaping @Sendable () async -> LocalCodexUsageSnapshot? = {
             await LocalCodexUsageReader().load()
         }
     ) {
         self.client = client
+        self.geminiClient = geminiClient
         self.store = store
         self.reloadWidgetTimelines = reloadWidgetTimelines
         self.refreshCadenceProvider = refreshCadenceProvider
         self.resetCreditsVisibilityProvider = resetCreditsVisibilityProvider
+        self.geminiSettingsProvider = geminiSettingsProvider
         self.processUsageNotifications = processUsageNotifications
         self.localCodexUsageLoader = localCodexUsageLoader
         self.lastShowsResetCredits = resetCreditsVisibilityProvider()
         if let cachedSnapshot = try? store.load() {
             self.snapshot = cachedSnapshot
+            self.geminiSnapshot = cachedSnapshot.geminiModels
             if let cachedLocalUsage = cachedSnapshot.localCodexUsage {
                 // 共享缓存不保存任务标题；启动后先展示最近成功的统计，任务明细等待本次读取补齐。
                 self.localCodexUsage = LocalCodexUsageSnapshot(
@@ -394,6 +406,7 @@ final class UsageViewModel: ObservableObject {
         hasStartedRefreshLoop = true
         observeAppBehaviorSettings()
         observePopoverDisplaySettings()
+        observeGeminiSettings()
         applyRefreshCadence()
         Task { [weak self] in
             await self?.refreshLocalCodexUsage()
@@ -455,11 +468,13 @@ final class UsageViewModel: ObservableObject {
 
         do {
             let networkSnapshot = try await client.fetchUsageSnapshot(forceRefreshResetCredits: forceRefreshResetCredits)
+            let refreshedGeminiSnapshot = await refreshGeminiSnapshotIfEnabled()
             let updatedSnapshot = networkSnapshot.withLocalCodexUsage(
                 localCodexUsage?.summary ?? snapshot?.localCodexUsage
-            )
+            ).withGeminiModels(refreshedGeminiSnapshot)
             try store.save(updatedSnapshot)
             snapshot = updatedSnapshot
+            geminiSnapshot = updatedSnapshot.geminiModels
             processUsageNotifications(updatedSnapshot)
             errorMessage = nil
             logger.info("Refresh saved snapshot")
@@ -471,6 +486,7 @@ final class UsageViewModel: ObservableObject {
             if snapshot == nil {
                 snapshot = try? store.load()
             }
+            geminiSnapshot = geminiSnapshot ?? snapshot?.geminiModels
             if restoredCachedSnapshot, snapshot != nil {
                 // 网络刷新失败但旧缓存可用时，同步恢复额度小组件显示。
                 reloadWidgetTimelines()
@@ -478,8 +494,65 @@ final class UsageViewModel: ObservableObject {
         }
     }
 
+    /// 独立刷新 Gemini 配额；读取失败时保留上一次快照，不让 Codex 刷新链路失败。
+    private func refreshGeminiSnapshotIfEnabled() async -> GeminiModelsSnapshot? {
+        guard geminiSettingsProvider().isEnabled else {
+            geminiErrorMessage = nil
+            return geminiSnapshot ?? snapshot?.geminiModels
+        }
+        do {
+            let fetchedSnapshot = try await geminiClient.fetchGeminiModels()
+            geminiSnapshot = fetchedSnapshot
+            geminiErrorMessage = nil
+            return fetchedSnapshot
+        } catch {
+            geminiErrorMessage = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+            let cachedSnapshot = geminiSnapshot ?? snapshot?.geminiModels
+            geminiSnapshot = cachedSnapshot
+            return cachedSnapshot
+        }
+    }
+
+    /// 设置页启用 Gemini 后立即把独立快照合并进现有缓存；没有 Codex 快照时仍先发布到卡片。
+    private func refreshGeminiModels() async {
+        guard geminiSettingsProvider().isEnabled else {
+            geminiErrorMessage = nil
+            return
+        }
+        let refreshedSnapshot = await refreshGeminiSnapshotIfEnabled()
+        guard let refreshedSnapshot else {
+            return
+        }
+        guard let currentSnapshot = snapshot else {
+            return
+        }
+        let updatedSnapshot = currentSnapshot.withGeminiModels(refreshedSnapshot)
+        guard updatedSnapshot != currentSnapshot else {
+            return
+        }
+        try? store.save(updatedSnapshot)
+        snapshot = updatedSnapshot
+        reloadWidgetTimelines()
+    }
+
     private static func tone(for remainingPercent: Int?) -> UsageRemainingTone {
         UsageRemainingTone(remainingPercent: remainingPercent)
+    }
+
+    /// 监听 Gemini 独立配置；模型或开关变化时只刷新 Gemini，不重复请求 Codex。
+    private func observeGeminiSettings() {
+        guard geminiSettingsObserver == nil else {
+            return
+        }
+        geminiSettingsObserver = NotificationCenter.default.addObserver(
+            forName: .geminiModelsSettingsDidChange,
+            object: MenuBarDisplaySettings.sharedDefaults,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in
+                await self?.refreshGeminiModels()
+            }
+        }
     }
 
     /// 监听设置页里刷新频率的变化；只关心本 app 的偏好通知，避免 UserDefaults 全局噪声反复重启任务。

@@ -389,6 +389,120 @@ public struct CreditsSnapshot: Codable, Equatable, Sendable {
     }
 }
 
+/// 描述 Gemini Models 的单个额度窗口；只保存可展示的比例和重置信息，不保存认证材料。
+public struct GeminiQuotaWindow: Codable, Equatable, Identifiable, Sendable {
+    public let bucketId: String
+    public let title: String
+    public let remainingFraction: Double?
+    public let resetsAt: Date?
+    public let resetDescription: String?
+    public let disabled: Bool
+
+    public init(
+        bucketId: String,
+        title: String,
+        remainingFraction: Double?,
+        resetsAt: Date? = nil,
+        resetDescription: String? = nil,
+        disabled: Bool = false
+    ) {
+        self.bucketId = bucketId
+        self.title = title
+        self.remainingFraction = remainingFraction.map { min(max($0, 0), 1) }
+        self.resetsAt = resetsAt
+        self.resetDescription = resetDescription
+        self.disabled = disabled
+    }
+
+    public var id: String {
+        bucketId
+    }
+
+    /// 把接口返回的小数比例转换为四舍五入后的百分比；禁用或缺失数据保持未知。
+    public var remainingPercent: Int? {
+        guard !disabled, let remainingFraction else {
+            return nil
+        }
+        return Int((remainingFraction * 100).rounded())
+    }
+
+    /// 将 Antigravity 的窗口适配为 Codex 共用的 Pace 输入；未知周期保留进度条但不伪造节奏计算。
+    public var rateLimitWindow: RateLimitWindow? {
+        guard !disabled, let remainingFraction else {
+            return nil
+        }
+        let identifier = "\(bucketId) \(title)".lowercased()
+        let durationMins: Int
+        if identifier.contains("week") || identifier.contains("7d") {
+            durationMins = 7 * 24 * 60
+        } else if identifier.contains("five") || identifier.contains("5h") || identifier.contains("hour") {
+            durationMins = 5 * 60
+        } else {
+            return nil
+        }
+        return RateLimitWindow(
+            usedPercent: (1 - remainingFraction) * 100,
+            windowDurationMins: durationMins,
+            resetsAt: resetsAt.map { Int($0.timeIntervalSince1970) }
+        )
+    }
+}
+
+/// 描述 Gemini Models 的一组额度窗口，通常对应截图中的 Gemini 或 Claude/GPT 分组。
+public struct GeminiQuotaGroup: Codable, Equatable, Identifiable, Sendable {
+    public let id: String
+    public let title: String
+    public let description: String?
+    public let windows: [GeminiQuotaWindow]
+
+    public init(
+        id: String,
+        title: String,
+        description: String? = nil,
+        windows: [GeminiQuotaWindow]
+    ) {
+        self.id = id
+        self.title = title
+        self.description = description
+        self.windows = windows
+    }
+}
+
+/// 标记 Gemini 配额的实际来源，便于在界面上区分本地 Antigravity 和远端 OAuth。
+public enum GeminiModelsUsageSource: String, Codable, Equatable, Sendable {
+    case antigravityLocal = "antigravity-local"
+    case googleOAuth = "google-oauth"
+}
+
+/// 保存一次 Gemini Models 配额读取结果；旧版本快照没有该字段时会自然解码为 nil。
+public struct GeminiModelsSnapshot: Codable, Equatable, Sendable {
+    public let fetchedAt: Date
+    public let source: GeminiModelsUsageSource
+    public let accountEmail: String?
+    public let planName: String?
+    public let groups: [GeminiQuotaGroup]
+
+    public init(
+        fetchedAt: Date,
+        source: GeminiModelsUsageSource,
+        accountEmail: String? = nil,
+        planName: String? = nil,
+        groups: [GeminiQuotaGroup]
+    ) {
+        self.fetchedAt = fetchedAt
+        self.source = source
+        self.accountEmail = accountEmail
+        self.planName = planName
+        self.groups = groups
+    }
+
+    public var hasUsableQuota: Bool {
+        groups.contains { group in
+            group.windows.contains { $0.remainingPercent != nil }
+        }
+    }
+}
+
 public struct UsageSnapshot: Codable, Equatable, Sendable {
     public let fetchedAt: Date
     public let rateLimits: RateLimitSnapshot
@@ -396,6 +510,7 @@ public struct UsageSnapshot: Codable, Equatable, Sendable {
     public let profileStats: CodexProfileStats?
     public let resetCredits: ResetCreditsSnapshot?
     public let localCodexUsage: LocalCodexUsageSummary?
+    public let geminiModels: GeminiModelsSnapshot?
 
     public init(
         fetchedAt: Date,
@@ -403,7 +518,8 @@ public struct UsageSnapshot: Codable, Equatable, Sendable {
         account: CodexAccountSnapshot? = nil,
         profileStats: CodexProfileStats? = nil,
         resetCredits: ResetCreditsSnapshot? = nil,
-        localCodexUsage: LocalCodexUsageSummary? = nil
+        localCodexUsage: LocalCodexUsageSummary? = nil,
+        geminiModels: GeminiModelsSnapshot? = nil
     ) {
         self.fetchedAt = fetchedAt
         self.rateLimits = rateLimits
@@ -411,6 +527,7 @@ public struct UsageSnapshot: Codable, Equatable, Sendable {
         self.profileStats = profileStats
         self.resetCredits = resetCredits
         self.localCodexUsage = localCodexUsage
+        self.geminiModels = geminiModels
     }
 
     public var accountEmail: String? {
@@ -437,7 +554,21 @@ public struct UsageSnapshot: Codable, Equatable, Sendable {
             account: account,
             profileStats: profileStats,
             resetCredits: resetCredits,
-            localCodexUsage: localCodexUsage
+            localCodexUsage: localCodexUsage,
+            geminiModels: geminiModels
+        )
+    }
+
+    /// 返回带 Gemini 配额的新快照，保留 Codex 和本机统计字段。
+    public func withGeminiModels(_ geminiModels: GeminiModelsSnapshot?) -> UsageSnapshot {
+        UsageSnapshot(
+            fetchedAt: fetchedAt,
+            rateLimits: rateLimits,
+            account: account,
+            profileStats: profileStats,
+            resetCredits: resetCredits,
+            localCodexUsage: localCodexUsage,
+            geminiModels: geminiModels
         )
     }
 }

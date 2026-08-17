@@ -80,6 +80,9 @@ struct MenuBarView: View {
     private var popoverSettings: PopoverDisplaySettings {
         PopoverDisplaySettings(defaults: MenuBarDisplaySettings.sharedDefaults)
     }
+    private var geminiSettings: GeminiModelsSettings {
+        GeminiModelsSettings(defaults: MenuBarDisplaySettings.sharedDefaults)
+    }
     private var appearanceSettings: SurfaceAppearanceSettings {
         SurfaceAppearanceSettings(defaults: MenuBarDisplaySettings.sharedDefaults)
     }
@@ -402,6 +405,19 @@ struct MenuBarView: View {
                 }
             }
 
+            if geminiSettings.isEnabled, geminiSettings.showsInPopover {
+                GeminiModelsSection(
+                    geminiSettings: geminiSettings,
+                    displaySettings: settings,
+                    showsPaceComparison: popoverSettings.showsPaceComparison,
+                    snapshot: viewModel.geminiSnapshot,
+                    errorMessage: viewModel.geminiErrorMessage,
+                    formatter: formatter,
+                    resetTimeDisplayStyle: popoverSettings.resetTimeDisplayStyle,
+                    onPaceMarkerHoverChange: updateActivePaceHelpText
+                )
+            }
+
             if let errorMessage = viewModel.errorMessage {
                 Label(errorMessage, systemImage: "exclamationmark.triangle")
                     .font(.caption)
@@ -467,6 +483,171 @@ private struct MenuBarAccountSummary: View {
         .minimumScaleFactor(0.72)
         .frame(maxWidth: 210, alignment: .trailing)
     }
+}
+
+/// 下拉面板中的 Gemini 独立配额卡；只展示 Antigravity 或 OAuth 实际返回的窗口。
+private struct GeminiModelsSection: View {
+    let geminiSettings: GeminiModelsSettings
+    let displaySettings: MenuBarDisplaySettings
+    let showsPaceComparison: Bool
+    let snapshot: GeminiModelsSnapshot?
+    let errorMessage: String?
+    let formatter: UsageFormatter
+    let resetTimeDisplayStyle: ResetTimeDisplayStyle
+    let onPaceMarkerHoverChange: (String?, Bool) -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 8) {
+                Label(AppLocalization.string("Antigravity"), systemImage: "sparkles")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                Spacer(minLength: 8)
+                if let accountEmail = snapshot?.accountEmail, !accountEmail.isEmpty {
+                    Text(accountEmail)
+                        .font(.caption2.weight(.medium))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.72)
+                }
+            }
+
+            if let snapshot {
+                ForEach(visibleGroups(snapshot)) { group in
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(group.title)
+                            .font(.caption.weight(.semibold))
+                        ForEach(group.windows) { window in
+                            geminiWindow(window)
+                        }
+                    }
+                }
+                if visibleGroups(snapshot).isEmpty {
+                    Text(AppLocalization.string("当前模型没有可用配额窗口。"))
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+            } else if let errorMessage, !errorMessage.isEmpty {
+                Label(errorMessage, systemImage: "exclamationmark.triangle")
+                    .font(.caption2)
+                    .foregroundStyle(.orange)
+                    .fixedSize(horizontal: false, vertical: true)
+            } else {
+                Label(AppLocalization.string("等待 Antigravity 配额刷新。"), systemImage: "arrow.triangle.2.circlepath")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .padding(8)
+        .background(Color(nsColor: .controlBackgroundColor).opacity(0.46))
+        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+    }
+
+    /// 按选择的配额组过滤窗口；摘要接口只有总 Gemini 组时仍保留真实返回的数据。
+    private func visibleGroups(_ snapshot: GeminiModelsSnapshot) -> [GeminiQuotaGroup] {
+        switch geminiSettings.model {
+        case .all:
+            return snapshot.groups
+        default:
+            return snapshot.groups.filter { geminiSettings.model.matches(group: $0) }
+        }
+    }
+
+    /// 渲染单个 Antigravity 配额窗口，复用 Codex 的刻度、节奏线和配置颜色。
+    private func geminiWindow(_ window: GeminiQuotaWindow) -> some View {
+        let rateLimitWindow = window.rateLimitWindow
+        let tone = UsageRemainingTone(remainingPercent: window.remainingPercent)
+        let paceDisplay = showsPaceComparison
+            ? UsageWindowPaceDisplay(
+                id: window.id,
+                title: window.title,
+                window: rateLimitWindow,
+                weeklyProgressWorkDays: displaySettings.weeklyProgressWorkDays
+            )?.display
+            : nil
+        let paceMarker = paceMarker(for: rateLimitWindow)
+
+        return VStack(alignment: .leading, spacing: 5) {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Text(window.title)
+                    .font(.caption2.weight(.semibold))
+                    .lineLimit(1)
+                Spacer(minLength: 4)
+                Text(window.remainingPercent.map { "\($0)%" } ?? "--")
+                    .font(.caption.weight(.semibold).monospacedDigit())
+                    .foregroundStyle(tone.statusBarColor(settings: displaySettings))
+            }
+
+            if let paceDisplay {
+                Text(paceDisplay.detailText(language: currentAppLanguage()))
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(paceDisplay.tone.statusBarColor(settings: displaySettings))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.68)
+                    .frame(maxWidth: .infinity, alignment: .trailing)
+                    .help(paceDisplay.detailText(language: currentAppLanguage()))
+            }
+
+            WorkdayMarkedProgressView(
+                value: Double(window.remainingPercent ?? 0),
+                tint: tone.statusBarColor(settings: displaySettings),
+                markers: usageProgressSegmentPercents(
+                    workDays: displaySettings.weeklyProgressWorkDays,
+                    windowDurationMins: rateLimitWindow?.windowDurationMins
+                ),
+                paceMarker: paceMarker,
+                onPaceMarkerHoverChange: { isHovered in
+                    onPaceMarkerHoverChange(paceMarker?.helpText, isHovered)
+                }
+            )
+
+            if let resetText = resetText(for: window, rateLimitWindow: rateLimitWindow) {
+                Text("\(AppLocalization.string("重置")) \(resetText)")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.78)
+            }
+        }
+    }
+
+    /// 按当前弹窗时间样式显示窗口重置时间；旧接口只有描述时保留原始文案。
+    private func resetText(for window: GeminiQuotaWindow, rateLimitWindow: RateLimitWindow?) -> String? {
+        switch resetTimeDisplayStyle {
+        case .countdown:
+            if rateLimitWindow?.resetsAt != nil {
+                return formatter.resetRemainingText(window: rateLimitWindow)
+            }
+        case .absolute:
+            if rateLimitWindow?.resetsAt != nil {
+                return formatter.resetTime(epochSeconds: rateLimitWindow?.resetsAt)
+            }
+        }
+        guard let resetDescription = window.resetDescription, !resetDescription.isEmpty else {
+            return nil
+        }
+        return resetDescription
+    }
+
+    /// 生成和 Codex 相同的理论节奏标记，并沿用当前工作日刻度配置。
+    private func paceMarker(for window: RateLimitWindow?) -> ProgressPaceMarker? {
+        guard let pace = window?.usagePace(weeklyProgressWorkDays: displaySettings.weeklyProgressWorkDays),
+              pace.isDisplayable(),
+              abs(pace.roundedDeltaPercent) > 2
+        else {
+            return nil
+        }
+        return ProgressPaceMarker(
+            percent: 100 - pace.expectedUsedPercent,
+            color: pace.deltaPercent <= 0 ? .green : .red,
+            helpText: AppLocalization.string(
+                pace.deltaPercent <= 0
+                    ? "绿色线：按当前时间进度推算的理论剩余位置；绿色表示实际用得比理论慢，有余量。"
+                    : "红色线：按当前时间进度推算的理论剩余位置；红色表示实际用得比理论快，可能提前耗尽。"
+            )
+        )
+    }
+
 }
 
 private struct QuotaSummaryGrid: View {

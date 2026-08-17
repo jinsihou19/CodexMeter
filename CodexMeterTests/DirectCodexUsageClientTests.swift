@@ -2,6 +2,18 @@ import XCTest
 @testable import CodexMeterShared
 
 final class DirectCodexUsageClientTests: XCTestCase {
+    /// 仅在显式开启时探测当前机器的 Antigravity，验证真实本地服务链路而不让普通测试依赖用户环境。
+    func testLiveAntigravityGeminiQuotaWhenOptedIn() async throws {
+        guard ProcessInfo.processInfo.environment["CODEX_USAGE_RUN_GEMINI_INTEGRATION"] == "1" else {
+            throw XCTSkip("未开启 Gemini 本机集成测试")
+        }
+
+        let snapshot = try await AntigravityGeminiModelsClient().fetchGeminiModels()
+
+        XCTAssertTrue(snapshot.hasUsableQuota)
+        XCTAssertFalse(snapshot.groups.isEmpty)
+    }
+
     func testFetchesWhamUsageWithCodexAuthToken() async throws {
         let authFile = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString)

@@ -219,8 +219,12 @@ final class StatusBarController: NSObject {
         self.viewModel = viewModel
         self.radarStore = radarStore
         let settings = MenuBarDisplaySettings(defaults: MenuBarDisplaySettings.sharedDefaults)
-        let lines = StatusLineDisplay.lines(viewModel: viewModel, settings: settings)
-        let statusWidth = StatusBarDisplayMetrics.statusItemWidth(for: lines, settings: settings)
+        let display = StatusLineDisplay.menuBarDisplay(viewModel: viewModel, settings: settings)
+        let statusWidth = StatusBarDisplayMetrics.statusItemWidth(
+            for: display.codexLines,
+            settings: settings,
+            trailingLines: display.trailingGeminiLines
+        )
         self.statusItem = NSStatusBar.system.statusItem(withLength: statusWidth)
         super.init()
         activityStore.start()
@@ -247,8 +251,12 @@ final class StatusBarController: NSObject {
         button.action = #selector(togglePopover(_:))
 
         let settings = MenuBarDisplaySettings(defaults: MenuBarDisplaySettings.sharedDefaults)
-        let lines = StatusLineDisplay.lines(viewModel: viewModel, settings: settings)
-        let statusWidth = StatusBarDisplayMetrics.statusItemWidth(for: lines, settings: settings)
+        let display = StatusLineDisplay.menuBarDisplay(viewModel: viewModel, settings: settings)
+        let statusWidth = StatusBarDisplayMetrics.statusItemWidth(
+            for: display.codexLines,
+            settings: settings,
+            trailingLines: display.trailingGeminiLines
+        )
         let label = PassthroughHostingView(rootView: StatusBarLabel(
             viewModel: viewModel,
             activityStore: activityStore,
@@ -333,9 +341,12 @@ final class StatusBarController: NSObject {
 
     private func applyStatusDisplay(settings: MenuBarDisplaySettings? = nil) {
         let settings = settings ?? MenuBarDisplaySettings(defaults: MenuBarDisplaySettings.sharedDefaults)
-        let lines = StatusLineDisplay.lines(viewModel: viewModel, settings: settings)
+        let display = StatusLineDisplay.menuBarDisplay(viewModel: viewModel, settings: settings)
+        let lines = display.codexLines
+        let trailingGeminiLines = display.trailingGeminiLines
         let activityDisplay = settings.showsHookActivityLight ? activityStore.display : CodexHookActivityDisplay(snapshot: nil)
-        if !activityDisplay.isVisible,
+        if trailingGeminiLines.isEmpty,
+           !activityDisplay.isVisible,
            NativeStatusBarTitle.text(for: lines) != nil,
            let line = lines.first
         {
@@ -348,7 +359,8 @@ final class StatusBarController: NSObject {
         let statusWidth = StatusBarDisplayMetrics.statusItemWidth(
             for: lines,
             settings: settings,
-            activityDisplay: activityDisplay
+            activityDisplay: activityDisplay,
+            trailingLines: trailingGeminiLines
         )
         statusItem.length = statusWidth
         statusItem.button?.title = ""
@@ -586,7 +598,9 @@ private struct StatusBarLabel: View {
     }
 
     private var content: some View {
-        let lines = StatusLineDisplay.lines(viewModel: viewModel, settings: settings)
+        let display = StatusLineDisplay.menuBarDisplay(viewModel: viewModel, settings: settings)
+        let lines = display.codexLines
+        let trailingGeminiLines = display.trailingGeminiLines
         let activityDisplay = menuBarActivityDisplay
         return HStack(alignment: .center, spacing: 0) {
             if activityDisplay.isVisible {
@@ -621,10 +635,39 @@ private struct StatusBarLabel: View {
                     )
                 }
             }
+
+            if !trailingGeminiLines.isEmpty {
+                Color.clear
+                    .frame(width: StatusBarDisplayMetrics.trailingProviderSeparatorSpacing)
+                Image(systemName: "sparkles")
+                    .font(.system(size: 11, weight: .semibold))
+                    .frame(width: StatusBarDisplayMetrics.trailingGeminiIconWidth)
+                    .foregroundStyle(.primary)
+                    .accessibilityHidden(true)
+                Color.clear
+                    .frame(width: StatusBarDisplayMetrics.trailingGeminiIconTextSpacing)
+                VStack(alignment: .trailing, spacing: lineSpacing(settings: settings)) {
+                    ForEach(trailingGeminiLines) { line in
+                        statusLine(
+                            label: line.label,
+                            value: line.value,
+                            tone: line.tone,
+                            settings: settings,
+                            usesSingleLineTypography: trailingGeminiLines.count == 1
+                        )
+                    }
+                }
+            }
         }
         .frame(width: statusWidth, height: settings.statusLabelHeight, alignment: .center)
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel(Text(accessibilityText(lines: lines, activityDisplay: activityDisplay)))
+        .accessibilityLabel(
+            Text(accessibilityText(
+                lines: lines,
+                trailingGeminiLines: trailingGeminiLines,
+                activityDisplay: activityDisplay
+            ))
+        )
     }
 
     /// 设置关闭或 hook 回到空闲时，菜单栏活动指示完全不参与布局。
@@ -686,9 +729,10 @@ private struct StatusBarLabel: View {
     /// 组合菜单栏读数和可见 hook 状态，给 VoiceOver 一个完整但不啰嗦的说明。
     private func accessibilityText(
         lines: [StatusLineDisplay],
+        trailingGeminiLines: [StatusLineDisplay],
         activityDisplay: CodexHookActivityDisplay
     ) -> String {
-        let quotaText = lines
+        let quotaText = (lines + trailingGeminiLines)
             .map { line in
                 line.label.isEmpty ? line.value : "\(line.label) \(line.value)"
             }

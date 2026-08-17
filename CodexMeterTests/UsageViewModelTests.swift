@@ -30,7 +30,7 @@ final class UsageViewModelTests: XCTestCase {
         )
     }
 
-    /// 验证设置页使用七个稳定入口和原生分组控件，并把高级内容并入 Codex。
+    /// 验证设置页使用八个稳定入口和原生分组控件，并把高级内容并入 Codex。
     func testSettingsUsesSimplifiedNativeStructure() throws {
         let testFileURL = URL(fileURLWithPath: #filePath)
         let projectRoot = testFileURL
@@ -603,6 +603,180 @@ final class UsageViewModelTests: XCTestCase {
         XCTAssertTrue(settings.showsMenuBarIcon)
         XCTAssertFalse(settings.showsHookActivityLight)
         XCTAssertEqual(settings.hookActivityIndicatorStyle, .signature)
+    }
+
+    /// 验证 Antigravity 配置使用独立偏好，并在开启菜单栏展示后生成右侧两行摘要。
+    func testGeminiModelsSettingsAddsIndependentMenuLine() {
+        let suiteName = "CodexMeterTests.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defer {
+            defaults.removePersistentDomain(forName: suiteName)
+        }
+        defaults.set(true, forKey: GeminiModelsPreferenceKeys.isEnabled)
+        defaults.set(GeminiModelOption.claudeAndGPTModels.rawValue, forKey: GeminiModelsPreferenceKeys.model)
+        defaults.set(false, forKey: GeminiModelsPreferenceKeys.showsInPopover)
+        defaults.set(true, forKey: GeminiModelsPreferenceKeys.showsInMenuBar)
+
+        let geminiSettings = GeminiModelsSettings(defaults: defaults)
+        let display = StatusLineDisplay.menuBarDisplay(
+            snapshot: nil,
+            settings: MenuBarDisplaySettings(),
+            geminiSettings: geminiSettings
+        )
+
+        XCTAssertTrue(geminiSettings.isEnabled)
+        XCTAssertEqual(geminiSettings.model, .claudeAndGPTModels)
+        XCTAssertFalse(geminiSettings.showsInPopover)
+        XCTAssertTrue(geminiSettings.showsInMenuBar)
+        XCTAssertEqual(display.codexLines.count, 1)
+        XCTAssertEqual(display.trailingGeminiLines.map(\.label), ["7d", "5h"])
+        XCTAssertEqual(display.trailingGeminiLines.map(\.value), ["--", "--"])
+    }
+
+    /// 验证 Gemini 与 Claude/GPT 配额组的筛选不会把两个池混在一起。
+    func testGeminiModelOptionMatchesQuotaGroups() {
+        let geminiGroup = GeminiQuotaGroup(id: "gemini-models", title: "Gemini Models", windows: [])
+        let claudeGroup = GeminiQuotaGroup(id: "claude-gpt-models", title: "Claude and GPT models", windows: [])
+
+        XCTAssertTrue(GeminiModelOption.all.matches(group: geminiGroup))
+        XCTAssertTrue(GeminiModelOption.all.matches(group: claudeGroup))
+        XCTAssertTrue(GeminiModelOption.geminiModels.matches(group: geminiGroup))
+        XCTAssertFalse(GeminiModelOption.geminiModels.matches(group: claudeGroup))
+        XCTAssertFalse(GeminiModelOption.claudeAndGPTModels.matches(group: geminiGroup))
+        XCTAssertTrue(GeminiModelOption.claudeAndGPTModels.matches(group: claudeGroup))
+    }
+
+    /// 验证 Antigravity 配额摘要能解析嵌套 remainingFraction、重置时间和账户套餐。
+    func testGeminiQuotaSummaryParserReadsNestedRemainingAndIdentity() throws {
+        let data = Data(#"""
+        {
+          "response": {
+            "groups": [
+              {
+                "displayName": "Gemini Models",
+                "buckets": [
+                  {
+                    "bucketId": "weekly",
+                    "displayName": "Weekly Limit Remaining",
+                    "remaining": { "remainingFraction": 0.75 },
+                    "resetTime": "2026-08-20T12:00:00Z"
+                  },
+                  {
+                    "bucketId": "five-hour",
+                    "displayName": "Five Hour Limit Remaining",
+                    "remainingFraction": 0.99
+                  }
+                ]
+              }
+            ]
+          }
+        }
+        """#.utf8)
+
+        let snapshot = try AntigravityGeminiResponseParser.parseQuotaSummary(
+            data,
+            fetchedAt: Date(timeIntervalSince1970: 1_800_000_000),
+            source: .antigravityLocal
+        )
+
+        XCTAssertTrue(snapshot.hasUsableQuota)
+        XCTAssertEqual(snapshot.groups.count, 1)
+        XCTAssertEqual(snapshot.groups[0].id, "summary-0")
+        XCTAssertEqual(snapshot.groups[0].windows.map(\.remainingPercent), [75, 99])
+        XCTAssertEqual(snapshot.groups[0].windows[0].title, "Weekly Limit Remaining")
+        XCTAssertNotNil(snapshot.groups[0].windows[0].resetsAt)
+
+        let identity = AntigravityGeminiResponseParser.parseIdentity(Data(#"""
+        {
+          "userStatus": {
+            "email": "pro@example.com",
+            "userTier": { "preferredName": "Google AI Pro" }
+          }
+        }
+        """#.utf8))
+        XCTAssertEqual(identity.email, "pro@example.com")
+        XCTAssertEqual(identity.plan, "Google AI Pro")
+    }
+
+    /// 验证 Antigravity 的标准周/五小时窗口能接入 Codex 共用的 Pace 计算输入。
+    func testGeminiQuotaWindowAdaptsKnownPeriodsToRateLimitWindow() {
+        let weekly = GeminiQuotaWindow(
+            bucketId: "gemini-weekly",
+            title: "Weekly Limit Remaining",
+            remainingFraction: 0.42,
+            resetsAt: Date(timeIntervalSince1970: 2_000_000_000)
+        )
+        let fiveHour = GeminiQuotaWindow(
+            bucketId: "gemini-5h",
+            title: "Five Hour Limit Remaining",
+            remainingFraction: 0.70
+        )
+        let unknown = GeminiQuotaWindow(
+            bucketId: "custom",
+            title: "Custom Limit Remaining",
+            remainingFraction: 0.80
+        )
+
+        XCTAssertEqual(weekly.rateLimitWindow?.windowDurationMins, 10_080)
+        XCTAssertEqual(weekly.rateLimitWindow?.remainingPercent, 42)
+        XCTAssertEqual(weekly.rateLimitWindow?.resetsAt, 2_000_000_000)
+        XCTAssertEqual(fiveHour.rateLimitWindow?.windowDurationMins, 300)
+        XCTAssertNil(unknown.rateLimitWindow)
+    }
+
+    /// 验证 Antigravity 刷新结果独立合并进快照，并能驱动菜单栏右侧两行摘要显示真实比例。
+    func testRefreshMergesGeminiSnapshotIntoUsageAndMenuLines() async throws {
+        let geminiSnapshot = GeminiModelsSnapshot(
+            fetchedAt: Date(timeIntervalSince1970: 1_800_000_000),
+            source: .antigravityLocal,
+            accountEmail: "pro@example.com",
+            planName: "Google AI Pro",
+            groups: [
+                GeminiQuotaGroup(
+                    id: "gemini-models",
+                    title: "Gemini Models",
+                    windows: [
+                        GeminiQuotaWindow(
+                            bucketId: "weekly",
+                            title: "Weekly Limit Remaining",
+                            remainingFraction: 0.42
+                        )
+                    ]
+                )
+            ]
+        )
+        let viewModel = UsageViewModel(
+            client: StubRateLimitClient(snapshot: Self.emptyRateLimits()),
+            store: UsageSnapshotStore(
+                appGroupIdentifier: "",
+                fallbackDirectory: FileManager.default.temporaryDirectory
+                    .appendingPathComponent(UUID().uuidString, isDirectory: true)
+            ),
+            reloadWidgetTimelines: {},
+            refreshCadenceProvider: { .manual },
+            geminiClient: StubGeminiClient(snapshot: geminiSnapshot),
+            geminiSettingsProvider: {
+                GeminiModelsSettings(
+                    isEnabled: true,
+                    model: .all,
+                    showsInPopover: true,
+                    showsInMenuBar: true
+                )
+            },
+            localCodexUsageLoader: { nil }
+        )
+
+        await viewModel.refresh()
+
+        XCTAssertEqual(viewModel.snapshot?.geminiModels, geminiSnapshot)
+        XCTAssertEqual(viewModel.geminiSnapshot, geminiSnapshot)
+        let display = StatusLineDisplay.menuBarDisplay(
+            viewModel: viewModel,
+            settings: MenuBarDisplaySettings()
+        )
+        XCTAssertEqual(display.trailingGeminiLines.map(\.label), ["7d", "5h"])
+        XCTAssertEqual(display.trailingGeminiLines.map(\.value), ["42%", "--"])
+        XCTAssertEqual(display.trailingGeminiLines.first?.tone, .warning)
     }
 
     func testStatusBarWidthUsesPaceContentInsteadOfRemainingFallbackWhenIconShown() {
@@ -1899,8 +2073,9 @@ final class UsageViewModelTests: XCTestCase {
         await viewModel.refresh()
 
         let lines = StatusLineDisplay.lines(
-            viewModel: viewModel,
-            settings: MenuBarDisplaySettings(contentMode: .paceComparison)
+            snapshot: viewModel.snapshot,
+            settings: MenuBarDisplaySettings(contentMode: .paceComparison),
+            geminiSettings: GeminiModelsSettings()
         )
 
         XCTAssertEqual(lines.map(\.id), ["primary", "secondary"])
@@ -1933,8 +2108,21 @@ final class UsageViewModelTests: XCTestCase {
         let weeklyOnly = MenuBarDisplaySettings(showsPrimaryWindow: false, showsSecondaryWindow: true)
         let sessionOnly = MenuBarDisplaySettings(showsPrimaryWindow: true, showsSecondaryWindow: false)
 
-        XCTAssertEqual(StatusLineDisplay.lines(viewModel: viewModel, settings: weeklyOnly).map(\.label), ["7d"])
-        XCTAssertTrue(StatusLineDisplay.lines(viewModel: viewModel, settings: sessionOnly).isEmpty)
+        XCTAssertEqual(
+            StatusLineDisplay.lines(
+                snapshot: snapshot,
+                settings: weeklyOnly,
+                geminiSettings: GeminiModelsSettings()
+            ).map(\.label),
+            ["7d"]
+        )
+        XCTAssertTrue(
+            StatusLineDisplay.lines(
+                snapshot: snapshot,
+                settings: sessionOnly,
+                geminiSettings: GeminiModelsSettings()
+            ).isEmpty
+        )
         XCTAssertEqual(CodexMeterWidgetDisplay(snapshot: snapshot, settings: weeklyOnly).lines.map(\.title), ["7 天"])
         XCTAssertTrue(CodexMeterWidgetDisplay(snapshot: snapshot, settings: sessionOnly).lines.isEmpty)
     }
@@ -2040,6 +2228,182 @@ final class UsageViewModelTests: XCTestCase {
         XCTAssertEqual(previewData.paceRemainingTone, .unavailable)
     }
 
+    /// 验证设置预览使用缓存中的 Antigravity 窗口，而不是把已存在的数据渲染成占位符。
+    func testMenuBarDisplayRendersCachedAntigravityWindows() {
+        let geminiSnapshot = GeminiModelsSnapshot(
+            fetchedAt: Date(timeIntervalSince1970: 1_779_940_000),
+            source: .antigravityLocal,
+            groups: [
+                GeminiQuotaGroup(
+                    id: "gemini-models",
+                    title: "Gemini Models",
+                    windows: [
+                        GeminiQuotaWindow(
+                            bucketId: "gemini-weekly",
+                            title: "Weekly Limit Remaining",
+                            remainingFraction: 0.78
+                        ),
+                        GeminiQuotaWindow(
+                            bucketId: "gemini-5h",
+                            title: "Five Hour Limit Remaining",
+                            remainingFraction: 0.70
+                        )
+                    ]
+                )
+            ]
+        )
+        let display = StatusLineDisplay.menuBarDisplay(
+            snapshot: UsageSnapshot(
+                fetchedAt: geminiSnapshot.fetchedAt,
+                rateLimits: Self.emptyRateLimits(),
+                geminiModels: geminiSnapshot
+            ),
+            settings: MenuBarDisplaySettings(),
+            geminiSettings: GeminiModelsSettings(
+                isEnabled: true,
+                showsInMenuBar: true
+            ),
+            geminiSnapshot: geminiSnapshot
+        )
+
+        XCTAssertEqual(display.trailingGeminiLines.map(\.label), ["7d", "5h"])
+        XCTAssertEqual(display.trailingGeminiLines.map(\.value), ["78%", "70%"])
+    }
+
+    /// 验证 Antigravity 的预期消耗对比与 Codex 一样只输出一组两行数值。
+    func testMenuBarDisplayUsesOneAntigravityPacePair() {
+        let geminiSnapshot = GeminiModelsSnapshot(
+            fetchedAt: Date(),
+            source: .antigravityLocal,
+            groups: [
+                GeminiQuotaGroup(
+                    id: "gemini-models",
+                    title: "Gemini Models",
+                    windows: [
+                        GeminiQuotaWindow(
+                            bucketId: "gemini-weekly",
+                            title: "Weekly Limit Remaining",
+                            remainingFraction: 0.78,
+                            resetsAt: Date(timeIntervalSinceNow: 3_600)
+                        ),
+                        GeminiQuotaWindow(
+                            bucketId: "gemini-5h",
+                            title: "Five Hour Limit Remaining",
+                            remainingFraction: 0.70,
+                            resetsAt: Date(timeIntervalSinceNow: 3_600)
+                        )
+                    ]
+                )
+            ]
+        )
+        let display = StatusLineDisplay.menuBarDisplay(
+            snapshot: UsageSnapshot(
+                fetchedAt: geminiSnapshot.fetchedAt,
+                rateLimits: Self.emptyRateLimits(),
+                geminiModels: geminiSnapshot
+            ),
+            settings: MenuBarDisplaySettings(contentMode: .paceComparison),
+            geminiSettings: GeminiModelsSettings(isEnabled: true, showsInMenuBar: true),
+            geminiSnapshot: geminiSnapshot
+        )
+
+        XCTAssertEqual(display.trailingGeminiLines.count, 2)
+        XCTAssertEqual(display.trailingGeminiLines.map(\.label), ["", ""])
+        XCTAssertEqual(display.trailingGeminiLines.first?.value, "70%")
+    }
+
+    /// 验证 Antigravity 有 5 小时时，剩余百分比和预期消耗偏差都取 5h。
+    func testMenuBarDisplayUsesFiveHourWindowForPace() {
+        let now = Date()
+        let geminiSnapshot = GeminiModelsSnapshot(
+            fetchedAt: now,
+            source: .antigravityLocal,
+            groups: [
+                GeminiQuotaGroup(
+                    id: "gemini-models",
+                    title: "Gemini Models",
+                    windows: [
+                        GeminiQuotaWindow(
+                            bucketId: "gemini-weekly",
+                            title: "Weekly Limit Remaining",
+                            remainingFraction: 0.10,
+                            resetsAt: now.addingTimeInterval(3_600)
+                        ),
+                        GeminiQuotaWindow(
+                            bucketId: "gemini-5h",
+                            title: "Five Hour Limit Remaining",
+                            remainingFraction: 0.63,
+                            resetsAt: now.addingTimeInterval(7_200)
+                        )
+                    ]
+                ),
+                GeminiQuotaGroup(
+                    id: "claude-gpt-models",
+                    title: "Claude and GPT models",
+                    windows: [
+                        GeminiQuotaWindow(
+                            bucketId: "claude-weekly",
+                            title: "Weekly Limit Remaining",
+                            remainingFraction: 0.90,
+                            resetsAt: now.addingTimeInterval(3_600)
+                        )
+                    ]
+                )
+            ]
+        )
+        let display = StatusLineDisplay.menuBarDisplay(
+            snapshot: UsageSnapshot(
+                fetchedAt: now,
+                rateLimits: Self.emptyRateLimits(),
+                geminiModels: geminiSnapshot
+            ),
+            settings: MenuBarDisplaySettings(contentMode: .paceComparison),
+            geminiSettings: GeminiModelsSettings(isEnabled: true, showsInMenuBar: true),
+            geminiSnapshot: geminiSnapshot
+        )
+
+        XCTAssertEqual(display.trailingGeminiLines.map(\.label), ["", ""])
+        XCTAssertEqual(display.trailingGeminiLines.map(\.value), ["63%", "-23%"])
+    }
+
+    /// 验证 Antigravity 没有 5h 时，剩余百分比和预期消耗偏差回退到 7d。
+    func testMenuBarDisplayFallsBackToWeeklyWindowForPace() {
+        let now = Date()
+        let geminiSnapshot = GeminiModelsSnapshot(
+            fetchedAt: now,
+            source: .antigravityLocal,
+            groups: [
+                GeminiQuotaGroup(
+                    id: "gemini-models",
+                    title: "Gemini Models",
+                    windows: [
+                        GeminiQuotaWindow(
+                            bucketId: "gemini-weekly",
+                            title: "Weekly Limit Remaining",
+                            remainingFraction: 0.76,
+                            resetsAt: now.addingTimeInterval(3 * 86_400)
+                        )
+                    ]
+                )
+            ]
+        )
+        let display = StatusLineDisplay.menuBarDisplay(
+            snapshot: UsageSnapshot(
+                fetchedAt: now,
+                rateLimits: Self.emptyRateLimits(),
+                geminiModels: geminiSnapshot
+            ),
+            settings: MenuBarDisplaySettings(
+                contentMode: .paceComparison,
+                weeklyProgressWorkDays: 7
+            ),
+            geminiSettings: GeminiModelsSettings(isEnabled: true, showsInMenuBar: true),
+            geminiSnapshot: geminiSnapshot
+        )
+
+        XCTAssertEqual(display.trailingGeminiLines.map(\.value), ["76%", "-33%"])
+    }
+
     /// Pace 缺少重置时间无法计算时，预览与真实菜单栏都应回退到实际可见窗口。
     func testStatusLinesFallBackToVisibleQuotaWhenPaceIsUnavailable() {
         let snapshot = UsageSnapshot(
@@ -2057,7 +2421,11 @@ final class UsageViewModelTests: XCTestCase {
         let settings = MenuBarDisplaySettings(contentMode: .paceComparison)
 
         XCTAssertEqual(
-            StatusLineDisplay.lines(snapshot: snapshot, settings: settings),
+            StatusLineDisplay.lines(
+                snapshot: snapshot,
+                settings: settings,
+                geminiSettings: GeminiModelsSettings()
+            ),
             [StatusLineDisplay(id: "secondary", label: "7d", value: "98%", tone: .good)]
         )
     }
@@ -2103,6 +2471,16 @@ private struct StubRateLimitClient: UsageRateLimitFetching {
     let snapshot: RateLimitSnapshot
 
     func fetchRateLimits() async throws -> RateLimitSnapshot {
+        snapshot
+    }
+}
+
+/// 用固定快照验证 Gemini 配额刷新与 UsageSnapshot 合并链路。
+private struct StubGeminiClient: GeminiModelsUsageFetching {
+    let snapshot: GeminiModelsSnapshot
+
+    /// 返回预置 Gemini 快照，避免测试依赖本机 Antigravity 或 OAuth 状态。
+    func fetchGeminiModels() async throws -> GeminiModelsSnapshot {
         snapshot
     }
 }

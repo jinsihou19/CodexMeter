@@ -110,6 +110,7 @@ struct SettingsView: View {
         case popover
         case widget
         case codex
+        case gemini
         case about
 
         var id: String {
@@ -130,6 +131,8 @@ struct SettingsView: View {
                 return "小组件"
             case .codex:
                 return "Codex"
+            case .gemini:
+                return "Antigravity"
             case .about:
                 return "关于"
             }
@@ -149,6 +152,8 @@ struct SettingsView: View {
                 return "rectangle.grid.2x2"
             case .codex:
                 return "doc.text.magnifyingglass"
+            case .gemini:
+                return "sparkles"
             case .about:
                 return "info.circle"
             }
@@ -164,6 +169,10 @@ struct SettingsView: View {
     @AppStorage(UsageCelebrationPreferenceKeys.resetOption, store: MenuBarDisplaySettings.sharedDefaults) private var resetCelebrationOption = UsageResetCelebrationOption.off.rawValue
     @AppStorage(CodexRadarPreferenceKeys.isEnabled, store: MenuBarDisplaySettings.sharedDefaults) private var codexRadarEnabled = CodexRadarSettings.defaultIsEnabled
     @AppStorage(CodexRadarPreferenceKeys.showsScoreChart, store: MenuBarDisplaySettings.sharedDefaults) private var codexRadarShowsScoreChart = CodexRadarSettings.defaultShowsScoreChart
+    @AppStorage(GeminiModelsPreferenceKeys.isEnabled, store: MenuBarDisplaySettings.sharedDefaults) private var geminiModelsEnabled = GeminiModelsSettings.defaultIsEnabled
+    @AppStorage(GeminiModelsPreferenceKeys.model, store: MenuBarDisplaySettings.sharedDefaults) private var geminiModel = GeminiModelsSettings.defaultModel.rawValue
+    @AppStorage(GeminiModelsPreferenceKeys.showsInPopover, store: MenuBarDisplaySettings.sharedDefaults) private var geminiShowsInPopover = GeminiModelsSettings.defaultShowsInPopover
+    @AppStorage(GeminiModelsPreferenceKeys.showsInMenuBar, store: MenuBarDisplaySettings.sharedDefaults) private var geminiShowsInMenuBar = GeminiModelsSettings.defaultShowsInMenuBar
     @AppStorage(SurfaceAppearancePreferenceKeys.appearanceMode, store: MenuBarDisplaySettings.sharedDefaults) private var surfaceAppearanceMode = SurfaceAppearanceSettings.defaultAppearanceMode.rawValue
     @AppStorage(SurfaceAppearancePreferenceKeys.cardOpacity, store: MenuBarDisplaySettings.sharedDefaults) private var surfaceCardOpacity = SurfaceAppearanceSettings.defaultCardOpacity
 
@@ -248,7 +257,7 @@ struct SettingsView: View {
         AppLocalization.string(key, language: activeLanguage)
     }
 
-    /// 使用原生侧栏和分组表单承载六个稳定入口；只重组呈现，不改变设置存储与通知路径。
+    /// 使用原生侧栏和分组表单承载八个稳定入口；只重组呈现，不改变设置存储与通知路径。
     private var content: some View {
         HStack(spacing: 0) {
             sidebar
@@ -284,7 +293,7 @@ struct SettingsView: View {
         return NSImage(named: NSImage.Name(resourceName)) ?? NSApplication.shared.applicationIconImage
     }
 
-    /// 原生侧栏展示六个稳定入口，底部版本入口始终可见并可跳转到关于页。
+    /// 原生侧栏展示八个稳定入口，底部版本入口始终可见并可跳转到关于页。
     private var sidebar: some View {
         VStack(spacing: 0) {
             List(selection: sidebarSelection) {
@@ -356,6 +365,8 @@ struct SettingsView: View {
             widgetPane
         case .codex:
             codexPane
+        case .gemini:
+            geminiPane
         case .about:
             aboutPane
         }
@@ -612,7 +623,10 @@ struct SettingsView: View {
             }
 
             Section(AppLocalization.string("显示内容")) {
-                SettingsPreferenceRow(title: "菜单栏内容", subtitle: "选择显示剩余额度或相对预期的用量节奏。") {
+                SettingsPreferenceRow(
+                    title: "菜单栏内容",
+                    subtitle: "剩余额度：显示 7d/5h；预期消耗对比：5h 剩余% · 7d 消耗偏差，窗口独立交叉。"
+                ) {
                     Picker("", selection: menuBarBinding($contentMode, key: MenuBarPreferenceKeys.contentMode)) {
                         ForEach(MenuBarContentMode.allCases) { mode in
                             Text(AppLocalization.string(mode.title)).tag(mode.rawValue)
@@ -884,6 +898,53 @@ struct SettingsView: View {
         .scrollContentBackground(.hidden)
     }
 
+    /// Gemini 页单独保存模型配额展示偏好，不混入 Codex 的连接状态。
+    private var geminiPane: some View {
+        Form {
+            Section {
+                SettingsToggleRow(
+                    title: "启用 Antigravity",
+                    subtitle: "以独立配置显示 Antigravity 模型配额。",
+                    isOn: geminiBinding(
+                        $geminiModelsEnabled,
+                        key: GeminiModelsPreferenceKeys.isEnabled
+                    )
+                )
+                SettingsPickerRow(
+                    title: "模型配额组",
+                    subtitle: "选择菜单和下拉面板展示的配额模型组。",
+                    selection: geminiBinding($geminiModel, key: GeminiModelsPreferenceKeys.model),
+                    options: GeminiModelOption.allCases.map { ($0.rawValue, $0.title) }
+                )
+                SettingsToggleRow(
+                    title: "显示在下拉面板",
+                    subtitle: "在下拉面板中展示 Antigravity 配额卡片。",
+                    isOn: geminiBinding(
+                        $geminiShowsInPopover,
+                        key: GeminiModelsPreferenceKeys.showsInPopover
+                    )
+                )
+                SettingsToggleRow(
+                    title: "显示在菜单栏",
+                    subtitle: "在菜单栏中显示当前配额模型组。",
+                    isOn: geminiBinding(
+                        $geminiShowsInMenuBar,
+                        key: GeminiModelsPreferenceKeys.showsInMenuBar
+                    )
+                )
+            }
+
+            Section {
+                Text(AppLocalization.string("配额优先读取正在运行的 Antigravity，本地服务不可用时尝试已保存的 Google OAuth。"))
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .formStyle(.grouped)
+        .scrollContentBackground(.hidden)
+    }
+
     /// Codex 页只展示提供商状态与连接入口，低频路径和缓存操作统一折叠到诊断区。
     private var codexPane: some View {
         Form {
@@ -1136,7 +1197,7 @@ struct SettingsView: View {
 
     /// 密度、项目间距和行距只影响 SwiftUI 双行布局，单行原生标题不展示无效控件。
     private var usesMultilineMenuBarDisplay: Bool {
-        StatusLineDisplay.lines(snapshot: previewSnapshot, settings: currentSettings).count > 1
+        StatusLineDisplay.menuBarDisplay(snapshot: previewSnapshot, settings: currentSettings).codexLines.count > 1
     }
 
     /// 语言选择写入共享偏好、更新下次启动覆盖，并立即刷新桌面小组件时间线。
@@ -1223,6 +1284,14 @@ struct SettingsView: View {
     private func codexRadarBinding<Value>(_ binding: Binding<Value>, key: String) -> Binding<Value> {
         storedBinding(binding, key: key) { _ in
             CodexRadarSettings.notifyDidChange()
+        }
+    }
+
+    /// Gemini 展示偏好复用菜单栏通知，使菜单栏和下拉面板在设置写入后立即重建。
+    private func geminiBinding<Value>(_ binding: Binding<Value>, key: String) -> Binding<Value> {
+        storedBinding(binding, key: key) { _ in
+            GeminiModelsSettings.notifyDidChange()
+            notifyMenuBarDisplaySettingsDidChange()
         }
     }
 
@@ -1353,6 +1422,12 @@ struct SettingsView: View {
         let codexRadarSettings = CodexRadarSettings(defaults: MenuBarDisplaySettings.sharedDefaults)
         codexRadarEnabled = codexRadarSettings.isEnabled
         codexRadarShowsScoreChart = codexRadarSettings.showsScoreChart
+
+        let geminiSettings = GeminiModelsSettings(defaults: MenuBarDisplaySettings.sharedDefaults)
+        geminiModelsEnabled = geminiSettings.isEnabled
+        geminiModel = geminiSettings.model.rawValue
+        geminiShowsInPopover = geminiSettings.showsInPopover
+        geminiShowsInMenuBar = geminiSettings.showsInMenuBar
 
         let surfaceAppearance = SurfaceAppearanceSettings(defaults: MenuBarDisplaySettings.sharedDefaults)
         surfaceAppearanceMode = surfaceAppearance.appearanceMode.rawValue
