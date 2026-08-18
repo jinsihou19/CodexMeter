@@ -154,8 +154,11 @@ public struct RateLimitWindow: Codable, Equatable, Sendable {
         return "\(minutes)m"
     }
 
-    /// 计算窗口的理论消耗进度；周窗口可按工作日切分，避免周末时间稀释工作日用量节奏。
+    /// 计算窗口的理论消耗进度；周窗口可按工作日切分，0 表示关闭分割和预期节奏。
     public func usagePace(now: Date = Date(), weeklyProgressWorkDays: Int? = nil, calendar: Calendar = .current) -> UsagePace? {
+        if let weeklyProgressWorkDays, weeklyProgressWorkDays == 0 {
+            return nil
+        }
         guard let windowDurationMins, windowDurationMins > 0 else {
             return nil
         }

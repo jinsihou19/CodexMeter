@@ -408,6 +408,8 @@ public enum AppLocalization {
         "未找到本机登录信息": "Local Sign-In Not Found",
         "重新读取 Codex 配置": "Reload Codex Configuration",
         "发现新版本": "New Version Available",
+        "无": "None",
+        "用于每周用量条刻度和节奏计算；选择无时不显示预期消耗。": "Used for weekly usage-bar scale and pace calculation; None hides expected usage.",
         "4 天": "4 Days",
         "5 天": "5 Days",
         "7 天": "7 Days",
@@ -1274,7 +1276,10 @@ public struct MenuBarDisplaySettings: Equatable, Sendable {
         self.showsMenuBarIcon = showsMenuBarIcon
         self.showsHookActivityLight = showsHookActivityLight
         self.hookActivityIndicatorStyle = hookActivityIndicatorStyle
-        self.weeklyProgressWorkDays = Swift.max(2, Swift.min(7, weeklyProgressWorkDays))
+        /// 0 是“无”选项；其余值仍限制在至少 2 个工作日的有效范围内。
+        self.weeklyProgressWorkDays = weeklyProgressWorkDays == 0
+            ? 0
+            : Swift.max(2, Swift.min(7, weeklyProgressWorkDays))
     }
 
     public init(defaults: UserDefaults) {
@@ -1784,8 +1789,11 @@ public func weeklyWorkdayMarkerPercents(workDays: Int?, windowDurationMins: Int?
     return (1..<workDays).map { Double($0) * 100.0 / Double(workDays) }
 }
 
-/// 生成额度进度条的胶囊分界；5 小时按小时分段，周窗口沿用用户选择的工作日数量。
+/// 生成额度进度条的胶囊分界；0 不分段，5 小时按小时分段，周窗口沿用用户选择的工作日数量。
 public func usageProgressSegmentPercents(workDays: Int?, windowDurationMins: Int?) -> [Double] {
+    if let workDays, workDays == 0 {
+        return []
+    }
     if windowDurationMins == 300 {
         return [20, 40, 60, 80]
     }

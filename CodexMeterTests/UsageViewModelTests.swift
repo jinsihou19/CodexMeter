@@ -80,11 +80,12 @@ final class UsageViewModelTests: XCTestCase {
         let popoverSource = source[popoverStart.lowerBound..<codexStart.lowerBound]
         let codexSource = source[codexStart.lowerBound..<codexEnd.lowerBound]
 
-        XCTAssertTrue(menuBarSource.contains("if contentMode == MenuBarContentMode.paceComparison.rawValue"))
-        XCTAssertTrue(menuBarSource.contains("title: \"工作日刻度线\""))
+        XCTAssertFalse(menuBarSource.contains("title: \"工作日刻度线\""))
         XCTAssertFalse(menuBarSource.contains("title: \"恢复菜单栏默认\""))
         XCTAssertFalse(widgetSource.contains("title: \"恢复小组件默认\""))
         XCTAssertFalse(popoverSource.contains("title: \"恢复下拉面板默认\""))
+        XCTAssertTrue(popoverSource.contains("title: \"工作日刻度线\""))
+        XCTAssertTrue(popoverSource.contains("Text(AppLocalization.string(\"无\")).tag(0)"))
         XCTAssertTrue(codexSource.contains("Section(AppLocalization.string(\"连接\"))"))
         XCTAssertTrue(codexSource.contains("DisclosureGroup(AppLocalization.string(\"诊断与维护\")"))
         XCTAssertFalse(codexSource.contains("Section(\"目录\")"))

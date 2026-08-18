@@ -635,23 +635,6 @@ struct SettingsView: View {
                     .labelsHidden()
                     .pickerStyle(.segmented)
                 }
-                if contentMode == MenuBarContentMode.paceComparison.rawValue {
-                    SettingsPreferenceRow(title: "工作日刻度线", subtitle: "用于每周用量条刻度和节奏计算。") {
-                        Picker(
-                            "",
-                            selection: menuBarBinding(
-                                $weeklyProgressWorkDays,
-                                key: MenuBarPreferenceKeys.weeklyProgressWorkDays
-                            )
-                        ) {
-                            Text(AppLocalization.string("4 天")).tag(4)
-                            Text(AppLocalization.string("5 天")).tag(5)
-                            Text(AppLocalization.string("7 天")).tag(7)
-                        }
-                        .labelsHidden()
-                        .pickerStyle(.menu)
-                    }
-                }
                 ForEach(detectedMenuBarWindows, id: \.windowDurationMins) { window in
                     SettingsToggleRow(
                         title: windowVisibilityTitle(window),
@@ -789,6 +772,25 @@ struct SettingsView: View {
                         key: PopoverPreferenceKeys.showsPaceComparison
                     )
                 )
+                SettingsPreferenceRow(
+                    title: "工作日刻度线",
+                    subtitle: "用于每周用量条刻度和节奏计算；选择无时不显示预期消耗。"
+                ) {
+                    Picker(
+                        "",
+                        selection: menuBarBinding(
+                            $weeklyProgressWorkDays,
+                            key: MenuBarPreferenceKeys.weeklyProgressWorkDays
+                        )
+                    ) {
+                        Text(AppLocalization.string("无")).tag(0)
+                        Text(AppLocalization.string("4 天")).tag(4)
+                        Text(AppLocalization.string("5 天")).tag(5)
+                        Text(AppLocalization.string("7 天")).tag(7)
+                    }
+                    .labelsHidden()
+                    .pickerStyle(.menu)
+                }
                 SettingsToggleRow(
                     title: "显示额外额度",
                     subtitle: "显示 Codex Spark 等接口返回的额外 rate limit。",

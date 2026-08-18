@@ -111,6 +111,20 @@ final class UsageModelsTests: XCTestCase {
         XCTAssertEqual(usageProgressSegmentPercents(workDays: 5, windowDurationMins: 60), [])
     }
 
+    /// 选择“无”时关闭所有进度条分段，并阻止预期消耗信息继续生成。
+    func testDisabledWorkdayScaleRemovesSegmentsAndPace() {
+        let window = RateLimitWindow(
+            usedPercent: 50,
+            windowDurationMins: 10_080,
+            resetsAt: 4_000
+        )
+
+        XCTAssertEqual(usageProgressSegmentPercents(workDays: 0, windowDurationMins: 300), [])
+        XCTAssertEqual(usageProgressSegmentPercents(workDays: 0, windowDurationMins: 10_080), [])
+        XCTAssertNil(window.usagePace(now: Date(timeIntervalSince1970: 1_000), weeklyProgressWorkDays: 0))
+        XCTAssertEqual(MenuBarDisplaySettings(weeklyProgressWorkDays: 0).weeklyProgressWorkDays, 0)
+    }
+
     func testUsagePaceDisplayabilityRequiresEnoughElapsedWindowProgress() throws {
         let justResetWindow = RateLimitWindow(
             usedPercent: 12,
