@@ -24,7 +24,4 @@ enum SettingsPanelLayout {
     static let sidebarWidth: CGFloat = 190
     static let preferenceControlWidth: CGFloat = 260
     static let cardSpacing: CGFloat = 8
-    static let previewChipSpacing: CGFloat = 6
-    static let previewChipVerticalPadding: CGFloat = 9
-    static let previewSampleVerticalPadding: CGFloat = 5
 }

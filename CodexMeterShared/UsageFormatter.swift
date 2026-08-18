@@ -88,7 +88,7 @@ public struct UsageFormatter: Sendable {
         guard let window else {
             return "--"
         }
-        return "\(window.remainingPercent)%"
+        return window.remainingPercentText
     }
 
     public func creditsStatus(_ credits: CreditsSnapshot?) -> String {

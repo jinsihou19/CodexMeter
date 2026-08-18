@@ -176,7 +176,6 @@ struct SettingsView: View {
     @AppStorage(SurfaceAppearancePreferenceKeys.appearanceMode, store: MenuBarDisplaySettings.sharedDefaults) private var surfaceAppearanceMode = SurfaceAppearanceSettings.defaultAppearanceMode.rawValue
     @AppStorage(SurfaceAppearancePreferenceKeys.cardOpacity, store: MenuBarDisplaySettings.sharedDefaults) private var surfaceCardOpacity = SurfaceAppearanceSettings.defaultCardOpacity
 
-    @AppStorage(MenuBarPreferenceKeys.contentMode, store: MenuBarDisplaySettings.sharedDefaults) private var contentMode = MenuBarDisplaySettings.defaultContentMode.rawValue
     @AppStorage(MenuBarPreferenceKeys.layoutDensity, store: MenuBarDisplaySettings.sharedDefaults) private var layoutDensity = MenuBarDisplaySettings.defaultLayoutDensity.rawValue
     @AppStorage(MenuBarPreferenceKeys.itemSpacing, store: MenuBarDisplaySettings.sharedDefaults) private var itemSpacing = MenuBarDisplaySettings.defaultItemSpacing
     @AppStorage(MenuBarPreferenceKeys.rowSpacing, store: MenuBarDisplaySettings.sharedDefaults) private var rowSpacing = MenuBarDisplaySettings.defaultRowSpacing
@@ -185,10 +184,7 @@ struct SettingsView: View {
     @AppStorage(MenuBarPreferenceKeys.goodColorHex, store: MenuBarDisplaySettings.sharedDefaults) private var goodColorHex = MenuBarDisplaySettings.defaultGoodColorHex
     @AppStorage(MenuBarPreferenceKeys.warningColorHex, store: MenuBarDisplaySettings.sharedDefaults) private var warningColorHex = MenuBarDisplaySettings.defaultWarningColorHex
     @AppStorage(MenuBarPreferenceKeys.dangerColorHex, store: MenuBarDisplaySettings.sharedDefaults) private var dangerColorHex = MenuBarDisplaySettings.defaultDangerColorHex
-    @AppStorage(MenuBarPreferenceKeys.showsPrimaryWindow, store: MenuBarDisplaySettings.sharedDefaults) private var showsPrimaryWindow = MenuBarDisplaySettings.defaultShowsPrimaryWindow
-    @AppStorage(MenuBarPreferenceKeys.showsSecondaryWindow, store: MenuBarDisplaySettings.sharedDefaults) private var showsSecondaryWindow = MenuBarDisplaySettings.defaultShowsSecondaryWindow
     @AppStorage(MenuBarPreferenceKeys.showsPercentSymbol, store: MenuBarDisplaySettings.sharedDefaults) private var showsPercentSymbol = MenuBarDisplaySettings.defaultShowsPercentSymbol
-    @AppStorage(MenuBarPreferenceKeys.showsMenuBarIcon, store: MenuBarDisplaySettings.sharedDefaults) private var showsMenuBarIcon = MenuBarDisplaySettings.defaultShowsMenuBarIcon
     @AppStorage(MenuBarPreferenceKeys.showsHookActivityLight, store: MenuBarDisplaySettings.sharedDefaults) private var showsHookActivityLight = MenuBarDisplaySettings.defaultShowsHookActivityLight
     @AppStorage(MenuBarPreferenceKeys.hookActivityIndicatorStyle, store: MenuBarDisplaySettings.sharedDefaults) private var hookActivityIndicatorStyle = MenuBarDisplaySettings.defaultHookActivityIndicatorStyle.rawValue
     @AppStorage(MenuBarPreferenceKeys.weeklyProgressWorkDays, store: MenuBarDisplaySettings.sharedDefaults) private var weeklyProgressWorkDays = MenuBarDisplaySettings.defaultWeeklyProgressWorkDays
@@ -219,10 +215,8 @@ struct SettingsView: View {
     @State private var launchAtLoginError: String?
     @State private var cacheActionMessage: String?
     @State private var menuBarLayoutChoice = MenuBarLayoutChoice.custom
+    @State private var menuBarLayout = MenuBarLayoutStore.load()
     @State private var explicitlyUsesCustomColors = false
-    @State private var hiddenWindowDurationMins = MenuBarDisplaySettings(
-        defaults: MenuBarDisplaySettings.sharedDefaults
-    ).hiddenWindowDurationMins
     @Environment(\.colorScheme) private var systemColorScheme
     private let hookActivityURL = CodexHookActivityLocation.activityURL()
 
@@ -280,6 +274,7 @@ struct SettingsView: View {
             configurationInfo = CodexConfigurationInfo.current()
             loadPreviewSnapshot()
             menuBarLayoutChoice = MenuBarLayoutChoice.matching(settings: currentSettings)
+            menuBarLayout = MenuBarLayoutStore.load()
         }
         .onChange(of: selectedLanguage) { _, _ in
             NSApp.keyWindow?.title = localized("CodexMeter 设置")
@@ -612,41 +607,21 @@ struct SettingsView: View {
         return AppVersionDisplay.text()
     }
 
-    /// 菜单栏页保留预览与常用内容，只有自定义布局才展开逐项排版控件。
+    /// 菜单栏页集中配置内容、项目顺序和项目内堆叠。
     private var menuBarPane: some View {
         Form {
-            Section(AppLocalization.string("预览")) {
-                SettingsPreview(
+            Section {
+                MenuBarLayoutEditor(
+                    layout: $menuBarLayout,
+                    onChange: saveMenuBarLayout,
                     settings: currentSettings,
-                    data: SettingsPreviewData(snapshot: previewSnapshot)
+                    snapshot: previewSnapshot,
+                    geminiSettings: GeminiModelsSettings(defaults: MenuBarDisplaySettings.sharedDefaults),
+                    geminiSnapshot: previewSnapshot?.geminiModels
                 )
             }
 
             Section(AppLocalization.string("显示内容")) {
-                SettingsPreferenceRow(
-                    title: "菜单栏内容",
-                    subtitle: "剩余额度：显示 7d/5h；预期消耗对比：5h 剩余% · 7d 消耗偏差，窗口独立交叉。"
-                ) {
-                    Picker("", selection: menuBarBinding($contentMode, key: MenuBarPreferenceKeys.contentMode)) {
-                        ForEach(MenuBarContentMode.allCases) { mode in
-                            Text(AppLocalization.string(mode.title)).tag(mode.rawValue)
-                        }
-                    }
-                    .labelsHidden()
-                    .pickerStyle(.segmented)
-                }
-                ForEach(detectedMenuBarWindows, id: \.windowDurationMins) { window in
-                    SettingsToggleRow(
-                        title: windowVisibilityTitle(window),
-                        subtitle: "在菜单栏显示此窗口剩余额度；至少会保留一个窗口。",
-                        isOn: windowVisibilityBinding(window)
-                    )
-                }
-                SettingsToggleRow(
-                    title: "显示 Codex 图标",
-                    subtitle: "在数字左侧显示 Codex 图标，便于和其他菜单栏项目区分。",
-                    isOn: menuBarBinding($showsMenuBarIcon, key: MenuBarPreferenceKeys.showsMenuBarIcon)
-                )
                 SettingsToggleRow(
                     title: "显示活动指示",
                     subtitle: "Codex 运行、思考、需确认或刚完成时显示状态符号；空闲时自动隐藏。",
@@ -665,8 +640,8 @@ struct SettingsView: View {
                 }
             }
 
-            Section(AppLocalization.string("布局")) {
-                SettingsPreferenceRow(title: "布局模式", subtitle: "紧凑和标准会应用稳定预设，自定义保留所有细调能力。") {
+            Section(AppLocalization.string("文字排版")) {
+                SettingsPreferenceRow(title: "文字排版", subtitle: "字号、字重和间距只影响布局项目的视觉密度。") {
                     Picker("", selection: menuBarLayoutChoiceBinding) {
                         ForEach(MenuBarLayoutChoice.allCases) { choice in
                             Text(AppLocalization.string(choice.title)).tag(choice)
@@ -1092,7 +1067,6 @@ struct SettingsView: View {
 
     private var currentSettings: MenuBarDisplaySettings {
         MenuBarDisplaySettings(
-            contentMode: MenuBarContentMode(rawValue: contentMode) ?? MenuBarDisplaySettings.defaultContentMode,
             layoutDensity: MenuBarLayoutDensity(rawValue: layoutDensity) ?? .compact,
             itemSpacing: itemSpacing,
             rowSpacing: rowSpacing,
@@ -1101,12 +1075,8 @@ struct SettingsView: View {
             goodColorHex: goodColorHex,
             warningColorHex: warningColorHex,
             dangerColorHex: dangerColorHex,
-            showsPrimaryWindow: showsPrimaryWindow,
-            showsSecondaryWindow: showsSecondaryWindow,
-            hiddenWindowDurationMins: hiddenWindowDurationMins,
             showsPercentSymbol: showsPercentSymbol,
             showsAdditionalLimits: MenuBarDisplaySettings.defaultShowsAdditionalLimits,
-            showsMenuBarIcon: showsMenuBarIcon,
             showsHookActivityLight: showsHookActivityLight,
             hookActivityIndicatorStyle: HookActivityIndicatorStyle(rawValue: hookActivityIndicatorStyle)
                 ?? MenuBarDisplaySettings.defaultHookActivityIndicatorStyle,
@@ -1187,6 +1157,13 @@ struct SettingsView: View {
         )
     }
 
+    /// 保存布局；图标、窗口和 Pace 项目都只由这份自定义布局决定。
+    private func saveMenuBarLayout(_ layout: MenuBarLayout) {
+        let normalized = layout.normalized
+        menuBarLayout = normalized
+        MenuBarLayoutStore.save(normalized)
+    }
+
     /// 进入自定义时保留当前实际排版；只有单行需把原生按钮的 13pt Regular 写回控件。
     private func seedCustomTypographyFromCurrentDisplay() {
         guard !usesMultilineMenuBarDisplay else { return }
@@ -1199,7 +1176,7 @@ struct SettingsView: View {
 
     /// 密度、项目间距和行距只影响 SwiftUI 双行布局，单行原生标题不展示无效控件。
     private var usesMultilineMenuBarDisplay: Bool {
-        StatusLineDisplay.menuBarDisplay(snapshot: previewSnapshot, settings: currentSettings).codexLines.count > 1
+        menuBarLayout.items.contains { $0.count > 1 }
     }
 
     /// 语言选择写入共享偏好、更新下次启动覆盖，并立即刷新桌面小组件时间线。
@@ -1347,45 +1324,6 @@ struct SettingsView: View {
         )
     }
 
-    /// 从当前快照提取并按时长排序窗口，同一时长只生成一个菜单栏开关。
-    private var detectedMenuBarWindows: [RateLimitWindow] {
-        var windowsByDuration: [Int: RateLimitWindow] = [:]
-        for window in [previewSnapshot?.rateLimits.primary, previewSnapshot?.rateLimits.secondary].compactMap({ $0 }) {
-            windowsByDuration[window.windowDurationMins ?? 0] = window
-        }
-        return windowsByDuration.sorted { $0.key < $1.key }.map(\.value)
-    }
-
-    /// 生成包含实际窗口时长的本地化开关标题。
-    private func windowVisibilityTitle(_ window: RateLimitWindow) -> String {
-        let language = AppLanguage(rawValue: selectedLanguage) ?? .system
-        let duration = window.localizedDurationLabel(language: language)
-        return AppLocalization.usesEnglish(language: language)
-            ? "Show \(duration) Window"
-            : "显示 \(duration)窗口"
-    }
-
-    /// 更新单个时长的可见性并持久化，最后一个已检测窗口不会被隐藏。
-    private func windowVisibilityBinding(_ window: RateLimitWindow) -> Binding<Bool> {
-        let duration = window.windowDurationMins ?? 0
-        return Binding(
-            get: { !hiddenWindowDurationMins.contains(duration) },
-            set: { isVisible in
-                hiddenWindowDurationMins = MenuBarDisplaySettings.updatingHiddenWindowDurationMins(
-                    hiddenWindowDurationMins,
-                    duration: duration,
-                    isVisible: isVisible,
-                    availableDurations: Set(detectedMenuBarWindows.map { $0.windowDurationMins ?? 0 })
-                )
-                MenuBarDisplaySettings.sharedDefaults.set(
-                    hiddenWindowDurationMins.sorted(),
-                    forKey: MenuBarPreferenceKeys.hiddenWindowDurationMins
-                )
-                notifyMenuBarDisplaySettingsDidChange()
-            }
-        )
-    }
-
     /// 应用菜单栏快速预设，只覆盖排版相关字段，保留用户对内容和颜色的选择。
     private func applyDisplayPreset(_ preset: MenuBarDisplayPreset) {
         let settings = preset.settings
@@ -1436,7 +1374,6 @@ struct SettingsView: View {
         surfaceCardOpacity = surfaceAppearance.cardOpacity
 
         let settings = currentSettings
-        contentMode = settings.contentMode.rawValue
         layoutDensity = settings.layoutDensity.rawValue
         itemSpacing = settings.itemSpacing
         rowSpacing = settings.rowSpacing
@@ -1445,11 +1382,7 @@ struct SettingsView: View {
         goodColorHex = settings.goodColorHex
         warningColorHex = settings.warningColorHex
         dangerColorHex = settings.dangerColorHex
-        showsPrimaryWindow = settings.showsPrimaryWindow
-        showsSecondaryWindow = settings.showsSecondaryWindow
-        hiddenWindowDurationMins = settings.hiddenWindowDurationMins
         showsPercentSymbol = settings.showsPercentSymbol
-        showsMenuBarIcon = settings.showsMenuBarIcon
         showsHookActivityLight = settings.showsHookActivityLight
         hookActivityIndicatorStyle = settings.hookActivityIndicatorStyle.rawValue
         weeklyProgressWorkDays = settings.weeklyProgressWorkDays

@@ -46,8 +46,6 @@
 		100000000000000000000D08 /* SettingsSections.swift in Sources */ = {isa = PBXBuildFile; fileRef = 100000000000000000000D02 /* SettingsSections.swift */; };
 		100000000000000000000D09 /* SettingsControls.swift in Sources */ = {isa = PBXBuildFile; fileRef = 100000000000000000000D03 /* SettingsControls.swift */; };
 		100000000000000000000D0A /* SettingsControls.swift in Sources */ = {isa = PBXBuildFile; fileRef = 100000000000000000000D03 /* SettingsControls.swift */; };
-		100000000000000000000D0B /* SettingsPreview.swift in Sources */ = {isa = PBXBuildFile; fileRef = 100000000000000000000D04 /* SettingsPreview.swift */; };
-		100000000000000000000D0C /* SettingsPreview.swift in Sources */ = {isa = PBXBuildFile; fileRef = 100000000000000000000D04 /* SettingsPreview.swift */; };
 		100000000000000000000F01 /* CodexHookActivity.swift in Sources */ = {isa = PBXBuildFile; fileRef = 100000000000000000000F02 /* CodexHookActivity.swift */; };
 		100000000000000000000F03 /* CodexHookActivityStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 100000000000000000000F04 /* CodexHookActivityStore.swift */; };
 		100000000000000000001011 /* CodexRadarModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 100000000000000000001001 /* CodexRadarModels.swift */; };
@@ -168,7 +166,6 @@
 		100000000000000000000D01 /* SettingsPanelLayout.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsPanelLayout.swift; sourceTree = "<group>"; };
 		100000000000000000000D02 /* SettingsSections.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsSections.swift; sourceTree = "<group>"; };
 		100000000000000000000D03 /* SettingsControls.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsControls.swift; sourceTree = "<group>"; };
-		100000000000000000000D04 /* SettingsPreview.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsPreview.swift; sourceTree = "<group>"; };
 		100000000000000000000F02 /* CodexHookActivity.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CodexHookActivity.swift; sourceTree = "<group>"; };
 		100000000000000000000F04 /* CodexHookActivityStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CodexHookActivityStore.swift; sourceTree = "<group>"; };
 		100000000000000000001001 /* CodexRadarModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CodexRadarModels.swift; sourceTree = "<group>"; };
@@ -289,7 +286,6 @@
 				100000000000000000000D01 /* SettingsPanelLayout.swift */,
 				100000000000000000000D02 /* SettingsSections.swift */,
 				100000000000000000000D03 /* SettingsControls.swift */,
-				100000000000000000000D04 /* SettingsPreview.swift */,
 				100000000000000000000019 /* DirectCodexUsageClient.swift */,
 				100000000000000000001003 /* CodexRadarClient.swift */,
 				100000000000000000000B07 /* Assets.xcassets */,
@@ -529,7 +525,6 @@
 				100000000000000000000D06 /* SettingsPanelLayout.swift in Sources */,
 				100000000000000000000D08 /* SettingsSections.swift in Sources */,
 				100000000000000000000D0A /* SettingsControls.swift in Sources */,
-				100000000000000000000D0C /* SettingsPreview.swift in Sources */,
 				100000000000000000001016 /* CodexRadarTests.swift in Sources */,
 				100000000000000000001017 /* CodexRadarClient.swift in Sources */,
 				100000000000000000001023 /* CodexRadarStore.swift in Sources */,
@@ -557,7 +552,6 @@
 				100000000000000000000D05 /* SettingsPanelLayout.swift in Sources */,
 				100000000000000000000D07 /* SettingsSections.swift in Sources */,
 				100000000000000000000D09 /* SettingsControls.swift in Sources */,
-				100000000000000000000D0B /* SettingsPreview.swift in Sources */,
 				100000000000000000000C01 /* SettingsWindowOpener.swift in Sources */,
 				100000000000000000000C04 /* SettingsWindowPresenter.swift in Sources */,
 			);

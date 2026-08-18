@@ -21,6 +21,26 @@ final class UsageModelsTests: XCTestCase {
         XCTAssertEqual(RateLimitWindow(usedPercent: 140, windowDurationMins: nil, resetsAt: nil).remainingPercent, 0)
     }
 
+    /// 验证所有剩余量文本都保留正数小于 1% 的状态，而不是误显示成 1%。
+    func testRemainingPercentTextMarksPositiveSubOnePercentAsLessThanOne() {
+        XCTAssertEqual(
+            RateLimitWindow(usedPercent: 99.4, windowDurationMins: 300, resetsAt: nil).remainingPercentText,
+            "<1%"
+        )
+        XCTAssertEqual(
+            RateLimitWindow(usedPercent: 99, windowDurationMins: 300, resetsAt: nil).remainingPercentText,
+            "1%"
+        )
+        XCTAssertEqual(
+            GeminiQuotaWindow(
+                bucketId: "five-hour",
+                title: "Five Hour",
+                remainingFraction: 0.004
+            ).remainingPercentText,
+            "<1%"
+        )
+    }
+
     func testUsagePaceComparesUsedPercentAgainstElapsedWindowProgress() {
         let now = Date(timeIntervalSince1970: 1_000)
         let window = RateLimitWindow(

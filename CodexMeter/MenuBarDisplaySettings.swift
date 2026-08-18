@@ -229,34 +229,13 @@ enum MenuBarPopoverPositioning {
     }
 }
 
-enum MenuBarPreviewAppearance: CaseIterable, Identifiable {
-    case light
-    case dark
-    case translucent
-
-    var id: Self {
-        self
-    }
-
-    var title: String {
-        switch self {
-        case .light:
-            return "浅色"
-        case .dark:
-            return "深色"
-        case .translucent:
-            return "半透明"
-        }
-    }
-}
-
 struct UsageMetricDisplay: Equatable {
     let title: String
     let window: RateLimitWindow?
     var language: AppLanguage = .chineseSimplified
 
     var remainingText: String {
-        window.map { "\($0.remainingPercent)%" } ?? "--"
+        window?.remainingPercentText ?? "--"
     }
 
     var usedText: String {
@@ -282,52 +261,6 @@ struct UsageMetricDisplay: Equatable {
 
     var progressValue: Double {
         Double(window?.remainingPercent ?? 0)
-    }
-}
-
-struct SettingsPreviewData: Equatable {
-    let snapshot: UsageSnapshot?
-    let primaryValue: String
-    let secondaryValue: String
-    let primaryTone: UsageRemainingTone
-    let secondaryTone: UsageRemainingTone
-    let paceValue: String
-    let compactPaceValue: String
-    let paceRemainingValue: String
-    let paceDeltaValue: String
-    let paceRemainingTone: UsageRemainingTone
-    let paceTone: UsageRemainingTone
-
-    init(snapshot: UsageSnapshot?) {
-        self.snapshot = snapshot
-        self.primaryValue = Self.value(for: snapshot?.rateLimits.primary)
-        self.secondaryValue = Self.value(for: snapshot?.rateLimits.secondary)
-        self.primaryTone = Self.tone(for: snapshot?.rateLimits.primary?.remainingPercent)
-        self.secondaryTone = Self.tone(for: snapshot?.rateLimits.secondary?.remainingPercent)
-        let paceDisplay = UsagePaceDisplay(rateLimits: snapshot?.rateLimits)
-        self.paceValue = paceDisplay?.valueText ?? "-- · --"
-        self.compactPaceValue = paceDisplay?.compactValueText ?? "--·--"
-        self.paceRemainingValue = paceDisplay.map { "\($0.remainingPercent)%" } ?? "--"
-        self.paceDeltaValue = paceDisplay?.deltaText ?? "--"
-        self.paceRemainingTone = Self.tone(for: paceDisplay?.remainingPercent)
-        self.paceTone = paceDisplay?.tone ?? .unavailable
-    }
-
-    private static func value(for window: RateLimitWindow?) -> String {
-        window.map { "\($0.remainingPercent)%" } ?? "--"
-    }
-
-    private static func tone(for remainingPercent: Int?) -> UsageRemainingTone {
-        guard let remainingPercent else {
-            return .unavailable
-        }
-        if remainingPercent < 40 {
-            return .danger
-        }
-        if remainingPercent < 70 {
-            return .warning
-        }
-        return .good
     }
 }
 
@@ -415,7 +348,7 @@ struct StatusLineDisplay: Identifiable, Equatable {
             lines.append(StatusLineDisplay(
                 id: "primary",
                 label: primary.compactDurationLabel,
-                value: formattedValue("\(primary.remainingPercent)%", settings: settings),
+                value: formattedValue(primary.remainingPercentText, settings: settings),
                 tone: UsageRemainingTone(remainingPercent: primary.remainingPercent)
             ))
         }
@@ -423,7 +356,7 @@ struct StatusLineDisplay: Identifiable, Equatable {
             lines.append(StatusLineDisplay(
                 id: "secondary",
                 label: secondary.compactDurationLabel,
-                value: formattedValue("\(secondary.remainingPercent)%", settings: settings),
+                value: formattedValue(secondary.remainingPercentText, settings: settings),
                 tone: UsageRemainingTone(remainingPercent: secondary.remainingPercent)
             ))
         }
@@ -444,7 +377,7 @@ struct StatusLineDisplay: Identifiable, Equatable {
             StatusLineDisplay(
                 id: "pace-remaining",
                 label: "",
-                value: formattedValue("\(paceDisplay.remainingPercent)%", settings: settings),
+                value: formattedValue(paceDisplay.remainingPercentText, settings: settings),
                 tone: UsageRemainingTone(remainingPercent: paceDisplay.remainingPercent)
             ),
             StatusLineDisplay(
@@ -457,7 +390,7 @@ struct StatusLineDisplay: Identifiable, Equatable {
     }
 
     /// 把启用的 Antigravity 配额组渲染成菜单栏摘要；Pace 模式与 Codex 一样只显示一组两行数值。
-    private static func geminiLines(
+    static func geminiLines(
         displaySettings: MenuBarDisplaySettings,
         geminiSettings: GeminiModelsSettings,
         snapshot: GeminiModelsSnapshot?
@@ -465,32 +398,9 @@ struct StatusLineDisplay: Identifiable, Equatable {
         guard geminiSettings.isEnabled, geminiSettings.showsInMenuBar else {
             return []
         }
-        let groups = snapshot?.groups.filter { geminiSettings.model.matches(group: $0) } ?? []
-        let candidates = groups.flatMap { group in
-            group.windows
-                .filter { !$0.disabled }
-                .map { (groupID: group.id, window: $0) }
-        }
-
-        // 按周期取剩余量最少的窗口；全部模型模式仍可从多个配额组中选出一个统一来源。
-        func mostConstrainedWindow(for horizon: String) -> GeminiQuotaWindow? {
-            candidates
-                .filter {
-                    horizonKey(for: $0.window) == horizon
-                }
-                .min { lhs, rhs in
-                    let lhsRemaining = lhs.window.remainingPercent ?? 101
-                    let rhsRemaining = rhs.window.remainingPercent ?? 101
-                    if lhsRemaining != rhsRemaining {
-                        return lhsRemaining < rhsRemaining
-                    }
-                    return "\(lhs.groupID)-\(lhs.window.bucketId)" < "\(rhs.groupID)-\(rhs.window.bucketId)"
-                }
-                .map { $0.window }
-        }
-
-        let weeklyWindow = mostConstrainedWindow(for: "weekly")
-        let fiveHourWindow = mostConstrainedWindow(for: "five-hour")
+        let windows = constrainedGeminiWindows(geminiSettings: geminiSettings, snapshot: snapshot)
+        let weeklyWindow = windows.weekly
+        let fiveHourWindow = windows.fiveHour
 
         if displaySettings.contentMode == .paceComparison {
             // Antigravity 有 5h 时，剩余百分比和预期消耗偏差都取 5h；没有 5h 才回退到 7d。
@@ -514,8 +424,8 @@ struct StatusLineDisplay: Identifiable, Equatable {
             return [StatusLineDisplay(
                 id: "gemini-pace-fallback",
                 label: "",
-                value: fallbackWindow?.remainingPercent.map {
-                    formattedValue("\($0)%", settings: displaySettings)
+                value: fallbackWindow?.remainingPercentText.map {
+                    formattedValue($0, settings: displaySettings)
                 } ?? "--",
                 tone: UsageRemainingTone(remainingPercent: fallbackWindow?.remainingPercent)
             )]
@@ -523,8 +433,8 @@ struct StatusLineDisplay: Identifiable, Equatable {
 
         return [("weekly", "7d"), ("five-hour", "5h")].map { horizon, label in
             let window = horizon == "weekly" ? weeklyWindow : fiveHourWindow
-            let value = window?.remainingPercent.map {
-                    formattedValue("\($0)%", settings: displaySettings)
+            let value = window?.remainingPercentText.map {
+                    formattedValue($0, settings: displaySettings)
                 } ?? "--"
             return StatusLineDisplay(
                 id: "gemini-\(horizon)",
@@ -533,6 +443,42 @@ struct StatusLineDisplay: Identifiable, Equatable {
                 tone: UsageRemainingTone(remainingPercent: window?.remainingPercent)
             )
         }
+    }
+
+    /// 按周期选择 Antigravity 最紧张的窗口，供摘要和自定义布局共用同一数据来源。
+    private static func constrainedGeminiWindows(
+        geminiSettings: GeminiModelsSettings,
+        snapshot: GeminiModelsSnapshot?
+    ) -> (weekly: GeminiQuotaWindow?, fiveHour: GeminiQuotaWindow?) {
+        guard geminiSettings.isEnabled, geminiSettings.showsInMenuBar else {
+            return (nil, nil)
+        }
+        let groups = snapshot?.groups.filter { geminiSettings.model.matches(group: $0) } ?? []
+        let candidates = groups.flatMap { group in
+            group.windows
+                .filter { !$0.disabled }
+                .map { (groupID: group.id, window: $0) }
+        }
+
+        /// 按周期取剩余量最少的窗口；全部模型模式仍可从多个配额组中选出一个统一来源。
+        func mostConstrainedWindow(for horizon: String) -> GeminiQuotaWindow? {
+            candidates
+                .filter { horizonKey(for: $0.window) == horizon }
+                .min { lhs, rhs in
+                    let lhsRemaining = lhs.window.remainingPercent ?? 101
+                    let rhsRemaining = rhs.window.remainingPercent ?? 101
+                    if lhsRemaining != rhsRemaining {
+                        return lhsRemaining < rhsRemaining
+                    }
+                    return "\(lhs.groupID)-\(lhs.window.bucketId)" < "\(rhs.groupID)-\(rhs.window.bucketId)"
+                }
+                .map { $0.window }
+        }
+
+        return (
+            weekly: mostConstrainedWindow(for: "weekly"),
+            fiveHour: mostConstrainedWindow(for: "five-hour")
+        )
     }
 
     /// 将 Antigravity 接口返回的窗口名称归一为菜单栏使用的短周期键。
@@ -553,6 +499,201 @@ struct StatusLineDisplay: Identifiable, Equatable {
             return value
         }
         return String(value.dropLast())
+    }
+}
+
+extension StatusLineDisplay {
+    /// 按自定义布局项目解析 Codex 行；布局项目不再依赖菜单栏内容模式的行顺序。
+    static func layoutLine(
+        for token: MenuBarLayoutToken,
+        snapshot: UsageSnapshot?,
+        settings: MenuBarDisplaySettings,
+        now: Date = Date()
+    ) -> StatusLineDisplay? {
+        switch token {
+        case .primary:
+            return quotaLayoutLine(
+                id: "primary",
+                window: quotaWindow(snapshot: snapshot, durationMins: 5 * 60),
+                settings: settings
+            )
+        case .secondary:
+            return quotaLayoutLine(
+                id: "secondary",
+                window: quotaWindow(snapshot: snapshot, durationMins: 7 * 24 * 60),
+                settings: settings
+            )
+        case .paceRemaining, .paceDelta:
+            guard let paceDisplay = UsagePaceDisplay(rateLimits: snapshot?.rateLimits, now: now) else {
+                return nil
+            }
+            let paceLines = Self.paceLines(paceDisplay: paceDisplay, settings: settings)
+            let paceLineID = token == .paceRemaining ? "pace-remaining" : "pace-delta"
+            guard let line = paceLines.first(where: { $0.id == paceLineID }) else {
+                return nil
+            }
+            return line
+        case .icon, .geminiIcon,
+             .geminiPrimary, .geminiSecondary, .geminiPaceRemaining, .geminiPaceDelta,
+             .geminiRemaining, .geminiDelta,
+             .separator, .space, .stackPlaceholder:
+            return nil
+        }
+    }
+
+    /// 按布局项目解析 Antigravity 的固定窗口或 Pace 读数，缺少数据时直接隐藏而不是填入占位符。
+    static func layoutGeminiLine(
+        for token: MenuBarLayoutToken,
+        settings: MenuBarDisplaySettings,
+        geminiSettings: GeminiModelsSettings,
+        snapshot: GeminiModelsSnapshot?
+    ) -> StatusLineDisplay? {
+        let windows = constrainedGeminiWindows(geminiSettings: geminiSettings, snapshot: snapshot)
+        switch token {
+        case .geminiPrimary, .geminiDelta:
+            return geminiQuotaLayoutLine(
+                id: "gemini-primary",
+                window: windows.fiveHour,
+                settings: settings
+            )
+        case .geminiSecondary, .geminiRemaining:
+            return geminiQuotaLayoutLine(
+                id: "gemini-secondary",
+                window: windows.weekly,
+                settings: settings
+            )
+        case .geminiPaceRemaining, .geminiPaceDelta:
+            let sourceWindow = windows.fiveHour ?? windows.weekly
+            guard let paceWindow = sourceWindow?.rateLimitWindow,
+                  let paceDisplay = UsagePaceDisplay(
+                      percentWindow: paceWindow,
+                      paceWindow: paceWindow,
+                      weeklyProgressWorkDays: settings.weeklyProgressWorkDays
+                  ) else {
+                return nil
+            }
+            let paceLineID = token == .geminiPaceRemaining ? "pace-remaining" : "pace-delta"
+            return paceLines(paceDisplay: paceDisplay, settings: settings)
+                .first(where: { $0.id == paceLineID })
+        default:
+            return nil
+        }
+    }
+
+    /// 将 Antigravity 固定周期窗口转换成布局可直接显示的实际读数。
+    private static func geminiQuotaLayoutLine(
+        id: String,
+        window: GeminiQuotaWindow?,
+        settings: MenuBarDisplaySettings
+    ) -> StatusLineDisplay? {
+        guard let window,
+              let remainingPercent = window.remainingPercent,
+              let remainingPercentText = window.remainingPercentText else {
+            return nil
+        }
+        return StatusLineDisplay(
+            id: id,
+            label: window.rateLimitWindow?.compactDurationLabel ?? "",
+            value: formattedValue(remainingPercentText, settings: settings),
+            tone: UsageRemainingTone(remainingPercent: remainingPercent)
+        )
+    }
+
+    /// 按实际窗口时长解析固定的 5 小时或 7 天项目，避免 API 调换 primary/secondary 后重复显示 7d。
+    private static func quotaWindow(snapshot: UsageSnapshot?, durationMins: Int) -> RateLimitWindow? {
+        [snapshot?.rateLimits.primary, snapshot?.rateLimits.secondary]
+            .compactMap { $0 }
+            .first { $0.windowDurationMins == durationMins }
+    }
+
+    /// 为固定窗口项目保留真实标签；没有当前数据时直接隐藏，避免菜单栏出现占位符。
+    private static func quotaLayoutLine(
+        id: String,
+        window: RateLimitWindow?,
+        settings: MenuBarDisplaySettings
+    ) -> StatusLineDisplay? {
+        guard let window else { return nil }
+        return StatusLineDisplay(
+            id: id,
+            label: window.compactDurationLabel,
+            value: formattedValue(window.remainingPercentText, settings: settings),
+            tone: UsageRemainingTone(remainingPercent: window.remainingPercent)
+        )
+    }
+}
+
+/// 自定义布局解析后的最小项目；状态栏和设置页预览共用同一份结果。
+enum ResolvedMenuBarLayoutItem: Equatable {
+    case icon
+    case geminiIcon
+    case line(StatusLineDisplay)
+    case separator
+    case space
+}
+
+/// 将持久化布局绑定到当前快照和 Gemini 尾部数据；外层数组横向排列，内层数组纵向堆叠。
+struct MenuBarLayoutDisplay: Equatable {
+    let items: [[ResolvedMenuBarLayoutItem]]
+    let trailingGeminiLines: [StatusLineDisplay]
+
+    /// 在每个菜单栏项目中解析额度内容，保证状态栏和预览使用相同的堆叠语义。
+    init(
+        layout: MenuBarLayout,
+        snapshot: UsageSnapshot?,
+        settings: MenuBarDisplaySettings,
+        geminiSettings: GeminiModelsSettings? = nil,
+        geminiSnapshot: GeminiModelsSnapshot? = nil
+    ) {
+        let resolvedGeminiSettings = geminiSettings
+            ?? GeminiModelsSettings(defaults: MenuBarDisplaySettings.sharedDefaults)
+        let visibleLayout = resolvedGeminiSettings.isEnabled
+            ? layout.items
+            : layout.items.map { item in
+                item.filter { !$0.isGeminiToken }
+            }
+        items = visibleLayout.compactMap { item in
+            let resolvedItems: [ResolvedMenuBarLayoutItem] = item.compactMap { token -> ResolvedMenuBarLayoutItem? in
+                switch token {
+                case .icon:
+                    return .icon
+                case .geminiIcon:
+                    return .geminiIcon
+                case .separator:
+                    return .separator
+                case .space:
+                    return .space
+                case .stackPlaceholder:
+                    return nil
+                case .primary, .secondary, .paceRemaining, .paceDelta:
+                    return StatusLineDisplay.layoutLine(
+                        for: token,
+                        snapshot: snapshot,
+                        settings: settings
+                    ).map(ResolvedMenuBarLayoutItem.line)
+                case .geminiPrimary, .geminiSecondary, .geminiPaceRemaining, .geminiPaceDelta,
+                     .geminiRemaining, .geminiDelta:
+                    return StatusLineDisplay.layoutGeminiLine(
+                        for: token,
+                        settings: settings,
+                        geminiSettings: resolvedGeminiSettings,
+                        snapshot: geminiSnapshot
+                    ).map(ResolvedMenuBarLayoutItem.line)
+                }
+            }
+            return resolvedItems.isEmpty ? nil : resolvedItems
+        }
+        // 自定义布局完全控制菜单栏内容，未放入布局的 Antigravity 项目不再从旧模式回退显示。
+        trailingGeminiLines = []
+    }
+
+    /// 返回布局中的所有额度项目，供宽度和无障碍文字计算使用。
+    var codexLines: [StatusLineDisplay] {
+        items.flatMap { item in
+            item.compactMap { resolvedItem in
+                guard case let .line(line) = resolvedItem else { return nil }
+                return line
+            }
+        }
     }
 }
 
@@ -660,6 +801,85 @@ enum StatusBarDisplayMetrics {
         )
     }
 
+    /// 按横向项目和项目内堆叠内容测量状态栏，图标与分隔项目参与同一套间距计算。
+    static func statusItemWidth(
+        for layout: MenuBarLayout,
+        display: MenuBarLayoutDisplay,
+        settings: MenuBarDisplaySettings,
+        activityDisplay: CodexHookActivityDisplay = CodexHookActivityDisplay(snapshot: nil)
+    ) -> CGFloat {
+        let usesSingleLineTypography = layout.items.allSatisfy { $0.count <= 1 }
+        let itemWidths = display.items.map { item in
+            item.map { itemWidth(
+                for: $0,
+                settings: settings,
+                activityDisplay: activityDisplay,
+                usesSingleLineTypography: usesSingleLineTypography
+            ) }.max() ?? 0
+        }
+        let itemSpacing = CGFloat(max(0, itemWidths.count - 1)) * CGFloat(settings.itemSpacing)
+        let mainTextWidth = itemWidths.reduce(0, +) + itemSpacing
+        let prefixActivityWidth = activityDisplay.isVisible && !layout.containsIcon
+            ? activityDisplay.statusItemWidth
+            : 0
+        let trailingTextWidth = display.trailingGeminiLines.isEmpty
+            ? 0
+            : trailingProviderSeparatorSpacing
+                + trailingGeminiIconWidth
+                + trailingGeminiIconTextSpacing
+                + (display.trailingGeminiLines
+                    .map { lineWidth(for: $0, settings: settings) }
+                    .max() ?? 0)
+        let densityPadding: CGFloat = settings.layoutDensity == .normal ? 2 : 0
+        let minimumWidth = max(18, prefixActivityWidth)
+        return max(
+            ceil(mainTextWidth + prefixActivityWidth + trailingTextWidth + densityPadding),
+            minimumWidth
+        )
+    }
+
+    /// 返回单个解析项目的实际宽度；额度文字沿用已有的等宽数字测量规则。
+    private static func itemWidth(
+        for item: ResolvedMenuBarLayoutItem,
+        settings: MenuBarDisplaySettings,
+        activityDisplay: CodexHookActivityDisplay,
+        usesSingleLineTypography: Bool
+    ) -> CGFloat {
+        switch item {
+        case .icon:
+            return activityDisplay.isVisible
+                ? activityDisplay.statusItemWidth
+                : MenuBarDisplaySettings.menuBarIconWidth
+        case .geminiIcon:
+            return trailingGeminiIconWidth
+        case let .line(line):
+            return lineWidth(
+                for: line,
+                settings: settings,
+                usesSingleLineTypography: usesSingleLineTypography
+            )
+        case .separator:
+            return textWidth("·", font: layoutFont(settings: settings, usesSingleLineTypography: usesSingleLineTypography))
+        case .space:
+            return max(4, CGFloat(settings.itemSpacing))
+        }
+    }
+
+    /// 统一分隔点和额度项目的字体测量，避免自定义布局宽度与 SwiftUI 字体不一致。
+    private static func layoutFont(
+        settings: MenuBarDisplaySettings,
+        usesSingleLineTypography: Bool
+    ) -> NSFont {
+        let fontSize = usesSingleLineTypography
+            ? NativeStatusBarTitle.font(settings: settings).pointSize
+            : min(settings.numberFontSize, 9)
+        let fontWeight = usesSingleLineTypography
+            && MenuBarLayoutChoice.matching(settings: settings) != .custom
+            ? NSFont.Weight.regular
+            : settings.numberFontWeight.nsFontWeight
+        return NSFont.monospacedDigitSystemFont(ofSize: fontSize, weight: fontWeight)
+    }
+
     /// 根据标签和值分别测量单行宽度，只有剩余额度模式会因为 label 额外变宽。
     static func lineWidth(
         for line: StatusLineDisplay,
@@ -668,7 +888,7 @@ enum StatusBarDisplayMetrics {
     ) -> CGFloat {
         let fontSize = usesSingleLineTypography
             ? NativeStatusBarTitle.font(settings: settings).pointSize
-            : settings.numberFontSize
+            : min(settings.numberFontSize, 9)
         let fontWeight = usesSingleLineTypography
             && MenuBarLayoutChoice.matching(settings: settings) != .custom
             ? NSFont.Weight.regular

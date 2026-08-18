@@ -1,5 +1,14 @@
 import Foundation
 
+/// 将原始剩余百分比统一转换成界面文本；大于零但不足 1% 时明确显示为小于 1%。
+private func formattedRemainingPercent(_ value: Double) -> String {
+    let clampedValue = min(max(value, 0), 100)
+    if clampedValue > 0, clampedValue < 1 {
+        return "<1%"
+    }
+    return "\(Int(clampedValue.rounded()))%"
+}
+
 public struct RateLimitSnapshot: Codable, Equatable, Sendable {
     public let limitId: String?
     public let limitName: String?
@@ -109,6 +118,12 @@ public struct RateLimitWindow: Codable, Equatable, Sendable {
     public var remainingPercent: Int {
         let clampedUsage = min(max(usedPercent, 0), 100)
         return Int((100 - clampedUsage).rounded())
+    }
+
+    /// 返回保留小于 1% 信息的剩余量文本，供所有界面统一展示。
+    public var remainingPercentText: String {
+        let clampedUsage = min(max(usedPercent, 0), 100)
+        return formattedRemainingPercent(100 - clampedUsage)
     }
 
     public var usedPercentRounded: Int {
@@ -427,6 +442,14 @@ public struct GeminiQuotaWindow: Codable, Equatable, Identifiable, Sendable {
             return nil
         }
         return Int((remainingFraction * 100).rounded())
+    }
+
+    /// 返回保留小于 1% 信息的 Antigravity 剩余量文本，缺失或禁用时保持未知。
+    public var remainingPercentText: String? {
+        guard !disabled, let remainingFraction else {
+            return nil
+        }
+        return formattedRemainingPercent(remainingFraction * 100)
     }
 
     /// 将 Antigravity 的窗口适配为 Codex 共用的 Pace 输入；未知周期保留进度条但不伪造节奏计算。

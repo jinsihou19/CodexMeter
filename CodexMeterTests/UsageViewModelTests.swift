@@ -50,17 +50,19 @@ final class UsageViewModelTests: XCTestCase {
         XCTAssertTrue(source.contains(".playUsageResetConfettiPreview"))
         XCTAssertTrue(source.contains("title: \"语言\""))
         XCTAssertTrue(source.contains("if showsCustomColorControls"))
-        XCTAssertTrue(source.contains("ForEach(detectedMenuBarWindows"))
-        XCTAssertTrue(source.contains("windowVisibilityBinding(window)"))
+        XCTAssertFalse(source.contains("ForEach(detectedMenuBarWindows"))
+        XCTAssertFalse(source.contains("windowVisibilityBinding(window)"))
+        XCTAssertFalse(source.contains("title: \"菜单栏内容\""))
+        XCTAssertFalse(source.contains("title: \"显示 Codex 图标\""))
         XCTAssertFalse(source.contains("case advanced"))
         XCTAssertFalse(source.contains("private var header:"))
         XCTAssertFalse(source.contains("SettingsInfoRow(title: \"缓存文件\""))
 
         let activityToggle = try XCTUnwrap(source.range(of: "title: \"显示活动指示\""))
         let activityStyle = try XCTUnwrap(source.range(of: "title: \"活动样式\""))
-        let layoutSection = try XCTUnwrap(source.range(of: "Section(AppLocalization.string(\"布局\"))"))
         XCTAssertLessThan(activityToggle.lowerBound, activityStyle.lowerBound)
-        XCTAssertLessThan(activityStyle.lowerBound, layoutSection.lowerBound)
+        XCTAssertTrue(source.contains("Section {\n                MenuBarLayoutEditor("))
+        XCTAssertFalse(source.contains("Section(AppLocalization.string(\"布局\"))"))
         XCTAssertTrue(source.contains("if showsHookActivityLight"))
 
         let sidebarStart = try XCTUnwrap(source.range(of: "private var sidebar: some View"))
@@ -128,7 +130,7 @@ final class UsageViewModelTests: XCTestCase {
         XCTAssertEqual(
             UsageNotificationEventResolver.events(previous: previous, current: current, settings: settings),
             [
-                .lowRemaining(windowTitle: "5 小时", remainingPercent: 10),
+                .lowRemaining(windowTitle: "5 小时", remainingText: "10%"),
                 .depleted(windowTitle: "7 天")
             ]
         )
@@ -1313,7 +1315,6 @@ final class UsageViewModelTests: XCTestCase {
         XCTAssertEqual(SettingsPanelLayout.windowHeight, 620)
         XCTAssertEqual(SettingsPanelLayout.sidebarWidth, 190)
         XCTAssertEqual(SettingsPanelLayout.cardSpacing, 8)
-        XCTAssertEqual(SettingsPanelLayout.previewChipVerticalPadding, 9)
     }
 
     func testCodexConfigurationInfoHidesAuthSnapshotAndRecentDetails() throws {
@@ -2083,6 +2084,297 @@ final class UsageViewModelTests: XCTestCase {
         XCTAssertEqual(lines.map(\.value), ["90%", "94%"])
     }
 
+    /// 验证默认堆叠只是可编辑布局预设，移动项目后会自然变成自定义布局。
+    func testMenuBarLayoutDefaultsToEditableStackedPreset() {
+        let layout = MenuBarLayout.defaultStacked
+
+        XCTAssertEqual(MenuBarLayoutPreset.matching(layout), .stacked)
+        XCTAssertTrue(layout.containsIcon)
+        XCTAssertEqual(
+            layout.items,
+            [
+                [.icon],
+                [.paceRemaining, .paceDelta],
+                [.geminiIcon],
+                [.geminiPaceRemaining, .geminiPaceDelta]
+            ]
+        )
+
+        let moved = layout.moving(from: 1, inItem: 1, to: 0, inItem: 1)
+        XCTAssertEqual(
+            moved.items,
+            [
+                [.icon],
+                [.paceDelta, .paceRemaining],
+                [.geminiIcon],
+                [.geminiPaceRemaining, .geminiPaceDelta]
+            ]
+        )
+        XCTAssertEqual(MenuBarLayoutPreset.matching(moved), .custom)
+
+        let reordered = layout.movingItem(from: 1, to: 0)
+        XCTAssertEqual(
+            reordered.items,
+            [
+                [.paceRemaining, .paceDelta],
+                [.icon],
+                [.geminiIcon],
+                [.geminiPaceRemaining, .geminiPaceDelta]
+            ]
+        )
+    }
+
+    /// 验证垃圾桶删除整项、菜单删除内容和配置菜单拆分项目都保持布局约束。
+    func testMenuBarLayoutSupportsItemRemovalAndDetaching() {
+        let layout = MenuBarLayout(items: [
+            [.icon],
+            [.paceRemaining, .paceDelta],
+            [.geminiIcon]
+        ])
+
+        XCTAssertEqual(
+            layout.removingItem(at: 1).items,
+            [[.icon], [.geminiIcon]]
+        )
+        XCTAssertEqual(
+            layout.removing(at: 0, inItem: 1).items,
+            [[.icon], [.paceDelta], [.geminiIcon]]
+        )
+        XCTAssertEqual(
+            layout.detaching(at: 1, inItem: 1).items,
+            [[.icon], [.paceRemaining], [.geminiIcon], [.paceDelta]]
+        )
+
+        let movedAcrossItems = layout.moving(from: 0, inItem: 1, to: 1, inItem: 2)
+        XCTAssertEqual(
+            movedAcrossItems.items,
+            [[.icon], [.paceDelta], [.geminiIcon], [.paceRemaining]]
+        )
+
+        let stackAdded = MenuBarLayout(items: [[.icon]]).addingStack([.paceRemaining, .paceDelta])
+        XCTAssertEqual(stackAdded.items, [[.icon], [.paceRemaining, .paceDelta]])
+        XCTAssertEqual(
+            MenuBarLayout(items: [[.icon]]).addingStack([.icon, .paceRemaining]).items,
+            [[.icon]]
+        )
+
+        let emptyContainer = MenuBarLayout(items: [[.icon]]).addingEmptyContainer()
+        XCTAssertEqual(emptyContainer.items, [[.icon], []])
+        XCTAssertEqual(
+            emptyContainer.replacingStackToken(.primary, at: 0, inItem: 1).items,
+            [[.icon], [.primary, .stackPlaceholder]]
+        )
+        XCTAssertEqual(
+            emptyContainer
+                .replacingStackToken(.primary, at: 0, inItem: 1)
+                .replacingStackToken(.paceDelta, at: 1, inItem: 1)
+                .items,
+            [[.icon], [.primary, .paceDelta]]
+        )
+        XCTAssertEqual(
+            emptyContainer.replacingStackToken(.icon, at: 0, inItem: 1),
+            emptyContainer
+        )
+
+        let configured = MenuBarLayout(items: [[.primary], []])
+            .replacingStackToken(.primary, at: 0, inItem: 1)
+        XCTAssertEqual(configured.items, [[.primary, .stackPlaceholder]])
+    }
+
+    /// 验证布局持久化会保持横向项目、去除重复额度项目，并强制图标独立。
+    func testMenuBarLayoutStoreRoundTripsNormalizedLayout() {
+        let suiteName = "CodexMeterTests.MenuBarLayout.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        let layout = MenuBarLayout(items: [
+            [.icon, .primary, .primary, .separator],
+            [.secondary, .paceDelta],
+            [.paceDelta]
+        ])
+        MenuBarLayoutStore.save(layout, defaults: defaults)
+
+        XCTAssertEqual(
+            MenuBarLayoutStore.load(defaults: defaults).items,
+            [
+                [.icon],
+                [.primary],
+                [.secondary, .paceDelta],
+                [.geminiIcon],
+                [.geminiPaceRemaining, .geminiPaceDelta]
+            ]
+        )
+    }
+
+    /// 验证固定窗口项目按真实时长取值，避免接口交换 primary/secondary 后两个项目都显示 7d。
+    func testMenuBarLayoutQuotaTokensUseActualWindowDuration() throws {
+        let snapshot = UsageSnapshot(
+            fetchedAt: Date(timeIntervalSince1970: 1_779_940_000),
+            rateLimits: RateLimitSnapshot(
+                limitId: "codex",
+                limitName: nil,
+                primary: RateLimitWindow(usedPercent: 48, windowDurationMins: 10_080, resetsAt: 1_780_392_047),
+                secondary: RateLimitWindow(usedPercent: 12, windowDurationMins: 300, resetsAt: 1_779_949_290),
+                credits: nil,
+                planType: nil,
+                rateLimitReachedType: nil
+            )
+        )
+
+        let settings = MenuBarDisplaySettings()
+        let fiveHour = try XCTUnwrap(StatusLineDisplay.layoutLine(for: .primary, snapshot: snapshot, settings: settings))
+        let weekly = try XCTUnwrap(StatusLineDisplay.layoutLine(for: .secondary, snapshot: snapshot, settings: settings))
+
+        XCTAssertEqual(fiveHour.label, "5h")
+        XCTAssertEqual(fiveHour.value, "88%")
+        XCTAssertEqual(weekly.label, "7d")
+        XCTAssertEqual(weekly.value, "52%")
+    }
+
+    /// 验证自定义布局能解析 Pace 的两条真实行，避免因 token 名称与展示行 ID 不同而被过滤。
+    func testMenuBarLayoutPaceTokensResolveBothLines() throws {
+        let now = Date(timeIntervalSince1970: 1_779_940_000)
+        let snapshot = UsageSnapshot(
+            fetchedAt: now,
+            rateLimits: RateLimitSnapshot(
+                limitId: "codex",
+                limitName: nil,
+                primary: RateLimitWindow(
+                    usedPercent: 40,
+                    windowDurationMins: 300,
+                    resetsAt: nil,
+                    resetAfterSeconds: 9_000
+                ),
+                secondary: RateLimitWindow(
+                    usedPercent: 20,
+                    windowDurationMins: 10_080,
+                    resetsAt: nil,
+                    resetAfterSeconds: 500_000
+                ),
+                credits: nil,
+                planType: nil,
+                rateLimitReachedType: nil
+            )
+        )
+
+        let settings = MenuBarDisplaySettings()
+        let remaining = try XCTUnwrap(
+            StatusLineDisplay.layoutLine(for: .paceRemaining, snapshot: snapshot, settings: settings, now: now)
+        )
+        let delta = try XCTUnwrap(
+            StatusLineDisplay.layoutLine(for: .paceDelta, snapshot: snapshot, settings: settings, now: now)
+        )
+
+        XCTAssertEqual(remaining.id, "pace-remaining")
+        XCTAssertEqual(delta.id, "pace-delta")
+        XCTAssertFalse(delta.value.isEmpty)
+        XCTAssertTrue(delta.value.hasSuffix("%"))
+    }
+
+    /// 验证 Antigravity 的两个布局项目能解析真实内容，避免第二个提供商继续走固定尾部渲染。
+    func testMenuBarLayoutGeminiTokensResolveBothLines() throws {
+        let geminiSnapshot = GeminiModelsSnapshot(
+            fetchedAt: Date(timeIntervalSince1970: 1_779_940_000),
+            source: .antigravityLocal,
+            groups: [
+                GeminiQuotaGroup(
+                    id: "gemini-models",
+                    title: "Gemini Models",
+                    windows: [
+                        GeminiQuotaWindow(
+                            bucketId: "weekly",
+                            title: "Weekly Limit Remaining",
+                            remainingFraction: 0.30,
+                            resetsAt: Date(timeIntervalSince1970: 1_800_000_000)
+                        ),
+                        GeminiQuotaWindow(
+                            bucketId: "five-hour",
+                            title: "Five Hour Limit Remaining",
+                            remainingFraction: 0.80,
+                            resetsAt: Date(timeIntervalSince1970: 1_800_000_000)
+                        )
+                    ]
+                )
+            ]
+        )
+        let settings = MenuBarDisplaySettings(contentMode: .remainingWindows)
+        let geminiSettings = GeminiModelsSettings(
+            isEnabled: true,
+            model: .geminiModels,
+            showsInPopover: true,
+            showsInMenuBar: true
+        )
+
+        let weekly = try XCTUnwrap(
+            StatusLineDisplay.layoutGeminiLine(
+                for: .geminiSecondary,
+                settings: settings,
+                geminiSettings: geminiSettings,
+                snapshot: geminiSnapshot
+            )
+        )
+        let fiveHour = try XCTUnwrap(
+            StatusLineDisplay.layoutGeminiLine(
+                for: .geminiPrimary,
+                settings: settings,
+                geminiSettings: geminiSettings,
+                snapshot: geminiSnapshot
+            )
+        )
+
+        XCTAssertEqual(weekly.id, "gemini-secondary")
+        XCTAssertEqual(weekly.value, "30%")
+        XCTAssertEqual(fiveHour.id, "gemini-primary")
+        XCTAssertEqual(fiveHour.value, "80%")
+        XCTAssertEqual(
+            [
+                MenuBarLayoutToken.geminiIcon,
+                .geminiPrimary,
+                .geminiSecondary,
+                .geminiPaceRemaining,
+                .geminiPaceDelta
+            ].map(\.title),
+            ["图标", "5 小时", "7 天", "自动剩余", "预期偏差"]
+        )
+    }
+
+    /// 验证关闭 Antigravity 后，自定义布局中的图标和所有配额项目都会从菜单栏消失。
+    func testMenuBarLayoutDisplayRemovesGeminiTokensWhenDisabled() {
+        let display = MenuBarLayoutDisplay(
+            layout: MenuBarLayout(items: [
+                [.icon],
+                [.geminiIcon],
+                [.geminiPrimary, .geminiPaceDelta]
+            ]),
+            snapshot: nil,
+            settings: MenuBarDisplaySettings(),
+            geminiSettings: GeminiModelsSettings(
+                isEnabled: false,
+                model: .all,
+                showsInPopover: true,
+                showsInMenuBar: true
+            )
+        )
+
+        XCTAssertEqual(display.items, [[.icon]])
+        XCTAssertTrue(display.trailingGeminiLines.isEmpty)
+    }
+
+    /// 验证自定义项目缺少实时数据时直接隐藏，不在菜单栏显示占位符。
+    func testMenuBarLayoutDisplayHidesUnavailableItems() {
+        let layout = MenuBarLayout(items: [[.icon], [.primary], [.paceRemaining, .paceDelta]])
+        let display = MenuBarLayoutDisplay(
+            layout: layout,
+            snapshot: nil,
+            settings: MenuBarDisplaySettings(),
+            geminiSettings: GeminiModelsSettings()
+        )
+
+        XCTAssertEqual(display.items, [[.icon]])
+        XCTAssertTrue(display.codexLines.isEmpty)
+        XCTAssertTrue(display.trailingGeminiLines.isEmpty)
+    }
+
     /// 验证只有 primary 周窗口时，菜单栏和跟随模式小组件仍按 7 天开关而不是返回顺序过滤。
     func testWindowVisibilityUsesDurationWhenWeeklyWindowIsPrimary() async throws {
         let viewModel = UsageViewModel(
@@ -2186,47 +2478,6 @@ final class UsageViewModelTests: XCTestCase {
         XCTAssertEqual(display?.valueText, "0% · +50%")
         XCTAssertEqual(display?.detailText, "用得偏快 50% · 额度已耗尽")
         XCTAssertEqual(display?.widgetProjectionText, "额度已耗尽")
-    }
-
-    func testSettingsPreviewShowsRealMenuBarBackdrops() {
-        XCTAssertEqual(MenuBarPreviewAppearance.allCases.map(\.title), ["浅色", "深色", "半透明"])
-    }
-
-    func testSettingsPreviewDataUsesSnapshotValuesAndTones() {
-        let snapshot = UsageSnapshot(
-            fetchedAt: Date(timeIntervalSince1970: 1_779_940_000),
-            rateLimits: RateLimitSnapshot(
-                limitId: "codex",
-                limitName: nil,
-                primary: RateLimitWindow(usedPercent: 15, windowDurationMins: 300, resetsAt: nil),
-                secondary: RateLimitWindow(usedPercent: 63, windowDurationMins: 10_080, resetsAt: nil),
-                credits: nil,
-                planType: nil,
-                rateLimitReachedType: nil
-            )
-        )
-
-        let previewData = SettingsPreviewData(snapshot: snapshot)
-
-        XCTAssertEqual(previewData.primaryValue, "85%")
-        XCTAssertEqual(previewData.secondaryValue, "37%")
-        XCTAssertEqual(previewData.primaryTone, .good)
-        XCTAssertEqual(previewData.secondaryTone, .danger)
-        XCTAssertEqual(previewData.paceRemainingValue, "--")
-        XCTAssertEqual(previewData.paceDeltaValue, "--")
-        XCTAssertEqual(previewData.paceRemainingTone, .unavailable)
-    }
-
-    func testSettingsPreviewDataFallsBackToReadablePlaceholders() {
-        let previewData = SettingsPreviewData(snapshot: nil)
-
-        XCTAssertEqual(previewData.primaryValue, "--")
-        XCTAssertEqual(previewData.secondaryValue, "--")
-        XCTAssertEqual(previewData.primaryTone, .unavailable)
-        XCTAssertEqual(previewData.secondaryTone, .unavailable)
-        XCTAssertEqual(previewData.paceRemainingValue, "--")
-        XCTAssertEqual(previewData.paceDeltaValue, "--")
-        XCTAssertEqual(previewData.paceRemainingTone, .unavailable)
     }
 
     /// 验证设置预览使用缓存中的 Antigravity 窗口，而不是把已存在的数据渲染成占位符。

@@ -315,6 +315,10 @@ struct MenuBarView: View {
                 onPaceMarkerHoverChange: updateActivePaceHelpText
             )
 
+            if let credits = snapshot.rateLimits.credits, credits.hasCredits {
+                CreditsBalanceSection(credits: credits)
+            }
+
             if activePopoverSettings.showsResetCredits {
                 ResetCreditsSection(
                     snapshot: snapshot.resetCredits,
@@ -573,7 +577,7 @@ private struct GeminiModelsSection: View {
                     .font(.caption2.weight(.semibold))
                     .lineLimit(1)
                 Spacer(minLength: 4)
-                Text(window.remainingPercent.map { "\($0)%" } ?? "--")
+                Text(window.remainingPercentText ?? "--")
                     .font(.caption.weight(.semibold).monospacedDigit())
                     .foregroundStyle(tone.statusBarColor(settings: displaySettings))
             }
@@ -1548,6 +1552,34 @@ private struct AdditionalRateLimitView: View {
     /// 额外额度同样把节奏线说明放在卡片组下方，避免被后续内容覆盖。
     private func updateActivePaceHelpText(_ text: String?, _ isHovered: Bool) {
         onPaceMarkerHoverChange(text, isHovered)
+    }
+}
+
+/// 展示用量接口返回的点数余额；只在账户实际启用点数时出现，避免与速率额度或重置卡混淆。
+private struct CreditsBalanceSection: View {
+    let credits: CreditsSnapshot
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            Label(
+                AppLocalization.usesEnglish() ? "Credits Balance" : "点数余额",
+                systemImage: "creditcard"
+            )
+            .font(.caption.weight(.medium))
+            .foregroundStyle(.secondary)
+
+            Spacer(minLength: 8)
+
+            Text(
+                credits.unlimited
+                    ? (AppLocalization.usesEnglish() ? "Unlimited" : "无限")
+                    : (credits.balance ?? "--")
+            )
+            .font(.system(.body, design: .rounded).weight(.semibold))
+            .monospacedDigit()
+        }
+        .menuSectionCard(padding: 8)
+        .accessibilityElement(children: .combine)
     }
 }
 

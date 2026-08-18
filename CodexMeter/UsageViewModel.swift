@@ -7,7 +7,7 @@ import WidgetKit
 /// 描述一次需要交付给系统通知中心的额度变化。
 enum UsageNotificationEvent: Equatable, Sendable {
     case depleted(windowTitle: String)
-    case lowRemaining(windowTitle: String, remainingPercent: Int)
+    case lowRemaining(windowTitle: String, remainingText: String)
 }
 
 /// 只在额度向下跨过边界时生成事件，避免每次轮询重复通知。
@@ -41,7 +41,7 @@ enum UsageNotificationEventResolver {
             {
                 return .lowRemaining(
                     windowTitle: currentWindow.durationLabel,
-                    remainingPercent: currentRemaining
+                    remainingText: currentWindow.remainingPercentText
                 )
             }
             return nil
@@ -205,9 +205,9 @@ final class UsageNotificationController {
                 case let .depleted(windowTitle):
                     content.title = "Codex 额度已耗尽"
                     content.body = "\(windowTitle)窗口已无剩余额度。"
-                case let .lowRemaining(windowTitle, remainingPercent):
+                case let .lowRemaining(windowTitle, remainingText):
                     content.title = "Codex 额度偏低"
-                    content.body = "\(windowTitle)窗口剩余 \(remainingPercent)%。"
+                    content.body = "\(windowTitle)窗口剩余 \(remainingText)。"
                 }
                 content.sound = .default
                 let request = UNNotificationRequest(
@@ -620,11 +620,5 @@ final class UsageViewModel: ObservableObject {
                 await self.refresh(forceRefreshResetCredits: false)
             }
         }
-    }
-}
-
-private extension RateLimitWindow {
-    var remainingPercentText: String {
-        "\(remainingPercent)%"
     }
 }

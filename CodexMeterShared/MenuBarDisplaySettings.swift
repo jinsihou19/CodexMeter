@@ -21,6 +21,7 @@ public enum MenuBarPreferenceKeys {
     public static let showsHookActivityLight = "menuBar.showsHookActivityLight"
     public static let hookActivityIndicatorStyle = "menuBar.hookActivityIndicatorStyle"
     public static let weeklyProgressWorkDays = "menuBar.weeklyProgressWorkDays"
+    public static let layout = "menuBar.layout"
 
     public static let allKeys = [
         contentMode,
@@ -40,8 +41,470 @@ public enum MenuBarPreferenceKeys {
         showsMenuBarIcon,
         showsHookActivityLight,
         hookActivityIndicatorStyle,
-        weeklyProgressWorkDays
+        weeklyProgressWorkDays,
+        layout
     ]
+}
+
+/// 菜单栏可编排的最小展示单元；布局只负责顺序和分行，字号、颜色等仍由现有设置控制。
+public enum MenuBarLayoutToken: String, CaseIterable, Codable, Equatable, Identifiable, Sendable {
+    case icon
+    case primary
+    case secondary
+    case paceRemaining
+    case paceDelta
+    case geminiIcon
+    case geminiPrimary
+    case geminiSecondary
+    case geminiPaceRemaining
+    case geminiPaceDelta
+    // 旧版持久化布局仍可能写入这两个值；保留解码兼容，新增菜单不再展示它们。
+    case geminiRemaining
+    case geminiDelta
+    case separator
+    case space
+    case stackPlaceholder
+
+    public var id: String {
+        rawValue
+    }
+
+    /// 返回设置页中展示的中文名称；外层可继续通过 AppLocalization 处理英文翻译。
+    public var title: String {
+        switch self {
+        case .icon:
+            return "图标"
+        case .primary:
+            return "5 小时"
+        case .secondary:
+            return "7 天"
+        case .paceRemaining:
+            return "自动剩余"
+        case .paceDelta:
+            return "预期偏差"
+        case .geminiIcon:
+            return "图标"
+        case .geminiPrimary, .geminiDelta:
+            return "5 小时"
+        case .geminiSecondary, .geminiRemaining:
+            return "7 天"
+        case .geminiPaceRemaining:
+            return "自动剩余"
+        case .geminiPaceDelta:
+            return "预期偏差"
+        case .separator:
+            return "分隔点"
+        case .space:
+            return "空格"
+        case .stackPlaceholder:
+            return "空"
+        }
+    }
+
+    /// 返回原生符号名称，供编辑器在不引入新图片资源的情况下保持视觉识别。
+    public var systemImageName: String {
+        switch self {
+        case .icon:
+            return "square.dashed"
+        case .primary, .secondary:
+            return "percent"
+        case .paceRemaining:
+            return "gauge.with.dots.needle.33percent"
+        case .paceDelta:
+            return "chart.line.uptrend.xyaxis"
+        case .geminiIcon:
+            return "sparkles"
+        case .geminiPrimary, .geminiSecondary, .geminiPaceRemaining, .geminiPaceDelta,
+             .geminiRemaining, .geminiDelta:
+            return "percent"
+        case .separator:
+            return "circle"
+        case .space:
+            return "rectangle"
+        case .stackPlaceholder:
+            return "square.dashed"
+        }
+    }
+
+    /// 只有装饰性项目允许重复；额度和图标项目重复会让状态栏失去明确语义。
+    public var allowsDuplicates: Bool {
+        self == .separator || self == .space || self == .stackPlaceholder
+    }
+
+    /// 图标项目必须独立成项；Codex 与 Antigravity 各自保留自己的图标位置。
+    public var isProviderIcon: Bool {
+        self == .icon || self == .geminiIcon
+    }
+
+    /// 标记堆叠容器尚未填满的行；它只存在于布局模型中，不参与菜单栏渲染。
+    public var isStackPlaceholder: Bool {
+        self == .stackPlaceholder
+    }
+
+    /// 判断项目是否属于 Antigravity，供布局解析决定是否启用旧的尾部兼容渲染。
+    public var isGeminiToken: Bool {
+        switch self {
+        case .geminiIcon, .geminiPrimary, .geminiSecondary, .geminiPaceRemaining, .geminiPaceDelta,
+             .geminiRemaining, .geminiDelta:
+            return true
+        default:
+            return false
+        }
+    }
+}
+
+/// 菜单栏布局的持久化模型；外层项目横向排列，项目内部最多上下堆叠两项。
+public struct MenuBarLayout: Codable, Equatable, Sendable {
+    public static let defaultStacked = MenuBarLayout(items: [
+        [.icon],
+        [.paceRemaining, .paceDelta],
+        [.geminiIcon],
+        [.geminiPaceRemaining, .geminiPaceDelta]
+    ])
+
+    public static let horizontal = MenuBarLayout(items: [
+        [.icon],
+        [.paceRemaining],
+        [.paceDelta],
+        [.geminiIcon],
+        [.geminiPrimary],
+        [.geminiSecondary],
+        [.geminiPaceRemaining],
+        [.geminiPaceDelta]
+    ])
+
+    /// 菜单栏中的横向项目；每个内层数组代表一个项目的上下堆叠内容。
+    public var items: [[MenuBarLayoutToken]]
+
+    /// 归一化外部或旧版本数据，确保图标独立、堆叠不超过两项且不会撑破状态栏。
+    public init(items: [[MenuBarLayoutToken]]) {
+        var seen: Set<MenuBarLayoutToken> = []
+        var normalizedItems: [[MenuBarLayoutToken]] = []
+
+        for item in items.prefix(12) {
+            if item.isEmpty {
+                normalizedItems.append([])
+                continue
+            }
+            let isStackContainer = item.contains { $0.isStackPlaceholder }
+            var stack: [MenuBarLayoutToken] = []
+            let sourceTokens = isStackContainer ? item : Array(item.prefix(2))
+            for token in sourceTokens {
+                guard !token.isStackPlaceholder else { continue }
+                if token.isProviderIcon {
+                    guard seen.insert(token).inserted else { continue }
+                    if !stack.isEmpty {
+                        normalizedItems.append(stack)
+                        stack.removeAll(keepingCapacity: true)
+                    }
+                    normalizedItems.append([token])
+                    continue
+                }
+                guard token.allowsDuplicates || seen.insert(token).inserted else { continue }
+                stack.append(token)
+            }
+            if isStackContainer {
+                if stack.count >= 2 {
+                    normalizedItems.append(Array(stack.prefix(2)))
+                } else if let token = stack.first {
+                    normalizedItems.append([token, .stackPlaceholder])
+                } else {
+                    normalizedItems.append([.stackPlaceholder])
+                }
+            } else if !stack.isEmpty {
+                normalizedItems.append(stack)
+            }
+        }
+
+        if normalizedItems.isEmpty {
+            normalizedItems = [[.paceRemaining]]
+        }
+        self.items = normalizedItems
+    }
+
+    /// 堆叠预设是普通自定义布局的一种，设置页只需把它重新填入编辑器。
+    public var isDefaultStacked: Bool {
+        self == Self.defaultStacked
+    }
+
+    /// 读取布局中是否包含独立图标项目，供旧的“显示图标”快捷开关复用。
+    public var containsIcon: Bool {
+        items.flatMap { $0 }.contains(.icon)
+    }
+
+    /// 读取布局中是否包含 Antigravity 项目；旧布局没有该字段时由存储层补入默认项目。
+    public var containsGeminiTokens: Bool {
+        items.flatMap { $0 }.contains(where: \.isGeminiToken)
+    }
+
+    /// 返回安全副本，避免编辑器的临时数组绕过项目和堆叠约束。
+    public var normalized: MenuBarLayout {
+        MenuBarLayout(items: items)
+    }
+
+    /// 把项目堆叠到指定菜单栏项目；图标始终保持独立，不进入其他堆叠。
+    public func adding(_ token: MenuBarLayoutToken, toItem item: Int) -> MenuBarLayout {
+        guard items.indices.contains(item), !token.isProviderIcon,
+              !token.isStackPlaceholder,
+              hasOpenStackSlot(at: item),
+              token.allowsDuplicates || !items.flatMap({ $0 }).contains(token)
+        else {
+            return self
+        }
+        var updated = items
+        if updated[item].isEmpty {
+            updated[item] = [token, .stackPlaceholder]
+        } else if let placeholderIndex = updated[item].firstIndex(where: { $0.isStackPlaceholder }) {
+            updated[item].insert(token, at: placeholderIndex)
+        } else {
+            updated[item].append(token)
+        }
+        return MenuBarLayout(items: updated)
+    }
+
+    /// 新建一个横向独立项目；图标也通过此入口加入，保证其不会被堆叠。
+    public func addingItem(_ token: MenuBarLayoutToken) -> MenuBarLayout {
+        guard items.count < 12,
+              !token.isStackPlaceholder,
+              token.allowsDuplicates || !items.flatMap({ $0 }).contains(token)
+        else {
+            return self
+        }
+        return MenuBarLayout(items: items + [[token]])
+    }
+
+    /// 新建一个预设堆叠项目；提供商图标不允许进入容器，避免破坏图标独立规则。
+    public func addingStack(_ tokens: [MenuBarLayoutToken]) -> MenuBarLayout {
+        guard items.count < 12,
+              tokens.count > 1,
+              tokens.count <= 2,
+              tokens.allSatisfy({ !$0.isProviderIcon && !$0.isStackPlaceholder })
+        else {
+            return self
+        }
+        return MenuBarLayout(items: items + [tokens])
+    }
+
+    /// 新建没有内容的堆叠容器；空数组是编辑器中的可见容器，状态栏解析时会自然忽略它。
+    public func addingEmptyContainer() -> MenuBarLayout {
+        guard items.count < 12 else { return self }
+        return MenuBarLayout(items: items + [[]])
+    }
+
+    /// 替换堆叠容器的某一行；图标仍由独立项目承载，清空最后一行会保留空容器。
+    public func replacingStackToken(
+        _ token: MenuBarLayoutToken?,
+        at row: Int,
+        inItem item: Int
+    ) -> MenuBarLayout {
+        guard items.indices.contains(item), (0..<2).contains(row) else { return self }
+        var updated = items
+        var targetItem = item
+        var content = updated[item].filter { !$0.isStackPlaceholder }
+        guard row <= content.count else {
+            return self
+        }
+
+        if row < content.count {
+            content.remove(at: row)
+        }
+
+        if let token {
+            guard !token.isProviderIcon, !token.isStackPlaceholder else {
+                return self
+            }
+            if !token.allowsDuplicates {
+                if let source = updated.indices.first(where: { index in
+                    index != item && updated[index].contains(token)
+                }) {
+                    updated[source].removeAll { $0 == token }
+                    if updated[source].isEmpty {
+                        updated.remove(at: source)
+                        if source < targetItem {
+                            targetItem -= 1
+                        }
+                    }
+                }
+                guard !content.contains(token) else {
+                    return self
+                }
+            }
+            guard updated.indices.contains(targetItem) else {
+                return self
+            }
+            content.insert(token, at: min(row, content.count))
+        }
+
+        if content.count < 2 {
+            content.append(.stackPlaceholder)
+        }
+        updated[targetItem] = content
+        return MenuBarLayout(items: updated)
+    }
+
+    /// 判断项目是否还有可填入的堆叠行，供拖放逻辑区分占位行和真实内容。
+    private func hasOpenStackSlot(at item: Int) -> Bool {
+        guard items.indices.contains(item) else { return false }
+        return items[item].filter { !$0.isStackPlaceholder }.count < 2
+    }
+
+    /// 删除指定菜单栏项目中的一个堆叠项；空项目会被移除。
+    public func removing(at index: Int, inItem item: Int) -> MenuBarLayout {
+        guard items.indices.contains(item), items[item].indices.contains(index) else {
+            return self
+        }
+        var updated = items
+        updated[item].remove(at: index)
+        updated.removeAll(where: \.isEmpty)
+        return MenuBarLayout(items: updated)
+    }
+
+    /// 删除整个横向项目；最后一个项目会由布局初始化器保留最小可用内容。
+    public func removingItem(at item: Int) -> MenuBarLayout {
+        guard items.indices.contains(item) else { return self }
+        var updated = items
+        updated.remove(at: item)
+        return MenuBarLayout(items: updated)
+    }
+
+    /// 将项目内的一个内容拆成新的横向项目，供单击菜单中的排列配置使用。
+    public func detaching(at index: Int, inItem item: Int) -> MenuBarLayout {
+        guard items.indices.contains(item), items[item].indices.contains(index) else {
+            return self
+        }
+        var updated = items
+        let token = updated[item].remove(at: index)
+        updated.removeAll(where: \.isEmpty)
+        updated.append([token])
+        return MenuBarLayout(items: updated)
+    }
+
+    /// 把内容拖到另一个菜单栏项目中，供编辑器调整项目内顺序和堆叠关系。
+    public func moving(
+        from sourceIndex: Int,
+        inItem sourceItem: Int,
+        to targetIndex: Int,
+        inItem targetItem: Int
+    ) -> MenuBarLayout {
+        guard items.indices.contains(sourceItem), items.indices.contains(targetItem),
+              items[sourceItem].indices.contains(sourceIndex),
+              hasOpenStackSlot(at: targetItem) || sourceItem == targetItem
+        else {
+            return self
+        }
+        var updated = items
+        let targetWasEmptyContainer = updated[targetItem].isEmpty
+            || updated[targetItem].contains { $0.isStackPlaceholder }
+        let token = updated[sourceItem].remove(at: sourceIndex)
+        var insertionIndex = min(max(targetIndex, 0), updated[targetItem].count)
+        if sourceItem == targetItem, sourceIndex < insertionIndex {
+            insertionIndex -= 1
+        }
+        updated[targetItem].insert(token, at: insertionIndex)
+        if targetWasEmptyContainer,
+           !updated[targetItem].contains(where: { $0.isStackPlaceholder }) {
+            updated[targetItem].append(.stackPlaceholder)
+        }
+        updated.removeAll(where: \.isEmpty)
+        return MenuBarLayout(items: updated)
+    }
+
+    /// 调整横向项目顺序；项目内部的堆叠顺序不受影响。
+    public func movingItem(from source: Int, to target: Int) -> MenuBarLayout {
+        guard items.indices.contains(source), items.indices.contains(target), source != target else {
+            return self
+        }
+        var updated = items
+        let item = updated.remove(at: source)
+        updated.insert(item, at: min(max(target, 0), updated.count))
+        return MenuBarLayout(items: updated)
+    }
+
+    /// 为旧版只包含 Codex 项目的布局补入 Antigravity 默认项目，迁移后即可继续编辑第二个提供商。
+    public var addingDefaultGeminiItems: MenuBarLayout {
+        guard !containsGeminiTokens else { return self }
+        return MenuBarLayout(items: items + [
+            [.geminiIcon],
+            [.geminiPaceRemaining, .geminiPaceDelta]
+        ])
+    }
+}
+
+/// 菜单栏项目的内置入口；“堆叠”与横向布局都最终落成同一份可编辑模型。
+public enum MenuBarLayoutPreset: String, CaseIterable, Equatable, Hashable, Identifiable, Sendable {
+    case stacked
+    case horizontal
+    case custom
+
+    public var id: String {
+        rawValue
+    }
+
+    /// 返回设置页中展示的排列名称。
+    public var title: String {
+        switch self {
+        case .stacked:
+            return "堆叠（默认）"
+        case .horizontal:
+            return "横向"
+        case .custom:
+            return "自定义"
+        }
+    }
+
+    /// 预设的说明只表达行为，不把它们和字号密度预设混为一谈。
+    public var summary: String {
+        switch self {
+        case .stacked:
+            return "Codex 与 Antigravity 各自显示图标和上下堆叠读数"
+        case .horizontal:
+            return "Codex 与 Antigravity 的项目分别横向排列"
+        case .custom:
+            return "按实际内容调整两个提供商的项目顺序和堆叠"
+        }
+    }
+
+    /// 返回预设对应的布局；自定义项不覆盖用户当前编辑结果。
+    public var layout: MenuBarLayout? {
+        switch self {
+        case .stacked:
+            return .defaultStacked
+        case .horizontal:
+            return .horizontal
+        case .custom:
+            return nil
+        }
+    }
+
+    /// 根据布局反推当前选择，让用户手动调整后自动切换到“自定义”。
+    public static func matching(_ layout: MenuBarLayout) -> Self {
+        if layout.isDefaultStacked { return .stacked }
+        if layout == .horizontal { return .horizontal }
+        return .custom
+    }
+}
+
+/// 负责保存和读取菜单栏布局；无历史数据时直接返回默认堆叠，不另设模式开关。
+public enum MenuBarLayoutStore {
+    /// 从共享 UserDefaults 解码布局，损坏或缺失时回到可编辑的默认堆叠。
+    public static func load(defaults: UserDefaults = MenuBarDisplaySettings.sharedDefaults) -> MenuBarLayout {
+        guard let data = defaults.data(forKey: MenuBarPreferenceKeys.layout),
+              let layout = try? JSONDecoder().decode(MenuBarLayout.self, from: data)
+        else {
+            return .defaultStacked
+        }
+        return layout.normalized.addingDefaultGeminiItems
+    }
+
+    /// 把布局写入共享 UserDefaults，并沿用现有菜单栏通知链立即刷新状态栏。
+    public static func save(
+        _ layout: MenuBarLayout,
+        defaults: UserDefaults = MenuBarDisplaySettings.sharedDefaults
+    ) {
+        guard let data = try? JSONEncoder().encode(layout.normalized) else { return }
+        defaults.set(data, forKey: MenuBarPreferenceKeys.layout)
+        MenuBarDisplaySettings.notifyDidChange(defaults: defaults)
+    }
 }
 
 public enum AppBehaviorPreferenceKeys {
@@ -1569,6 +2032,7 @@ public extension Notification.Name {
 /// 统一封装预期消耗速度的展示模型，供菜单栏、弹窗和小组件共享同一套 Pace 判断。
 public struct UsagePaceDisplay: Equatable, Sendable {
     public let remainingPercent: Int
+    public let remainingPercentText: String
     public let deltaPercent: Int
     public let expectedUsedPercent: Int
     public let etaSeconds: TimeInterval?
@@ -1599,6 +2063,7 @@ public struct UsagePaceDisplay: Equatable, Sendable {
             return nil
         }
         self.remainingPercent = percentWindow.remainingPercent
+        self.remainingPercentText = percentWindow.remainingPercentText
         self.deltaPercent = pace.roundedDeltaPercent
         self.expectedUsedPercent = pace.roundedExpectedUsedPercent
         self.etaSeconds = pace.etaSeconds
@@ -1606,11 +2071,11 @@ public struct UsagePaceDisplay: Equatable, Sendable {
     }
 
     public var valueText: String {
-        "\(remainingPercent)% · \(deltaText)"
+        "\(remainingPercentText) · \(deltaText)"
     }
 
     public var compactValueText: String {
-        "\(remainingPercent)%·\(deltaText)"
+        "\(remainingPercentText)·\(deltaText)"
     }
 
     public var detailText: String {
@@ -1915,7 +2380,7 @@ public struct CodexMeterWidgetDisplay: Equatable, Sendable {
         return Line(
             id: id,
             title: title,
-            value: Self.value(for: remainingPercent, settings: settings),
+            value: Self.value(for: window, settings: settings),
             resetText: resetText,
             paceStatusText: paceDisplay?.widgetStatusText(language: language) ?? "",
             paceProjectionText: paceDisplay?.widgetProjectionText(language: language) ?? "",
@@ -1929,14 +2394,13 @@ public struct CodexMeterWidgetDisplay: Equatable, Sendable {
         )
     }
 
-    private static func value(for remainingPercent: Int?, settings: MenuBarDisplaySettings) -> String {
-        guard let remainingPercent else {
+    private static func value(for window: RateLimitWindow?, settings: MenuBarDisplaySettings) -> String {
+        guard let window else {
             return "--"
         }
-        if settings.showsPercentSymbol {
-            return "\(remainingPercent)%"
-        }
-        return "\(remainingPercent)"
+        return settings.showsPercentSymbol
+            ? window.remainingPercentText
+            : String(window.remainingPercentText.dropLast())
     }
 }
 

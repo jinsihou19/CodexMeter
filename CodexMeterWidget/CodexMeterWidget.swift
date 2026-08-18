@@ -559,7 +559,7 @@ private struct LocalQuotaRings: View {
     private func quotaLabel(_ window: RateLimitWindow?, fallback: String, color: Color) -> some View {
         HStack(spacing: 3) {
             Text(window?.windowDurationMins == 300 ? "5h" : fallback).foregroundStyle(color)
-            Text("\(window?.remainingPercent ?? 0)%")
+            Text(window?.remainingPercentText ?? "--")
         }
         .font(.system(size: 11, weight: .bold, design: .rounded))
         .monospacedDigit()
