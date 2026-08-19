@@ -503,7 +503,15 @@ private struct GeminiModelsSection: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 8) {
-                Label(AppLocalization.string("Antigravity"), systemImage: "sparkles")
+                Label {
+                    Text(AppLocalization.string("Antigravity"))
+                } icon: {
+                    Image("AntigravityIcon")
+                        .resizable()
+                        .renderingMode(.template)
+                        .scaledToFit()
+                        .frame(width: 14, height: 14)
+                }
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(.secondary)
                 Spacer(minLength: 8)

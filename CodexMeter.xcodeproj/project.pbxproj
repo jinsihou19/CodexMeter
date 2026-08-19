@@ -803,7 +803,7 @@
 				CODE_SIGN_ENTITLEMENTS = CodexMeter/CodexMeter.entitlements;
 				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 57;
+				CURRENT_PROJECT_VERSION = 25;
 				DEVELOPMENT_TEAM = Q53B3XSA9F;
 				ENABLE_HARDENED_RUNTIME = YES;
 				GENERATE_INFOPLIST_FILE = NO;
@@ -812,7 +812,7 @@
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
-				MARKETING_VERSION = 1.1.7;
+				MARKETING_VERSION = 1.2.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.jinsihou.CodexUsage;
 				PRODUCT_MODULE_NAME = CodexMeter;
 				PRODUCT_NAME = CodexUsage;
@@ -829,7 +829,7 @@
 					CODE_SIGN_ENTITLEMENTS = "";
 					"CODE_SIGN_IDENTITY[sdk=macosx*]" = "-";
 					CODE_SIGN_STYLE = Manual;
-					CURRENT_PROJECT_VERSION = 57;
+					CURRENT_PROJECT_VERSION = 25;
 					DEVELOPMENT_TEAM = "";
 					ENABLE_HARDENED_RUNTIME = NO;
 				GENERATE_INFOPLIST_FILE = NO;
@@ -838,7 +838,7 @@
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
-				MARKETING_VERSION = 1.1.7;
+				MARKETING_VERSION = 1.2.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.jinsihou.CodexUsage;
 				PRODUCT_MODULE_NAME = CodexMeter;
 				PRODUCT_NAME = CodexUsage;
@@ -854,7 +854,7 @@
 				CODE_SIGN_ENTITLEMENTS = CodexMeterWidget/CodexMeterWidget.entitlements;
 				"CODE_SIGN_IDENTITY[sdk=*]" = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 57;
+				CURRENT_PROJECT_VERSION = 25;
 				DEVELOPMENT_TEAM = Q53B3XSA9F;
 				ENABLE_APP_SANDBOX = YES;
 				GENERATE_INFOPLIST_FILE = NO;
@@ -864,7 +864,7 @@
 					"@executable_path/../Frameworks",
 					"@executable_path/../../../../Frameworks",
 				);
-				MARKETING_VERSION = 1.1.7;
+				MARKETING_VERSION = 1.2.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.jinsihou.CodexUsage.WidgetExtension;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SKIP_INSTALL = YES;
@@ -880,7 +880,7 @@
 				CODE_SIGN_IDENTITY = "-";
 				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "-";
 				CODE_SIGN_STYLE = Manual;
-				CURRENT_PROJECT_VERSION = 57;
+				CURRENT_PROJECT_VERSION = 25;
 				DEVELOPMENT_TEAM = "";
 				ENABLE_APP_SANDBOX = YES;
 				GENERATE_INFOPLIST_FILE = NO;
@@ -890,7 +890,7 @@
 					"@executable_path/../Frameworks",
 					"@executable_path/../../../../Frameworks",
 				);
-				MARKETING_VERSION = 1.1.7;
+				MARKETING_VERSION = 1.2.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.jinsihou.CodexUsage.WidgetExtension;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SKIP_INSTALL = YES;

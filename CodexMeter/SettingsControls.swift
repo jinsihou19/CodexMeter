@@ -618,8 +618,10 @@ struct MenuBarLayoutEditor: View {
                     .frame(width: MenuBarDisplaySettings.menuBarIconWidth, height: MenuBarDisplaySettings.menuBarIconWidth)
                     .clipped()
             case .geminiIcon:
-                Image(systemName: "sparkles")
-                    .font(.system(size: StatusBarDisplayMetrics.trailingGeminiIconWidth - 2, weight: .semibold))
+                Image("AntigravityIcon")
+                    .resizable()
+                    .renderingMode(.template)
+                    .scaledToFit()
                     .frame(
                         width: StatusBarDisplayMetrics.trailingGeminiIconWidth,
                         height: StatusBarDisplayMetrics.trailingGeminiIconWidth
@@ -1022,7 +1024,7 @@ struct MenuBarLayoutEditor: View {
         case .geminiIcon:
             let iconSize = max(1, min(16, image.size.height - 2))
             drawMenuImage(
-                named: "sparkles",
+                named: "AntigravityIcon",
                 in: imageBounds(width: iconSize, height: iconSize, containerHeight: image.size.height)
             )
         case .separator:

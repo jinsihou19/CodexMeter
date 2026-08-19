@@ -26,8 +26,8 @@ final class ScreenConfettiOverlayController {
     private var panels: [NSPanel] = []
     private var dismissalTask: Task<Void, Never>?
 
-    /// 播放一次全屏彩带；已有动画尚未结束时忽略重复触发。
-    func play() {
+    /// 按重置窗口类型播放彩带；已有动画尚未结束时忽略重复触发。
+    func play(resetType: UsageResetCelebrationOption) {
         guard panels.isEmpty else { return }
         panels = NSScreen.screens.map { screen in
             let panel = ConfettiOverlayPanel(
@@ -38,7 +38,8 @@ final class ScreenConfettiOverlayController {
                 screen: screen
             )
             panel.contentView = ConfettiEmitterView(
-                frame: NSRect(origin: .zero, size: screen.frame.size)
+                frame: NSRect(origin: .zero, size: screen.frame.size),
+                resetType: resetType
             )
             panel.level = .statusBar
             panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .ignoresCycle, .stationary]
@@ -50,8 +51,9 @@ final class ScreenConfettiOverlayController {
             return panel
         }
         panels.forEach { $0.orderFrontRegardless() }
+        let dismissalSeconds: Double = resetType == .weekly ? 5 : 3
         dismissalTask = Task { @MainActor [weak self] in
-            try? await Task.sleep(for: .seconds(5))
+            try? await Task.sleep(for: .seconds(dismissalSeconds))
             self?.dismiss()
         }
     }
@@ -77,9 +79,11 @@ private final class ConfettiOverlayPanel: NSPanel {
 /// 使用 Core Animation 自带粒子发射器绘制彩带，不引入额外动画依赖。
 private final class ConfettiEmitterView: NSView {
     private let emitter = CAEmitterLayer()
+    private let resetType: UsageResetCelebrationOption
 
-    /// 创建透明粒子视图并立即准备短促喷发。
-    override init(frame frameRect: NSRect) {
+    /// 创建指定重置类型的透明粒子视图并立即准备短促喷发。
+    init(frame frameRect: NSRect, resetType: UsageResetCelebrationOption) {
+        self.resetType = resetType
         super.init(frame: frameRect)
         wantsLayer = true
         layer?.backgroundColor = NSColor.clear.cgColor
@@ -91,50 +95,70 @@ private final class ConfettiEmitterView: NSView {
         nil
     }
 
-    /// 屏幕尺寸变化时让发射线始终覆盖屏幕顶部。
+    /// 屏幕尺寸变化时按窗口类型将彩带发射线定位到顶部中央或右上角。
     override func layout() {
         super.layout()
         emitter.frame = bounds
-        emitter.emitterPosition = CGPoint(x: bounds.midX, y: bounds.maxY + 8)
-        emitter.emitterSize = CGSize(width: bounds.width, height: 1)
+        let isWeekly = resetType == .weekly
+        let sessionEmitterWidth = min(bounds.width, 420)
+        emitter.emitterPosition = CGPoint(
+            x: isWeekly ? bounds.midX : bounds.maxX - sessionEmitterWidth / 2,
+            y: bounds.maxY + 8
+        )
+        emitter.emitterSize = CGSize(
+            width: isWeekly ? bounds.width : sessionEmitterWidth,
+            height: 1
+        )
     }
 
-    /// 配置一次短促喷发，粒子随后依靠重力自然飘落。
+    /// 按窗口类型配置喷发强度，粒子随后依靠重力自然飘落。
     private func configureEmitter() {
         emitter.emitterShape = .line
         emitter.emitterMode = .surface
         emitter.renderMode = .unordered
-        emitter.emitterCells = [
+        let colors: [NSColor] = [
             NSColor.systemRed,
             .systemOrange,
             .systemYellow,
             .systemGreen,
             .systemBlue,
             .systemPurple
-        ].map(Self.makeCell(color:))
+        ]
+        emitter.emitterCells = colors.enumerated().map { index, color in
+            let image = resetType == .weekly
+                ? Self.particleImage
+                : Self.sessionParticleImages[index % Self.sessionParticleImages.count]
+            return Self.makeCell(color: color, resetType: resetType, image: image)
+        }
         layer?.addSublayer(emitter)
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.45) { [weak emitter] in
+        let emissionDuration: Double = resetType == .weekly ? 0.45 : 0.35
+        DispatchQueue.main.asyncAfter(deadline: .now() + emissionDuration) { [weak emitter] in
             emitter?.birthRate = 0
         }
     }
 
-    /// 为指定颜色创建一类矩形彩带粒子。
-    private static func makeCell(color: NSColor) -> CAEmitterCell {
+    /// 为指定颜色、窗口类型和粒子形状创建彩带粒子。
+    private static func makeCell(
+        color: NSColor,
+        resetType: UsageResetCelebrationOption,
+        image: CGImage?
+    ) -> CAEmitterCell {
+        let isWeekly = resetType == .weekly
         let cell = CAEmitterCell()
-        cell.contents = particleImage
+        cell.contents = image
         cell.color = color.cgColor
-        cell.birthRate = 22
-        cell.lifetime = 4.5
-        cell.lifetimeRange = 0.8
-        cell.velocity = 170
-        cell.velocityRange = 90
+        cell.birthRate = isWeekly ? 22 : 12
+        cell.lifetime = isWeekly ? 4.5 : 2.3
+        cell.lifetimeRange = isWeekly ? 0.8 : 0.5
+        cell.velocity = isWeekly ? 170 : 120
+        cell.velocityRange = isWeekly ? 90 : 55
         cell.emissionLongitude = -.pi / 2
         cell.emissionRange = .pi / 5
         cell.yAcceleration = -120
-        cell.spin = 4
-        cell.spinRange = 8
-        cell.scale = 0.7
-        cell.scaleRange = 0.35
+        cell.spin = isWeekly ? 4 : 2
+        cell.spinRange = isWeekly ? 8 : 4
+        cell.scale = isWeekly ? 0.7 : 0.5
+        cell.scaleRange = isWeekly ? 0.35 : 0.22
         return cell
     }
 
@@ -147,6 +171,32 @@ private final class ConfettiEmitterView: NSView {
         image.unlockFocus()
         return image.cgImage(forProposedRect: nil, context: nil, hints: nil)
     }()
+
+    /// 为 5 小时窗口提供交替使用的圆点和菱形粒子，避免沿用 7 天的矩形彩带。
+    private static let sessionParticleImages: [CGImage?] = [
+        makeSessionParticleImage(diamond: false),
+        makeSessionParticleImage(diamond: true)
+    ]
+
+    /// 生成 5 小时窗口使用的圆点或菱形白色位图。
+    private static func makeSessionParticleImage(diamond: Bool) -> CGImage? {
+        let image = NSImage(size: NSSize(width: 12, height: 12))
+        image.lockFocus()
+        NSColor.white.setFill()
+        if diamond {
+            let path = NSBezierPath()
+            path.move(to: NSPoint(x: 6, y: 0))
+            path.line(to: NSPoint(x: 12, y: 6))
+            path.line(to: NSPoint(x: 6, y: 12))
+            path.line(to: NSPoint(x: 0, y: 6))
+            path.close()
+            path.fill()
+        } else {
+            NSBezierPath(ovalIn: NSRect(x: 1, y: 1, width: 10, height: 10)).fill()
+        }
+        image.unlockFocus()
+        return image.cgImage(forProposedRect: nil, context: nil, hints: nil)
+    }
 }
 
 /// 应用委托负责组装用量、雷达、菜单栏和设置窗口等长期存活对象。
@@ -156,8 +206,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var radarStore: CodexRadarStore?
     private var statusBarController: StatusBarController?
     private let confettiOverlayController = ScreenConfettiOverlayController()
-    private lazy var usageNotificationController = UsageNotificationController { [weak self] in
-        self?.confettiOverlayController.play()
+    private lazy var usageNotificationController = UsageNotificationController { [weak self] resetType in
+        self?.confettiOverlayController.play(resetType: resetType)
     }
     private let updater = AppUpdater.shared
     private let settingsWindowOpener = SettingsWindowOpener()
@@ -168,7 +218,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         updater.start()
         NotificationCenter.default.addObserver(
             self,
-            selector: #selector(playConfettiPreview),
+            selector: #selector(playConfettiPreview(_:)),
             name: .playUsageResetConfettiPreview,
             object: nil
         )
@@ -187,9 +237,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    /// 响应设置页临时预览按钮，不读取或改写正式庆祝偏好。
-    @objc private func playConfettiPreview() {
-        confettiOverlayController.play()
+    /// 响应设置页临时预览按钮，按上方选择播放对应彩带；无单一窗口时沿用 7 天样式。
+    @objc private func playConfettiPreview(_ notification: Notification) {
+        let resetType: UsageResetCelebrationOption
+        switch notification.object as? UsageResetCelebrationOption {
+        case .some(.session):
+            resetType = .session
+        default:
+            resetType = .weekly
+        }
+        confettiOverlayController.play(resetType: resetType)
     }
 
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
@@ -637,9 +694,14 @@ private struct StatusBarLabel: View {
             if !trailingGeminiLines.isEmpty {
                 Color.clear
                     .frame(width: StatusBarDisplayMetrics.trailingProviderSeparatorSpacing)
-                Image(systemName: "sparkles")
-                    .font(.system(size: 11, weight: .semibold))
-                    .frame(width: StatusBarDisplayMetrics.trailingGeminiIconWidth)
+                Image("AntigravityIcon")
+                    .resizable()
+                    .renderingMode(.template)
+                    .scaledToFit()
+                    .frame(
+                        width: StatusBarDisplayMetrics.trailingGeminiIconWidth,
+                        height: StatusBarDisplayMetrics.trailingGeminiIconWidth
+                    )
                     .foregroundStyle(.primary)
                     .accessibilityHidden(true)
                 Color.clear
@@ -684,9 +746,14 @@ private struct StatusBarLabel: View {
                 CodexMenuBarIcon()
             }
         case .geminiIcon:
-            Image(systemName: "sparkles")
-                .font(.system(size: 11, weight: .semibold))
-                .frame(width: StatusBarDisplayMetrics.trailingGeminiIconWidth)
+            Image("AntigravityIcon")
+                .resizable()
+                .renderingMode(.template)
+                .scaledToFit()
+                .frame(
+                    width: StatusBarDisplayMetrics.trailingGeminiIconWidth,
+                    height: StatusBarDisplayMetrics.trailingGeminiIconWidth
+                )
                 .foregroundStyle(.primary)
                 .accessibilityHidden(true)
         case let .line(line):

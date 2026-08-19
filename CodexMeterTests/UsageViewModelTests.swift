@@ -48,6 +48,7 @@ final class UsageViewModelTests: XCTestCase {
         XCTAssertTrue(source.contains("title: \"重置时播放彩带\""))
         XCTAssertTrue(source.contains("title: \"播放彩带\""))
         XCTAssertTrue(source.contains(".playUsageResetConfettiPreview"))
+        XCTAssertTrue(source.contains("object: UsageResetCelebrationOption(rawValue: resetCelebrationOption)"))
         XCTAssertTrue(source.contains("title: \"语言\""))
         XCTAssertTrue(source.contains("if showsCustomColorControls"))
         XCTAssertFalse(source.contains("ForEach(detectedMenuBarWindows"))
@@ -230,8 +231,43 @@ final class UsageViewModelTests: XCTestCase {
         detector = UsageResetCelebrationDetector(defaults: defaults)
         XCTAssertFalse(detector.process(transientDrop, option: .weekly))
         detector = UsageResetCelebrationDetector(defaults: defaults)
-        XCTAssertTrue(detector.process(reset, option: .weekly))
+        XCTAssertEqual(
+            detector.processKind(reset, option: .weekly)?.rawValue,
+            UsageResetCelebrationOption.weekly.rawValue
+        )
         XCTAssertFalse(detector.process(reset, option: .weekly))
+    }
+
+    /// 验证 5 小时窗口和 7 天窗口会返回不同的庆祝类型，供展示层选择不同强度的彩带。
+    func testUsageResetCelebrationKindDistinguishesFiveHourReset() {
+        let suiteName = "UsageViewModelTests.ResetCelebrationKind.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let previous = RateLimitSnapshot(
+            limitId: "codex",
+            limitName: nil,
+            primary: RateLimitWindow(usedPercent: 62, windowDurationMins: 300, resetsAt: 2_000),
+            secondary: nil,
+            credits: nil,
+            planType: nil,
+            rateLimitReachedType: nil
+        )
+        let reset = RateLimitSnapshot(
+            limitId: "codex",
+            limitName: nil,
+            primary: RateLimitWindow(usedPercent: 1, windowDurationMins: 300, resetsAt: 4_000),
+            secondary: nil,
+            credits: nil,
+            planType: nil,
+            rateLimitReachedType: nil
+        )
+
+        var detector = UsageResetCelebrationDetector(defaults: defaults)
+        XCTAssertNil(detector.processKind(previous, option: .session))
+        XCTAssertEqual(
+            detector.processKind(reset, option: .session)?.rawValue,
+            UsageResetCelebrationOption.session.rawValue
+        )
     }
 
     /// 验证 Antigravity 的重置窗口使用独立基线，并能触发对应的周额度庆祝。

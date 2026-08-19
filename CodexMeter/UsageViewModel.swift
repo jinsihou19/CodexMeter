@@ -177,20 +177,36 @@ struct UsageResetCelebrationDetector {
 
     /// 更新持久化检测状态，并在用量跨过阈值且重置边界前移时返回是否应播放彩带。
     mutating func process(_ rateLimits: RateLimitSnapshot, option: UsageResetCelebrationOption) -> Bool {
-        process(observations: observations(in: rateLimits), option: option)
+        processKind(rateLimits, option: option) != nil
     }
 
     /// 更新 Antigravity 检测状态，并在模型额度重置时返回是否应播放彩带。
     mutating func process(_ geminiSnapshot: GeminiModelsSnapshot, option: UsageResetCelebrationOption) -> Bool {
+        processKind(geminiSnapshot, option: option) != nil
+    }
+
+    /// 更新 Codex 检测状态，并返回触发彩带的窗口类型；无重置时返回 nil。
+    mutating func processKind(
+        _ rateLimits: RateLimitSnapshot,
+        option: UsageResetCelebrationOption
+    ) -> UsageResetCelebrationOption? {
+        process(observations: observations(in: rateLimits), option: option)
+    }
+
+    /// 更新 Antigravity 检测状态，并返回触发彩带的窗口类型；无重置时返回 nil。
+    mutating func processKind(
+        _ geminiSnapshot: GeminiModelsSnapshot,
+        option: UsageResetCelebrationOption
+    ) -> UsageResetCelebrationOption? {
         process(observations: observations(in: geminiSnapshot), option: option)
     }
 
-    /// 统一处理不同供应商的窗口观察值，并持久化跨重启的重置基线。
+    /// 统一处理不同供应商的窗口观察值，并持久化跨重启的重置基线；同轮同时重置时周窗口优先。
     private mutating func process(
         observations: [ResetObservation],
         option: UsageResetCelebrationOption
-    ) -> Bool {
-        var shouldCelebrate = false
+    ) -> UsageResetCelebrationOption? {
+        var celebrationType: UsageResetCelebrationOption?
         for observation in observations {
             let previous = states[observation.key]
             let isAboveThreshold = observation.window.usedPercent > Self.threshold
@@ -201,7 +217,16 @@ struct UsageResetCelebrationDetector {
             let suppressedCrossing = crossedBelowThreshold && !boundaryAdvanced
 
             if crossedBelowThreshold, boundaryAdvanced, includes(observation.kind, in: option) {
-                shouldCelebrate = true
+                let candidate: UsageResetCelebrationOption
+                switch observation.kind {
+                case .session:
+                    candidate = .session
+                case .weekly:
+                    candidate = .weekly
+                }
+                if candidate == .weekly || celebrationType == nil {
+                    celebrationType = candidate
+                }
             }
             states[observation.key] = State(
                 wasAboveThreshold: suppressedCrossing ? true : isAboveThreshold,
@@ -211,7 +236,7 @@ struct UsageResetCelebrationDetector {
             )
         }
         persist()
-        return shouldCelebrate
+        return celebrationType
     }
 
     /// 按接口实际窗口时长区分会话与周额度，兼容只有 primary 周窗口的账号。
@@ -265,12 +290,12 @@ final class UsageNotificationController {
     private var resetCelebrationDetector: UsageResetCelebrationDetector
     private var geminiResetCelebrationDetector: UsageResetCelebrationDetector
     private let defaults: UserDefaults
-    private let playConfetti: () -> Void
+    private let playConfetti: (UsageResetCelebrationOption) -> Void
 
-    /// 注入彩带播放动作，使重置判断保持可测试且不依赖窗口实现。
+    /// 注入带窗口类型的彩带播放动作，使重置判断保持可测试且不依赖窗口实现。
     init(
         defaults: UserDefaults = MenuBarDisplaySettings.sharedDefaults,
-        playConfetti: @escaping () -> Void = {}
+        playConfetti: @escaping (UsageResetCelebrationOption) -> Void = { _ in }
     ) {
         self.defaults = defaults
         self.resetCelebrationDetector = UsageResetCelebrationDetector(defaults: defaults)
@@ -303,19 +328,25 @@ final class UsageNotificationController {
                 forKey: UsageCelebrationPreferenceKeys.resetOption
             ) ?? ""
         ) ?? .off
-        let codexShouldCelebrate = resetCelebrationDetector.process(current, option: celebrationOption)
-        let geminiShouldCelebrate: Bool
+        let codexCelebrationType = resetCelebrationDetector.processKind(current, option: celebrationOption)
+        let geminiCelebrationType: UsageResetCelebrationOption?
         if let geminiSnapshot = snapshot.geminiModels {
             let geminiEnabled = GeminiModelsSettings(defaults: defaults).isEnabled
-            geminiShouldCelebrate = geminiResetCelebrationDetector.process(
+            geminiCelebrationType = geminiResetCelebrationDetector.processKind(
                 geminiSnapshot,
                 option: geminiEnabled ? celebrationOption : .off
             )
         } else {
-            geminiShouldCelebrate = false
+            geminiCelebrationType = nil
         }
-        if codexShouldCelebrate || geminiShouldCelebrate {
-            playConfetti()
+        let celebrationType: UsageResetCelebrationOption?
+        if codexCelebrationType == .weekly || geminiCelebrationType == .weekly {
+            celebrationType = .weekly
+        } else {
+            celebrationType = codexCelebrationType ?? geminiCelebrationType
+        }
+        if let celebrationType {
+            playConfetti(celebrationType)
         }
         let settings = UsageNotificationSettings(defaults: defaults)
         var events: [UsageNotificationEvent] = []

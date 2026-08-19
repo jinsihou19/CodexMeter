@@ -299,7 +299,15 @@ struct SettingsView: View {
                     Label {
                         Text(localized(pane.title))
                     } icon: {
-                        Image(systemName: pane.symbolName)
+                        if pane == .gemini {
+                            Image("AntigravityIcon")
+                                .resizable()
+                                .renderingMode(.template)
+                                .scaledToFit()
+                                .frame(width: 18, height: 18)
+                        } else {
+                            Image(systemName: pane.symbolName)
+                        }
                     }
                         .font(.system(size: 13))
                         .padding(.leading, 6)
@@ -508,10 +516,13 @@ struct SettingsView: View {
                 )
                 SettingsActionRow(
                     title: "播放彩带",
-                    subtitle: "临时入口：立即预览一次全屏彩带。",
+                    subtitle: "临时入口：按上方选择预览对应彩带。",
                     systemImage: "party.popper"
                 ) {
-                    NotificationCenter.default.post(name: .playUsageResetConfettiPreview, object: nil)
+                    NotificationCenter.default.post(
+                        name: .playUsageResetConfettiPreview,
+                        object: UsageResetCelebrationOption(rawValue: resetCelebrationOption)
+                    )
                 }
             }
         }
