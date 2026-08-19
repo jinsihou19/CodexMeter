@@ -801,6 +801,9 @@ struct MenuBarLayoutEditor: View {
         }
         .menuStyle(.borderlessButton)
         .menuIndicator(.hidden)
+        // 原生 Menu 在部分 macOS 版本的 Form/HStack 中会吞掉剩余宽度；固定外层控件，避免按钮和弹出菜单出现大片空白。
+        .frame(width: 24, height: 24)
+        .fixedSize()
         .help("添加菜单栏内容")
     }
 
