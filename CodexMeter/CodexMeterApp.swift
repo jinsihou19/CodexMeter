@@ -627,7 +627,7 @@ private struct StatusBarLabel: View {
                             layoutItemView(
                                 resolvedItem,
                                 activityDisplay: activityDisplay,
-                                usesSingleLineTypography: layout.items.allSatisfy { $0.count <= 1 }
+                                usesSingleLineTypography: item.count <= 1
                             )
                         }
                     }
@@ -650,6 +650,7 @@ private struct StatusBarLabel: View {
                             label: line.label,
                             value: line.value,
                             tone: line.tone,
+                            usesUsageColor: line.usesUsageColor,
                             settings: settings,
                             usesSingleLineTypography: trailingGeminiLines.count == 1
                         )
@@ -693,8 +694,15 @@ private struct StatusBarLabel: View {
                 label: line.label,
                 value: line.value,
                 tone: line.tone,
+                usesUsageColor: line.usesUsageColor,
                 settings: settings,
                 usesSingleLineTypography: usesSingleLineTypography
+            )
+        case let .usageBar(display):
+            MenuBarUsageBarView(
+                display: display,
+                settings: settings,
+                isDisabled: false
             )
         case .separator:
             Text("·")
@@ -743,13 +751,14 @@ private struct StatusBarLabel: View {
 
     /// 两行读数沿用行距设置但限制为紧凑值，避免项目高度超过真实菜单栏。
     private func lineSpacing(settings: MenuBarDisplaySettings) -> CGFloat {
-        min(CGFloat(settings.rowSpacing), -2)
+        min(CGFloat(settings.rowSpacing), 0)
     }
 
     private func statusLine(
         label: String,
         value: String,
         tone: UsageRemainingTone,
+        usesUsageColor: Bool,
         settings: MenuBarDisplaySettings,
         usesSingleLineTypography: Bool
     ) -> some View {
@@ -759,7 +768,11 @@ private struct StatusBarLabel: View {
                     .foregroundStyle(.primary)
             }
             Text(value)
-                .foregroundStyle(tone.statusBarColor(settings: settings))
+                .foregroundStyle(
+                    usesUsageColor
+                        ? tone.statusBarColor(settings: settings)
+                        : Color.primary
+                )
         }
         .font(.system(
             size: statusFontSize(settings: settings, usesSingleLineTypography: usesSingleLineTypography),

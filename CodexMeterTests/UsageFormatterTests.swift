@@ -5,10 +5,18 @@ final class UsageFormatterTests: XCTestCase {
     func testResetTimeUsesProvidedTimeZoneAndLocale() {
         let formatter = UsageFormatter(
             locale: Locale(identifier: "en_US_POSIX"),
-            timeZone: TimeZone(secondsFromGMT: 0)!
+            timeZone: TimeZone(secondsFromGMT: 0)!,
+            language: .english
         )
+        let resetDate = Date(timeIntervalSince1970: 1_779_949_290)
 
-        XCTAssertEqual(formatter.resetTime(epochSeconds: 1_779_949_290), "2026-05-28 06:21")
+        XCTAssertEqual(
+            formatter.resetTime(
+                epochSeconds: Int(resetDate.timeIntervalSince1970),
+                now: resetDate.addingTimeInterval(-86_400)
+            ),
+            "tomorrow 06:21"
+        )
     }
 
     func testNilResetTimeUsesDash() {
@@ -39,7 +47,7 @@ final class UsageFormatterTests: XCTestCase {
             resetAfterSeconds: 9_290
         )
 
-        XCTAssertEqual(formatter.resetRemainingText(window: window, now: now), "2 小时 34 分后")
+        XCTAssertEqual(formatter.resetRemainingText(window: window, now: now), "2h 34m后")
         XCTAssertEqual(formatter.resetRemainingText(window: nil, now: now), "--")
     }
 
@@ -88,7 +96,7 @@ final class UsageFormatterTests: XCTestCase {
         let expiresAt = Date(timeIntervalSince1970: 93_600)
 
         XCTAssertEqual(formatter.resetCreditExpiration(expiresAt), "1970-01-02 10:00")
-        XCTAssertEqual(formatter.resetCreditExpirationRemaining(expiresAt, now: now), "1 天 2 小时后")
+        XCTAssertEqual(formatter.resetCreditExpirationRemaining(expiresAt, now: now), "1d 2h后")
         XCTAssertEqual(formatter.resetCreditExpirationRemaining(now, now: expiresAt), "已过期")
         XCTAssertEqual(formatter.resetCreditExpiration(nil), "--")
     }

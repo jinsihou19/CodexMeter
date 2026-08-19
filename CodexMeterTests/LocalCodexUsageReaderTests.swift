@@ -162,7 +162,10 @@ final class LocalCodexUsageReaderTests: XCTestCase {
 
         let unknownLoadedSnapshot = await reader.load()
         let unknownSnapshot = try XCTUnwrap(unknownLoadedSnapshot)
-        XCTAssertNil(unknownSnapshot.summary.monthCost)
+        XCTAssertEqual(unknownSnapshot.summary.monthCost?.estimatedCostUSD ?? 0, 3.026, accuracy: 0.000_001)
+        XCTAssertEqual(unknownSnapshot.summary.monthCost?.pricedSessionCount, 0)
+        XCTAssertEqual(unknownSnapshot.summary.monthCost?.sessionCount, 1)
+        XCTAssertEqual(unknownSnapshot.summary.hasIncompleteUsage, true)
         XCTAssertNil(unknownSnapshot.summary.dailyBuckets?.first(where: { $0.id == "2026-07-30" })?.estimatedCostUSD)
     }
 

@@ -410,7 +410,7 @@ struct LocalCodexUsageReader: Sendable {
         var dailyCosts: [String: Double] = [:]
         var unpricedDays = Set<String>()
         var projects: [String: ProjectAccumulator] = [:]
-        var monthUsage = SessionTokenUsage.zero
+        var pricedMonthUsage = SessionTokenUsage.zero
         var monthCost = 0.0
         var monthSessionCount = 0
         var pricedMonthSessionCount = 0
@@ -432,6 +432,7 @@ struct LocalCodexUsageReader: Sendable {
             guard let entry else { continue }
             var sourceSevenDayUsage = SessionTokenUsage.zero
             var sourceMonthUsage = SessionTokenUsage.zero
+            var sourceMonthPricedUsage = SessionTokenUsage.zero
             var sourceMonthCost = 0.0
             var sourceMonthFullyPriced = true
             for event in entry.recentEvents where event.sequence >= exclusion.prefixLength {
@@ -442,7 +443,10 @@ struct LocalCodexUsageReader: Sendable {
                 if let price {
                     let cost = Self.estimatedCost(for: event.usage, price: price)
                     dailyCosts[day, default: 0] += cost
-                    if day >= monthDay { sourceMonthCost += cost }
+                    if day >= monthDay {
+                        sourceMonthCost += cost
+                        sourceMonthPricedUsage.add(event.usage)
+                    }
                 } else if event.usage.total > 0 {
                     unpricedDays.insert(day)
                     if day >= monthDay { sourceMonthFullyPriced = false }
@@ -458,9 +462,11 @@ struct LocalCodexUsageReader: Sendable {
             }
             if sourceMonthUsage.total > 0 {
                 monthSessionCount += 1
-                monthUsage.add(sourceMonthUsage)
                 if sourceMonthFullyPriced {
                     pricedMonthSessionCount += 1
+                }
+                if sourceMonthPricedUsage.total > 0 {
+                    pricedMonthUsage.add(sourceMonthPricedUsage)
                     monthCost += sourceMonthCost
                 }
             }
@@ -476,11 +482,11 @@ struct LocalCodexUsageReader: Sendable {
         let projectRows = projects.map { cwd, value in
             ProjectRow(cwd: cwd, tokens: value.tokens, threadCount: value.threadIDs.count)
         }
-        let trustedMonthCost = monthSessionCount > 0 && monthSessionCount == pricedMonthSessionCount
+        let trustedMonthCost = monthSessionCount > 0 && pricedMonthUsage.total > 0
             ? LocalCodexCostSummary(
-                inputTokens: monthUsage.input,
-                cachedInputTokens: monthUsage.cachedInput,
-                outputTokens: monthUsage.output,
+                inputTokens: pricedMonthUsage.input,
+                cachedInputTokens: pricedMonthUsage.cachedInput,
+                outputTokens: pricedMonthUsage.output,
                 estimatedCostUSD: monthCost,
                 pricedSessionCount: pricedMonthSessionCount,
                 sessionCount: monthSessionCount
@@ -496,6 +502,7 @@ struct LocalCodexUsageReader: Sendable {
             dailyRows: dailyRows,
             monthCost: trustedMonthCost,
             hasIncompleteUsage: !incompletePaths.isEmpty
+                || (monthSessionCount > 0 && pricedMonthSessionCount < monthSessionCount)
         )
     }
 

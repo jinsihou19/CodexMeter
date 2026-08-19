@@ -279,6 +279,9 @@ struct SettingsView: View {
         .onChange(of: selectedLanguage) { _, _ in
             NSApp.keyWindow?.title = localized("CodexMeter 设置")
         }
+        .onReceive(NotificationCenter.default.publisher(for: .usageSnapshotDidChange)) { _ in
+            loadPreviewSnapshot()
+        }
     }
 
     /// 从普通图片资源读取当前明暗模式图标，避免非默认 App Icon Set 被构建缓存替换。
@@ -468,7 +471,7 @@ struct SettingsView: View {
             Section(AppLocalization.string("用量提醒")) {
                 SettingsToggleRow(
                     title: "额度耗尽提醒",
-                    subtitle: "5 小时或 7 天窗口剩余降至 0% 时发送系统通知。",
+                    subtitle: "Codex 或 Antigravity 的 5 小时或 7 天窗口剩余降至 0% 时发送系统通知。",
                     isOn: usageNotificationBinding(
                         $notifiesWhenDepleted,
                         key: UsageNotificationPreferenceKeys.notifiesWhenDepleted
@@ -476,7 +479,7 @@ struct SettingsView: View {
                 )
                 SettingsToggleRow(
                     title: "低额度提醒",
-                    subtitle: "剩余额度首次降到设定阈值时发送一次系统通知。",
+                    subtitle: "Codex 或 Antigravity 剩余额度首次降到设定阈值时发送一次系统通知。",
                     isOn: usageNotificationBinding(
                         $notifiesWhenLow,
                         key: UsageNotificationPreferenceKeys.notifiesWhenLow
@@ -669,7 +672,7 @@ struct SettingsView: View {
                         SliderSettingRow(
                             title: "两行行距",
                             value: menuBarBinding($rowSpacing, key: MenuBarPreferenceKeys.rowSpacing),
-                            range: -5...6,
+                            range: -5...0,
                             step: 0.5,
                             suffix: "pt"
                         )

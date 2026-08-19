@@ -1,6 +1,22 @@
 import AppKit
 import CodexMeterShared
 import SwiftUI
+import UniformTypeIdentifiers
+
+/// 预览区域统一使用移动语义，避免系统把拖放显示成带加号的复制操作。
+private struct MenuBarDropDelegate: DropDelegate {
+    let onDrop: ([NSItemProvider]) -> Bool
+
+    /// 告诉系统拖动目标是移动而不是复制，从源头去掉拖放预览上的加号。
+    func dropUpdated(info: DropInfo) -> DropProposal? {
+        DropProposal(operation: .move)
+    }
+
+    /// 接收文本拖放数据，并交给预览编辑器按目标区域处理。
+    func performDrop(info: DropInfo) -> Bool {
+        onDrop(info.itemProviders(for: [.text]))
+    }
+}
 
 struct DensitySettingRow: View {
     @Binding var layoutDensity: String
@@ -143,7 +159,6 @@ struct MenuBarLayoutEditor: View {
     let geminiSettings: GeminiModelsSettings
     let geminiSnapshot: GeminiModelsSnapshot?
     @State private var menuTarget: MenuBarEditorTarget?
-    @State private var stackRowTarget: MenuBarStackRowTarget?
     @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
@@ -158,10 +173,6 @@ struct MenuBarLayoutEditor: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
             .frame(maxWidth: .infinity, minHeight: MenuBarDisplaySettings().statusLabelHeight, alignment: .leading)
-            .dropDestination(for: String.self) { payloads, _ in
-                guard let payload = payloads.first else { return false }
-                return dropToEnd(payload)
-            }
             addMenu
             trashDropTarget
         }
@@ -183,11 +194,7 @@ struct MenuBarLayoutEditor: View {
         } else {
             let isStacked = layout.items[item].contains { $0.isStackPlaceholder }
                 || visibleTokens.count > 1
-            let usesSingleLineTypography = layout.items.allSatisfy { item in
-                !item.contains { $0.isStackPlaceholder }
-                    && item.filter(shouldShowToken).count <= 1
-            }
-            VStack(alignment: .trailing, spacing: isStacked ? -2 : 0) {
+            VStack(alignment: .trailing, spacing: isStacked ? min(CGFloat(settings.rowSpacing), 0) : 0) {
                 ForEach(
                     Array(layout.items[item].enumerated()).filter { shouldShowToken($0.element) },
                     id: \.offset
@@ -196,19 +203,25 @@ struct MenuBarLayoutEditor: View {
                         token,
                         item: item,
                         index: index,
-                        isStacked: !usesSingleLineTypography
+                        isStacked: isStacked
                     )
                 }
             }
             .frame(minHeight: MenuBarDisplaySettings().statusLabelHeight, alignment: .center)
             .contentShape(Rectangle())
-            .draggable("item|\(item)") {
+            .onDrag {
+                NSItemProvider(object: NSString(string: "item|\(item)"))
+            } preview: {
                 itemDragPreview(item)
             }
-            .dropDestination(for: String.self) { payloads, _ in
-                guard let payload = payloads.first else { return false }
-                return drop(payload, toItem: item, index: layout.items[item].count)
-            }
+            .onDrop(
+                of: [.text],
+                delegate: MenuBarDropDelegate { providers in
+                    handleDrop(providers) { payload in
+                        drop(payload, toItem: item, index: layout.items[item].count)
+                    }
+                }
+            )
             .help("拖动堆叠项目可整体移动；同一项目内拖动内容调整上下顺序")
         }
     }
@@ -227,13 +240,19 @@ struct MenuBarLayoutEditor: View {
             .popover(item: editorMenuBinding(for: target), arrowEdge: .bottom) { target in
                 editorMenu(for: target)
             }
-            .draggable("item|\(item)") {
+            .onDrag {
+                NSItemProvider(object: NSString(string: "item|\(item)"))
+            } preview: {
                 itemDragPreview(item)
             }
-            .dropDestination(for: String.self) { payloads, _ in
-                guard let payload = payloads.first else { return false }
-                return drop(payload, toItem: item, index: 0)
-            }
+            .onDrop(
+                of: [.text],
+                delegate: MenuBarDropDelegate { providers in
+                    handleDrop(providers) { payload in
+                        drop(payload, toItem: item, index: 0)
+                    }
+                }
+            )
             .help("空堆叠容器；点击配置第一行和第二行")
     }
 
@@ -265,6 +284,7 @@ struct MenuBarLayoutEditor: View {
     ) -> some View {
         let target = MenuBarEditorTarget(item: item, index: index)
         let isDisabled = isDisabledToken(token)
+        let dragSource = isStacked ? dragPayload(item: item, index: index) : "item|\(item)"
         return liveTokenContent(token, isStacked: isStacked, isDisabled: isDisabled)
             .foregroundStyle(isDisabled ? Color.secondary.opacity(0.5) : Color.primary)
             .contentShape(Rectangle())
@@ -274,13 +294,19 @@ struct MenuBarLayoutEditor: View {
             .popover(item: editorMenuBinding(for: target), arrowEdge: .bottom) { target in
                 editorMenu(for: target)
             }
-        .draggable(dragPayload(item: item, index: index)) {
-            itemDragPreview(item)
-        }
-        .dropDestination(for: String.self) { payloads, _ in
-            guard let payload = payloads.first else { return false }
-            return drop(payload, toItem: item, index: index)
-        }
+            .onDrag {
+                NSItemProvider(object: NSString(string: dragSource))
+            } preview: {
+                itemDragPreview(item)
+            }
+            .onDrop(
+                of: [.text],
+                delegate: MenuBarDropDelegate { providers in
+                    handleDrop(providers) { payload in
+                        drop(payload, toItem: item, index: index)
+                    }
+                }
+            )
     }
 
     /// 绘制拖拽浮层；无论拖动堆叠中的哪一行，都展示该横向项目的完整内容。
@@ -293,7 +319,7 @@ struct MenuBarLayoutEditor: View {
                 .font(.system(size: 15, weight: .medium))
                 .frame(width: 32, height: MenuBarDisplaySettings().statusLabelHeight)
         } else {
-            VStack(alignment: .trailing, spacing: stacked ? -2 : 0) {
+            VStack(alignment: .trailing, spacing: stacked ? min(CGFloat(settings.rowSpacing), 0) : 0) {
                 ForEach(
                     Array(layout.items[item].enumerated()).filter { shouldShowToken($0.element) },
                     id: \.offset
@@ -334,42 +360,38 @@ struct MenuBarLayoutEditor: View {
                 deleteItemButton(target.item)
             }
             .padding(8)
-            .frame(minWidth: 280, alignment: .leading)
-            .fixedSize(horizontal: false, vertical: true)
+            .fixedSize(horizontal: true, vertical: true)
             .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
             .overlay {
                 RoundedRectangle(cornerRadius: 12)
                     .stroke(Color.primary.opacity(0.18), lineWidth: 1)
             }
-        } else if let index = target.index,
+        } else if target.index != nil,
                   layout.items.indices.contains(target.item),
-                  layout.items[target.item].indices.contains(index) {
-            let token = layout.items[target.item][index]
+                  layout.items[target.item].indices.contains(target.index!) {
+            let isStackedItem = isStackItem(target.item)
             VStack(alignment: .leading, spacing: 2) {
-                if layout.items[target.item].count > 1 {
+                if isStackedItem {
                     stackConfiguration(item: target.item)
+                } else {
+                    stackRowMenu(item: target.item, row: 0, showsRowLabel: false)
+                }
+                if isStackedItem {
                     Divider()
                         .padding(.vertical, 2)
-                }
-                if !token.isProviderIcon {
                     Button("拆成独立项目") {
-                        commit(layout.detaching(at: index, inItem: target.item))
+                        commit(layout.detaching(at: target.index!, inItem: target.item))
                     }
                     .buttonStyle(.plain)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.horizontal, 9)
                     .padding(.vertical, 6)
                 }
-                Divider()
-                    .padding(.vertical, 2)
-                Button("删除此内容", role: .destructive) {
-                    commit(layout.removing(at: index, inItem: target.item))
+                if isStackedItem {
+                    Divider()
+                        .padding(.vertical, 2)
                 }
-                .buttonStyle(.plain)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.horizontal, 9)
-                .padding(.vertical, 6)
-                Button("删除整个项目", role: .destructive) {
+                Button("删除", role: .destructive) {
                     commit(layout.removingItem(at: target.item))
                 }
                 .buttonStyle(.plain)
@@ -378,8 +400,7 @@ struct MenuBarLayoutEditor: View {
                 .padding(.vertical, 6)
             }
             .padding(8)
-            .frame(minWidth: 280, alignment: .leading)
-            .fixedSize(horizontal: false, vertical: true)
+            .fixedSize(horizontal: true, vertical: true)
             .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
             .overlay {
                 RoundedRectangle(cornerRadius: 12)
@@ -388,13 +409,30 @@ struct MenuBarLayoutEditor: View {
         }
     }
 
-    /// 返回容器可配置的非图标项目；图标始终作为独立菜单栏项目存在。
+    /// 返回所有可配置内容；即使供应商开关关闭，也保留图标和内容的配置入口。
     private var stackConfigurationTokens: [MenuBarLayoutToken] {
-        var tokens: [MenuBarLayoutToken] = [.primary, .secondary, .paceRemaining, .paceDelta]
-        if geminiSettings.isEnabled {
-            tokens += [.geminiPrimary, .geminiSecondary, .geminiPaceRemaining, .geminiPaceDelta]
-        }
-        return tokens
+        [
+            .icon, .primary, .secondary, .paceRemaining, .paceDelta,
+            .fiveHourPaceRemaining, .fiveHourPaceDelta, .weeklyPaceRemaining, .weeklyPaceDelta,
+            .provider, .account, .plan, .usageBar,
+            .resetCountdown, .resetTime, .depletionETA, .balance, .todayCost, .monthCost,
+            .geminiIcon, .geminiPrimary, .geminiSecondary, .geminiPaceRemaining, .geminiPaceDelta,
+            .geminiFiveHourPaceRemaining, .geminiFiveHourPaceDelta,
+            .geminiWeeklyPaceRemaining, .geminiWeeklyPaceDelta,
+            .geminiProvider, .geminiAccount, .geminiPlan, .geminiUsageBar,
+            .geminiResetCountdown, .geminiResetTime, .geminiDepletionETA,
+            .geminiBalance, .geminiTodayCost, .geminiMonthCost
+        ]
+    }
+
+    /// 按供应商拆分堆叠行可选项目；二级菜单内不再重复显示供应商名称。
+    private var codexStackConfigurationTokens: [MenuBarLayoutToken] {
+        stackConfigurationTokens.filter { !$0.isGeminiToken }
+    }
+
+    /// 返回 Antigravity 项目；关闭供应商时仍允许预先配置，预览层负责置灰提示。
+    private var geminiStackConfigurationTokens: [MenuBarLayoutToken] {
+        stackConfigurationTokens.filter(\.isGeminiToken)
     }
 
     /// 显示堆叠容器的两行配置；选项菜单直接展示当前实时内容，不再显示抽象占位名称。
@@ -404,29 +442,38 @@ struct MenuBarLayoutEditor: View {
         stackRowMenu(item: item, row: 1)
     }
 
-    /// 绘制一行配置菜单；使用自定义弹出面板保持与添加菜单的材质和圆角一致。
+    /// 绘制一行配置菜单；沿用添加菜单的原生层级样式，并保留当前行的真实内容。
     @ViewBuilder
-    private func stackRowMenu(item: Int, row: Int) -> some View {
+    private func stackRowMenu(item: Int, row: Int, showsRowLabel: Bool = true) -> some View {
         let target = MenuBarStackRowTarget(item: item, row: row)
-        Button {
-            stackRowTarget = target
-        } label: {
-            if let token = stackRowToken(item: item, row: row) {
-                menuLabel(title: "第 \(row + 1) 行 · \(AppLocalization.string(token.title))") {
-                    menuTokenPreview(token)
-                }
-            } else {
-                menuLabel(title: "第 \(row + 1) 行 · 空") {
-                    Color.clear
-                        .frame(width: 42, height: 22)
-                }
-            }
-        }
-        .buttonStyle(.plain)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .popover(item: stackRowPopoverBinding(for: target), arrowEdge: .bottom) { target in
+        Menu {
             stackRowPicker(for: target)
+        } label: {
+            HStack(spacing: 8) {
+                Group {
+                    if let token = stackRowToken(item: item, row: row) {
+                        Text(showsRowLabel ? "第 \(row + 1) 行 · \(providerTokenTitle(token))" : providerTokenTitle(token))
+                            .foregroundStyle(isDisabledToken(token) ? Color.secondary : Color.primary)
+                    } else {
+                        Text(showsRowLabel ? "第 \(row + 1) 行 · 空" : "空")
+                    }
+                }
+                .lineLimit(1)
+
+                Spacer(minLength: 8)
+
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(.secondary)
+                    .frame(width: 32, height: 28)
+            }
+            .contentShape(Rectangle())
         }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 9)
+        .padding(.vertical, 6)
     }
 
     /// 返回堆叠容器指定行的真实内容；空行标记只用于维持容器，不显示给用户。
@@ -438,54 +485,54 @@ struct MenuBarLayoutEditor: View {
         return token.isStackPlaceholder ? nil : token
     }
 
-    /// 绑定当前行的选择弹出层，避免多个行按钮共享一个原生 Menu 状态。
-    private func stackRowPopoverBinding(
-        for target: MenuBarStackRowTarget
-    ) -> Binding<MenuBarStackRowTarget?> {
-        Binding(
-            get: {
-                stackRowTarget == target ? target : nil
-            },
-            set: { updatedTarget in
-                stackRowTarget = updatedTarget
-            }
+    /// 为堆叠行补充供应商名称，避免 Codex 与 Antigravity 的同名额度项目混淆。
+    private func providerTokenTitle(_ token: MenuBarLayoutToken) -> String {
+        if token == .separator || token == .space {
+            return AppLocalization.string(token.title)
+        }
+        let provider = token.isGeminiToken ? "Antigravity" : "Codex"
+        return "\(provider) \(AppLocalization.string(token.title))"
+    }
+
+    /// 生成行选择菜单；复用添加菜单的原生多级 Menu，避免两套弹出样式和定位逻辑。
+    @ViewBuilder
+    private func stackRowPicker(for target: MenuBarStackRowTarget) -> some View {
+        Button("清空") {
+            commitStackRow(nil, target: target)
+        }
+        Divider()
+        stackProviderMenu(title: "Codex", iconToken: .icon, tokens: codexStackConfigurationTokens, target: target)
+        stackProviderMenu(
+            title: "Antigravity",
+            iconToken: .geminiIcon,
+            tokens: geminiStackConfigurationTokens,
+            target: target
         )
     }
 
-    /// 绘制行选择面板；选择后只关闭行面板，保留外层容器配置面板继续填写另一行。
+    /// 绘制供应商一级菜单及其项目二级菜单；沿用添加菜单的原生层级行为。
     @ViewBuilder
-    private func stackRowPicker(for target: MenuBarStackRowTarget) -> some View {
-        VStack(alignment: .leading, spacing: 2) {
-            Button("清空") {
-                commitStackRow(nil, target: target)
-            }
-            .buttonStyle(.plain)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.horizontal, 9)
-            .padding(.vertical, 6)
-
-            Divider()
-                .padding(.vertical, 2)
-
-            ForEach(stackConfigurationTokens) { token in
-                Button {
-                    commitStackRow(token, target: target)
-                } label: {
-                    menuTokenLabel(token)
+    private func stackProviderMenu(
+        title: String,
+        iconToken: MenuBarLayoutToken,
+        tokens: [MenuBarLayoutToken],
+        target: MenuBarStackRowTarget
+    ) -> some View {
+        let previewWidth = menuTokenPreviewColumnWidth(for: tokens)
+        if !tokens.isEmpty {
+            Menu {
+                ForEach(tokens) { token in
+                    Button {
+                        commitStackRow(token, target: target)
+                    } label: {
+                        menuTokenLabel(token, previewWidth: previewWidth)
+                    }
                 }
-                .buttonStyle(.plain)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.horizontal, 9)
-                .padding(.vertical, 6)
+            } label: {
+                menuLabel(title: title) {
+                    menuTokenPreview(iconToken)
+                }
             }
-        }
-        .padding(8)
-        .frame(minWidth: 280, alignment: .leading)
-        .fixedSize(horizontal: false, vertical: true)
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
-        .overlay {
-            RoundedRectangle(cornerRadius: 12)
-                .stroke(Color.primary.opacity(0.18), lineWidth: 1)
         }
     }
 
@@ -494,13 +541,20 @@ struct MenuBarLayoutEditor: View {
         _ token: MenuBarLayoutToken?,
         target: MenuBarStackRowTarget
     ) {
-        let updated = layout.replacingStackToken(token, at: target.row, inItem: target.item).normalized
+        let updated: MenuBarLayout
+        let isContainer = layout.items.indices.contains(target.item)
+            && (layout.items[target.item].isEmpty || isStackItem(target.item))
+        if isContainer {
+            updated = layout.replacingStackToken(token, at: target.row, inItem: target.item).normalized
+        } else if let token {
+            updated = layout.replacingItemToken(token, inItem: target.item).normalized
+        } else {
+            updated = layout.removingItem(at: target.item).normalized
+        }
         guard updated != layout else {
-            stackRowTarget = nil
             return
         }
         layout = updated
-        stackRowTarget = nil
         onChange(updated)
     }
 
@@ -523,7 +577,13 @@ struct MenuBarLayoutEditor: View {
         isStacked: Bool,
         isDisabled: Bool = false
     ) -> some View {
-        if let line = liveLine(for: token) {
+        if let bar = liveUsageBar(for: token) {
+            MenuBarUsageBarView(
+                display: bar,
+                settings: settings,
+                isDisabled: isDisabled
+            )
+        } else if let line = liveLine(for: token) {
             HStack(spacing: CGFloat(settings.itemSpacing)) {
                 if !line.label.isEmpty {
                     Text(line.label)
@@ -532,7 +592,9 @@ struct MenuBarLayoutEditor: View {
                     .foregroundStyle(
                         isDisabled
                             ? Color.secondary.opacity(0.5)
-                            : line.tone.statusBarColor(settings: settings)
+                            : line.usesUsageColor
+                                ? line.tone.statusBarColor(settings: settings)
+                                : Color.primary
                     )
             }
             .foregroundStyle(isDisabled ? Color.secondary.opacity(0.5) : Color.primary)
@@ -572,8 +634,11 @@ struct MenuBarLayoutEditor: View {
                             : .regular
                     ))
             case .space:
-                Color.clear
-                    .frame(width: max(4, CGFloat(settings.itemSpacing)))
+                // 设置页用轮廓图标标记空格；真实菜单仍由 ResolvedMenuBarLayoutItem.space 保持纯间距。
+                Image(systemName: token.systemImageName)
+                    .font(.system(size: isStacked ? 9 : 11, weight: .medium))
+                    .foregroundStyle(.secondary)
+                    .frame(width: isStacked ? 12 : 16, height: MenuBarDisplaySettings().statusLabelHeight)
             case .stackPlaceholder:
                 Color.clear
                     .frame(width: 0, height: 0)
@@ -587,13 +652,22 @@ struct MenuBarLayoutEditor: View {
     /// 解析编辑器中某个项目对应的 Codex 或 Antigravity 实时读数。
     private func liveLine(for token: MenuBarLayoutToken) -> StatusLineDisplay? {
         switch token {
-        case .primary, .secondary, .paceRemaining, .paceDelta:
+        case .primary, .secondary, .paceRemaining, .paceDelta,
+             .fiveHourPaceRemaining, .fiveHourPaceDelta,
+             .weeklyPaceRemaining, .weeklyPaceDelta,
+             .provider, .account, .plan, .resetCountdown, .resetTime, .depletionETA,
+             .balance, .todayCost, .monthCost:
             return StatusLineDisplay.layoutLine(
                 for: token,
                 snapshot: snapshot,
                 settings: settings
             )
         case .geminiPrimary, .geminiSecondary, .geminiPaceRemaining, .geminiPaceDelta,
+             .geminiFiveHourPaceRemaining, .geminiFiveHourPaceDelta,
+             .geminiWeeklyPaceRemaining, .geminiWeeklyPaceDelta,
+             .geminiProvider, .geminiAccount, .geminiPlan,
+             .geminiResetCountdown, .geminiResetTime, .geminiDepletionETA,
+             .geminiBalance, .geminiTodayCost, .geminiMonthCost,
              .geminiRemaining, .geminiDelta:
             // 仅为设置页恢复关闭前的缓存读数；真实菜单仍由 MenuBarLayoutDisplay 过滤。
             let previewSettings = geminiSettings.isEnabled
@@ -615,35 +689,104 @@ struct MenuBarLayoutEditor: View {
         }
     }
 
+    /// 解析编辑器中两个供应商的分段用量条，确保预览和真实菜单共用同一份比例。
+    private func liveUsageBar(for token: MenuBarLayoutToken) -> MenuBarUsageBarDisplay? {
+        switch token {
+        case .usageBar:
+            return StatusLineDisplay.layoutUsageBar(for: token, snapshot: snapshot)
+        case .geminiUsageBar:
+            let previewSettings = geminiSettings.isEnabled
+                ? geminiSettings
+                : GeminiModelsSettings(
+                    isEnabled: true,
+                    model: geminiSettings.model,
+                    showsInPopover: geminiSettings.showsInPopover,
+                    showsInMenuBar: true
+                )
+            return StatusLineDisplay.layoutGeminiUsageBar(
+                for: token,
+                geminiSettings: previewSettings,
+                snapshot: geminiSnapshot
+            )
+        default:
+            return nil
+        }
+    }
+
     /// 加号打开原生分级菜单；菜单锚定在加号下方，避免使用独立 popover 造成居中漂移。
     private var addMenu: some View {
-        Menu {
+        let codexTokens: [MenuBarLayoutToken] = [
+            .icon, .primary, .secondary, .paceRemaining, .paceDelta,
+            .fiveHourPaceDelta,
+            .weeklyPaceDelta,
+            .provider, .account, .plan, .usageBar,
+            .resetCountdown, .resetTime, .depletionETA, .balance, .todayCost, .monthCost
+        ]
+        let geminiTokens: [MenuBarLayoutToken] = [
+            .geminiIcon,
+            .geminiPrimary,
+            .geminiSecondary,
+            .geminiPaceRemaining,
+            .geminiPaceDelta,
+            .geminiFiveHourPaceDelta,
+            .geminiWeeklyPaceDelta,
+            .geminiProvider,
+            .geminiAccount,
+            .geminiPlan,
+            .geminiUsageBar,
+            .geminiResetCountdown,
+            .geminiResetTime,
+            .geminiDepletionETA,
+            .geminiBalance,
+            .geminiTodayCost,
+            .geminiMonthCost
+        ]
+        let codexPreviewWidth = menuTokenPreviewColumnWidth(for: codexTokens)
+        let geminiPreviewWidth = menuTokenPreviewColumnWidth(for: geminiTokens)
+
+        return Menu {
             Menu {
-                ForEach([.icon, .primary, .secondary, .paceRemaining, .paceDelta] as [MenuBarLayoutToken]) {
-                    addTokenButton($0)
+                ForEach(codexTokens) {
+                    addTokenButton($0, previewWidth: codexPreviewWidth)
                 }
-                addStackButton(tokens: [.paceRemaining, .paceDelta])
-                addStackButton(tokens: [.primary, .secondary])
+                addStackButton(tokens: [.paceRemaining, .paceDelta], previewWidth: codexPreviewWidth)
+                addStackButton(tokens: [.primary, .secondary], previewWidth: codexPreviewWidth)
+                addStackButton(
+                    tokens: [.fiveHourPaceRemaining, .fiveHourPaceDelta],
+                    previewWidth: codexPreviewWidth
+                )
+                addStackButton(
+                    tokens: [.weeklyPaceRemaining, .weeklyPaceDelta],
+                    previewWidth: codexPreviewWidth
+                )
             } label: {
                 menuLabel(title: "Codex") {
-                    menuSystemImagePreview("circle.dashed")
+                    menuTokenPreview(.icon)
                 }
             }
             Menu {
-                ForEach([
-                    .geminiIcon,
-                    .geminiPrimary,
-                    .geminiSecondary,
-                    .geminiPaceRemaining,
-                    .geminiPaceDelta
-                ] as [MenuBarLayoutToken]) {
-                    addTokenButton($0)
+                ForEach(geminiTokens) {
+                    addTokenButton($0, previewWidth: geminiPreviewWidth)
                 }
-                addStackButton(tokens: [.geminiPaceRemaining, .geminiPaceDelta])
-                addStackButton(tokens: [.geminiPrimary, .geminiSecondary])
+                addStackButton(
+                    tokens: [.geminiPaceRemaining, .geminiPaceDelta],
+                    previewWidth: geminiPreviewWidth
+                )
+                addStackButton(
+                    tokens: [.geminiPrimary, .geminiSecondary],
+                    previewWidth: geminiPreviewWidth
+                )
+                addStackButton(
+                    tokens: [.geminiFiveHourPaceRemaining, .geminiFiveHourPaceDelta],
+                    previewWidth: geminiPreviewWidth
+                )
+                addStackButton(
+                    tokens: [.geminiWeeklyPaceRemaining, .geminiWeeklyPaceDelta],
+                    previewWidth: geminiPreviewWidth
+                )
             } label: {
                 menuLabel(title: "Antigravity") {
-                    menuSystemImagePreview("sparkles")
+                    menuTokenPreview(.geminiIcon)
                 }
             }
             addTokenButton(.space)
@@ -661,28 +804,47 @@ struct MenuBarLayoutEditor: View {
 
     /// 添加一个独立内容；重复内容由布局模型拒绝，菜单中同步呈现禁用状态。
     @ViewBuilder
-    private func addTokenButton(_ token: MenuBarLayoutToken) -> some View {
+    private func addTokenButton(
+        _ token: MenuBarLayoutToken,
+        previewWidth: CGFloat? = nil
+    ) -> some View {
         Button {
             commit(layout.addingItem(token))
         } label: {
-            menuTokenLabel(token)
+            menuTokenLabel(token, previewWidth: previewWidth)
         }
         .disabled(layout.addingItem(token) == layout)
     }
 
-    /// 添加一个预先定义的堆叠容器；用户仍可在预览中拖动其中内容调整顺序。
+    /// 添加一个预先定义的堆叠容器；组合项目只保留一次窗口名称，避免菜单标题重复。
     @ViewBuilder
-    private func addStackButton(tokens: [MenuBarLayoutToken]) -> some View {
+    private func addStackButton(
+        tokens: [MenuBarLayoutToken],
+        previewWidth: CGFloat? = nil
+    ) -> some View {
         Button {
             commit(layout.addingStack(tokens))
         } label: {
-            menuLabel(
-                title: tokens.map { AppLocalization.string($0.title) }.joined(separator: " + ")
-            ) {
-                menuStackPreview(tokens)
+            menuLabel(title: stackTitle(for: tokens)) {
+                menuStackPreview(tokens, previewWidth: previewWidth)
             }
         }
         .disabled(layout.addingStack(tokens) == layout)
+    }
+
+    /// 生成预设堆叠的菜单标题；同一窗口的预期偏差不再重复写窗口名称。
+    private func stackTitle(for tokens: [MenuBarLayoutToken]) -> String {
+        var titleParts = tokens.map { AppLocalization.string($0.title) }
+        switch tokens {
+        case [.fiveHourPaceRemaining, .fiveHourPaceDelta],
+             [.geminiFiveHourPaceRemaining, .geminiFiveHourPaceDelta],
+             [.weeklyPaceRemaining, .weeklyPaceDelta],
+             [.geminiWeeklyPaceRemaining, .geminiWeeklyPaceDelta]:
+            titleParts[1] = AppLocalization.string(MenuBarLayoutToken.paceDelta.title)
+        default:
+            break
+        }
+        return titleParts.joined(separator: " + ")
     }
 
     /// 在一级添加菜单中创建空容器；容器本身不预置任何内容。
@@ -698,31 +860,37 @@ struct MenuBarLayoutEditor: View {
         .disabled(layout.addingEmptyContainer() == layout)
     }
 
-    /// 绘制添加菜单中的固定宽度实时内容；它只承担“图标”区域，右侧文字由菜单项单独提供。
+    /// 绘制添加菜单中的实时内容；按内容自然撑开，但不超过左侧预览列上限。
     @ViewBuilder
-    private func menuTokenPreview(_ token: MenuBarLayoutToken) -> some View {
-        Image(nsImage: menuTokenImage(token))
-            .frame(width: 42, height: 22, alignment: .leading)
-            .clipped()
+    private func menuTokenPreview(
+        _ token: MenuBarLayoutToken,
+        previewWidth: CGFloat? = nil
+    ) -> some View {
+        let image = menuTokenImage(token, previewWidth: previewWidth)
+        Image(nsImage: image)
+            .frame(width: image.size.width, height: 22, alignment: .leading)
     }
 
-    /// 绘制一级菜单分类和空容器使用的固定系统图标槽位，避免原生 Label 与实时图像错列。
+    /// 绘制空容器的系统图标；槽位与其他菜单图标保持相同自然宽度。
     @ViewBuilder
     private func menuSystemImagePreview(_ name: String) -> some View {
         Image(nsImage: menuSystemImage(named: name))
-            .frame(width: 42, height: 22, alignment: .leading)
+            .frame(width: 18, height: 22, alignment: .leading)
             .clipped()
     }
 
     /// 绘制“实时内容图标 + 右侧名称”的菜单项，避免原生 Menu 按完整内容重新放大布局。
     @ViewBuilder
-    private func menuTokenLabel(_ token: MenuBarLayoutToken) -> some View {
+    private func menuTokenLabel(
+        _ token: MenuBarLayoutToken,
+        previewWidth: CGFloat? = nil
+    ) -> some View {
         menuLabel(title: AppLocalization.string(token.title)) {
-            menuTokenPreview(token)
+            menuTokenPreview(token, previewWidth: previewWidth)
         }
     }
 
-    /// 使用原生 Label 的 title/icon 双列布局，避免自定义 HStack 被 NSMenu 拆成多行。
+    /// 使用原生 Label 的 title/icon 双列布局；显式锁定系统菜单字体和行高，避免首次测量后尺寸漂移。
     @ViewBuilder
     private func menuLabel<Icon: View>(
         title: String,
@@ -730,82 +898,282 @@ struct MenuBarLayoutEditor: View {
     ) -> some View {
         Label {
             Text(title)
+                .font(Font(NSFont.menuFont(ofSize: 0)))
+                .lineLimit(1)
+                .frame(height: 22, alignment: .center)
         } icon: {
             icon()
+                .frame(height: 22, alignment: .center)
         }
         .labelStyle(.titleAndIcon)
+        .frame(minHeight: 22, alignment: .center)
     }
 
-    /// 绘制预设堆叠的双行实时图标；两行共享固定宽度，右侧仍显示预设名称。
+    /// 绘制预设堆叠的双行实时内容；两行取最大实际宽度，避免其中一行被裁切。
     @ViewBuilder
-    private func menuStackPreview(_ tokens: [MenuBarLayoutToken]) -> some View {
-        Image(nsImage: menuStackImage(tokens))
-            .frame(width: 42, height: 39, alignment: .leading)
-            .clipped()
+    private func menuStackPreview(
+        _ tokens: [MenuBarLayoutToken],
+        previewWidth: CGFloat? = nil
+    ) -> some View {
+        let image = menuStackImage(tokens, previewWidth: previewWidth)
+        Image(nsImage: image)
+            .frame(width: image.size.width, height: 22, alignment: .leading)
     }
 
-    /// 把系统符号绘制到统一宽度的菜单图像中，确保所有一级菜单共享同一左边界。
+    /// 把系统符号绘制到自然宽度的菜单图像中，避免空容器把标题额外推远。
     private func menuSystemImage(named name: String) -> NSImage {
-        let image = NSImage(size: NSSize(width: 42, height: 22))
+        let image = NSImage(size: NSSize(width: 18, height: 22))
         image.lockFocus()
         defer { image.unlockFocus() }
         drawMenuImage(named: name, in: imageBounds(width: 16, height: 16))
         return image
     }
 
-    /// 将实时文字或系统图标绘制成 NSImage，让原生菜单把它当作真正的左侧 image，而不是可重排的文本视图。
-    private func menuTokenImage(_ token: MenuBarLayoutToken) -> NSImage {
-        let image = NSImage(size: NSSize(width: 42, height: 22))
+    /// 计算左侧实时内容的自然宽度；内容不足时不补空白，超出 60pt 时由绘制层省略。
+    private func menuTokenPreviewWidth(for token: MenuBarLayoutToken) -> CGFloat {
+        let naturalWidth: CGFloat
+        if let line = liveLine(for: token), !line.value.isEmpty, line.value != "--" {
+            let font = NSFont.monospacedSystemFont(ofSize: 12, weight: .medium)
+            naturalWidth = ceil((line.value as NSString).size(withAttributes: [.font: font]).width) + 2
+        } else if liveUsageBar(for: token) != nil {
+            naturalWidth = 18
+        } else {
+            switch token {
+            case .icon:
+                naturalWidth = 18
+            case .geminiIcon:
+                naturalWidth = 16
+            case .separator:
+                // 分隔点虽只有一个字符，也要占用与其他一级菜单图标相同的槽位。
+                naturalWidth = 18
+            default:
+                naturalWidth = 16
+            }
+        }
+        return min(naturalWidth, 60)
+    }
+
+    /// 计算同一层菜单的统一左列宽度；按该层最长内容取值，并受 60pt 上限约束。
+    private func menuTokenPreviewColumnWidth(for tokens: [MenuBarLayoutToken]) -> CGFloat {
+        tokens.map { menuTokenPreviewWidth(for: $0) }.max() ?? 16
+    }
+
+    /// 将实时文字或系统图标绘制到固定宽度的 NSImage，超长内容统一尾部省略。
+    private func menuTokenImage(
+        _ token: MenuBarLayoutToken,
+        previewWidth: CGFloat? = nil,
+        height: CGFloat = 22,
+        fontSize: CGFloat = 12
+    ) -> NSImage {
+        let imageWidth = previewWidth ?? menuTokenPreviewWidth(for: token)
+        let image = NSImage(size: NSSize(width: imageWidth, height: height))
         image.lockFocus()
         defer { image.unlockFocus() }
+
+        if let usageBar = liveUsageBar(for: token) {
+            let diameter = max(1, min(18, image.size.height - 2))
+            drawMenuUsageBar(
+                usageBar,
+                in: NSRect(
+                    x: 0,
+                    y: (image.size.height - diameter) / 2,
+                    width: diameter,
+                    height: diameter
+                )
+            )
+            return image
+        }
 
         if let line = liveLine(for: token),
            !line.value.isEmpty,
            line.value != "--" {
+            let font = NSFont.monospacedSystemFont(ofSize: fontSize, weight: .medium)
+            let paragraphStyle = NSMutableParagraphStyle()
+            paragraphStyle.lineBreakMode = .byTruncatingTail
             let attributes: [NSAttributedString.Key: Any] = [
-                .font: NSFont.monospacedSystemFont(ofSize: 12, weight: .medium),
-                .foregroundColor: NSColor(line.tone.statusBarColor(settings: settings))
+                .font: font,
+                .foregroundColor: line.usesUsageColor
+                    ? NSColor(line.tone.statusBarColor(settings: settings))
+                    : NSColor.labelColor,
+                .paragraphStyle: paragraphStyle
             ]
             let text = NSAttributedString(string: line.value, attributes: attributes)
-            let textSize = text.size()
+            let textHeight = min(image.size.height, ceil(text.size().height))
+            let textRect = NSRect(
+                x: 0,
+                y: max(0, floor((image.size.height - textHeight) / 2)),
+                width: image.size.width,
+                height: textHeight
+            )
             text.draw(
-                at: NSPoint(
-                    x: 0,
-                    y: max(0, (22 - textSize.height) / 2)
-                )
+                with: textRect,
+                options: [.usesLineFragmentOrigin, .truncatesLastVisibleLine]
             )
             return image
         }
 
         switch token {
         case .icon:
-            drawMenuImage(named: "OpenAIStatusIcon", in: imageBounds(width: 18, height: 18))
+            let iconSize = max(1, min(18, image.size.height - 2))
+            drawMenuImage(
+                named: "OpenAIStatusIcon",
+                in: imageBounds(width: iconSize, height: iconSize, containerHeight: image.size.height)
+            )
         case .geminiIcon:
-            drawMenuImage(named: "sparkles", in: imageBounds(width: 16, height: 16))
+            let iconSize = max(1, min(16, image.size.height - 2))
+            drawMenuImage(
+                named: "sparkles",
+                in: imageBounds(width: iconSize, height: iconSize, containerHeight: image.size.height)
+            )
         case .separator:
             let attributes: [NSAttributedString.Key: Any] = [
-                .font: NSFont.systemFont(ofSize: 16, weight: .medium),
+                .font: NSFont.systemFont(ofSize: fontSize, weight: .medium),
                 .foregroundColor: NSColor.labelColor
             ]
-            NSAttributedString(string: "·", attributes: attributes).draw(at: NSPoint(x: 2, y: 1))
+            let separator = NSAttributedString(string: "·", attributes: attributes)
+            let separatorSize = separator.size()
+            separator.draw(
+                at: NSPoint(
+                    x: max(0, (image.size.width - separatorSize.width) / 2),
+                    y: max(0, (image.size.height - separatorSize.height) / 2)
+                )
+            )
         case .space:
-            drawMenuImage(named: token.systemImageName, in: imageBounds(width: 16, height: 16))
+            let iconSize = max(1, min(16, image.size.height - 2))
+            drawMenuImage(
+                named: token.systemImageName,
+                in: imageBounds(width: iconSize, height: iconSize, containerHeight: image.size.height)
+            )
         default:
-            drawMenuImage(named: token.systemImageName, in: imageBounds(width: 16, height: 16))
+            let iconSize = max(1, min(16, image.size.height - 2))
+            drawMenuImage(
+                named: token.systemImageName,
+                in: imageBounds(width: iconSize, height: iconSize, containerHeight: image.size.height)
+            )
         }
         return image
     }
 
+    /// 将实时窗口剩余比例绘制成添加菜单左侧的饼图或双层环形图，保持与菜单栏预览一致。
+    private func drawMenuUsageBar(
+        _ display: MenuBarUsageBarDisplay,
+        in rect: NSRect
+    ) {
+        let windows = Array(display.windows.prefix(2))
+        guard !windows.isEmpty else { return }
+        let diameter = min(rect.width, rect.height)
+        let circleRect = NSRect(
+            x: rect.midX - diameter / 2,
+            y: rect.midY - diameter / 2,
+            width: diameter,
+            height: diameter
+        )
+        let center = NSPoint(x: circleRect.midX, y: circleRect.midY)
+        if windows.count == 1, let window = windows.first {
+            drawUsagePie(window, in: circleRect, center: center)
+        } else if let first = windows.first, let second = windows.dropFirst().first {
+            drawUsageRing(first, center: center, radius: diameter / 2 - 1.2, lineWidth: 2.3)
+            drawUsageRing(second, center: center, radius: diameter / 2 - 4.2, lineWidth: 2.1)
+        }
+    }
+
+    /// 绘制单窗口饼图；底色保留状态色的低透明度以标识 0% 窗口。
+    private func drawUsagePie(
+        _ window: MenuBarUsageWindowDisplay,
+        in rect: NSRect,
+        center: NSPoint
+    ) {
+        let color = NSColor(window.tone.statusBarColor(settings: settings))
+        color.withAlphaComponent(0.22).setFill()
+        NSBezierPath(ovalIn: rect).fill()
+
+        let fraction = CGFloat(max(0, min(100, window.remainingPercent))) / 100
+        if fraction >= 0.999 {
+            color.setFill()
+            NSBezierPath(ovalIn: rect).fill()
+        } else if fraction > 0 {
+            let wedge = NSBezierPath()
+            wedge.move(to: center)
+            wedge.appendArc(
+                withCenter: center,
+                radius: rect.width / 2,
+                startAngle: 90,
+                endAngle: 90 - 360 * fraction,
+                clockwise: true
+            )
+            wedge.close()
+            color.setFill()
+            wedge.fill()
+        }
+
+        let border = NSBezierPath(ovalIn: rect)
+        NSColor.separatorColor.setStroke()
+        border.lineWidth = 1
+        border.stroke()
+    }
+
+    /// 绘制双窗口中的一层环形图；每一层单独使用对应窗口的状态色。
+    private func drawUsageRing(
+        _ window: MenuBarUsageWindowDisplay,
+        center: NSPoint,
+        radius: CGFloat,
+        lineWidth: CGFloat
+    ) {
+        let color = NSColor(window.tone.statusBarColor(settings: settings))
+        let track = NSBezierPath()
+        track.appendArc(
+            withCenter: center,
+            radius: radius,
+            startAngle: 0,
+            endAngle: 360,
+            clockwise: false
+        )
+        track.lineWidth = lineWidth
+        color.withAlphaComponent(0.22).setStroke()
+        track.stroke()
+
+        let fraction = CGFloat(max(0, min(100, window.remainingPercent))) / 100
+        guard fraction > 0 else { return }
+        let progress = NSBezierPath()
+        progress.appendArc(
+            withCenter: center,
+            radius: radius,
+            startAngle: 90,
+            endAngle: 90 - 360 * fraction,
+            clockwise: true
+        )
+        progress.lineWidth = lineWidth
+        color.setStroke()
+        progress.stroke()
+    }
+
     /// 将两个实时内容合并为一个双行菜单图标，避免堆叠预设被系统拆成多个菜单行。
-    private func menuStackImage(_ tokens: [MenuBarLayoutToken]) -> NSImage {
-        let image = NSImage(size: NSSize(width: 42, height: 39))
+    private func menuStackImage(
+        _ tokens: [MenuBarLayoutToken],
+        previewWidth: CGFloat? = nil
+    ) -> NSImage {
+        let compactLineHeight: CGFloat = 10
+        let tokenImages = tokens.prefix(2).map {
+            menuTokenImage(
+                $0,
+                previewWidth: previewWidth,
+                height: compactLineHeight,
+                fontSize: 9
+            )
+        }
+        let imageWidth = max(42, tokenImages.map(\.size.width).max() ?? 42)
+        let image = NSImage(size: NSSize(width: imageWidth, height: 22))
         image.lockFocus()
         defer { image.unlockFocus() }
 
-        for (index, token) in tokens.prefix(2).enumerated() {
-            let tokenImage = menuTokenImage(token)
+        for (index, tokenImage) in tokenImages.enumerated() {
             tokenImage.draw(
-                in: NSRect(x: 0, y: CGFloat(17 - index * 17), width: 42, height: 22),
+                in: NSRect(
+                    x: 0,
+                    y: image.size.height - compactLineHeight * CGFloat(index + 1),
+                    width: tokenImage.size.width,
+                    height: tokenImage.size.height
+                ),
                 from: .zero,
                 operation: .sourceOver,
                 fraction: 1
@@ -815,8 +1183,12 @@ struct MenuBarLayoutEditor: View {
     }
 
     /// 返回菜单图标的固定绘制区域；所有来源统一从左侧对齐，防止图标在不同菜单项中漂移。
-    private func imageBounds(width: CGFloat, height: CGFloat) -> NSRect {
-        NSRect(x: 0, y: (22 - height) / 2, width: width, height: height)
+    private func imageBounds(
+        width: CGFloat,
+        height: CGFloat,
+        containerHeight: CGFloat = 22
+    ) -> NSRect {
+        NSRect(x: 0, y: (containerHeight - height) / 2, width: width, height: height)
     }
 
     /// 绘制资源或 SF Symbol；缺少资源时保持空白，不让菜单布局因占位文本改变尺寸。
@@ -836,10 +1208,12 @@ struct MenuBarLayoutEditor: View {
             .foregroundStyle(.secondary)
             .frame(width: 24, height: 24)
             .contentShape(Rectangle())
-            .dropDestination(for: String.self) { payloads, _ in
-                guard let payload = payloads.first else { return false }
-                return delete(payload)
-            }
+            .onDrop(
+                of: [.text],
+                delegate: MenuBarDropDelegate { providers in
+                    handleDrop(providers, action: delete)
+                }
+            )
             .accessibilityLabel("拖到此处删除")
             .help("将内容拖到此处删除")
     }
@@ -861,6 +1235,24 @@ struct MenuBarLayoutEditor: View {
         let parts = payload.split(separator: "|", omittingEmptySubsequences: false)
         let updated: MenuBarLayout?
         if parts.first == "item", parts.count == 2 {
+            if let sourceItem = Int(parts[1]),
+               sourceItem != item,
+               layout.items.indices.contains(sourceItem),
+               layout.items.indices.contains(item),
+               !isStackItem(sourceItem),
+               layout.items[item].isEmpty || layout.items[item].contains(where: { $0.isStackPlaceholder }),
+               let sourceIndex = layout.items[sourceItem].firstIndex(where: { !$0.isStackPlaceholder }) {
+                let targetIndex = layout.items[item].firstIndex(of: .stackPlaceholder)
+                    ?? layout.items[item].count
+                return commit(
+                    layout.moving(
+                        from: sourceIndex,
+                        inItem: sourceItem,
+                        to: targetIndex,
+                        inItem: item
+                    )
+                )
+            }
             return dropItem(payload, at: item)
         } else if parts.first == "token",
                   parts.count == 3,
@@ -885,11 +1277,29 @@ struct MenuBarLayoutEditor: View {
         Color.clear
             .frame(minWidth: 160, maxWidth: .infinity, minHeight: MenuBarDisplaySettings().statusLabelHeight)
             .contentShape(Rectangle())
-            .dropDestination(for: String.self) { payloads, _ in
-                guard let payload = payloads.first else { return false }
-                return dropToEnd(payload)
-            }
+            .onDrop(
+                of: [.text],
+                delegate: MenuBarDropDelegate { providers in
+                    handleDrop(providers, action: dropToEnd)
+                }
+            )
             .accessibilityHidden(true)
+    }
+
+    /// 从系统拖放提供者异步读取布局载荷，并在主线程提交一次布局变更。
+    private func handleDrop(
+        _ providers: [NSItemProvider],
+        action: @escaping @MainActor @Sendable (String) -> Bool
+    ) -> Bool {
+        guard let provider = providers.first else { return false }
+        provider.loadObject(ofClass: NSString.self) { object, _ in
+            guard let object = object as? NSString else { return }
+            let payload = String(object)
+            Task { @MainActor in
+                _ = action(payload)
+            }
+        }
+        return true
     }
 
     /// 处理拖到垃圾桶的项目或内容，并统一通过布局模型删除。

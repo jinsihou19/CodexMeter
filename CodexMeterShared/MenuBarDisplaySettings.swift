@@ -53,11 +53,39 @@ public enum MenuBarLayoutToken: String, CaseIterable, Codable, Equatable, Identi
     case secondary
     case paceRemaining
     case paceDelta
+    case fiveHourPaceRemaining
+    case fiveHourPaceDelta
+    case weeklyPaceRemaining
+    case weeklyPaceDelta
+    case provider
+    case account
+    case plan
+    case usageBar
+    case resetCountdown
+    case resetTime
+    case depletionETA
+    case balance
+    case todayCost
+    case monthCost
     case geminiIcon
     case geminiPrimary
     case geminiSecondary
     case geminiPaceRemaining
     case geminiPaceDelta
+    case geminiFiveHourPaceRemaining
+    case geminiFiveHourPaceDelta
+    case geminiWeeklyPaceRemaining
+    case geminiWeeklyPaceDelta
+    case geminiProvider
+    case geminiAccount
+    case geminiPlan
+    case geminiUsageBar
+    case geminiResetCountdown
+    case geminiResetTime
+    case geminiDepletionETA
+    case geminiBalance
+    case geminiTodayCost
+    case geminiMonthCost
     // 旧版持久化布局仍可能写入这两个值；保留解码兼容，新增菜单不再展示它们。
     case geminiRemaining
     case geminiDelta
@@ -82,6 +110,34 @@ public enum MenuBarLayoutToken: String, CaseIterable, Codable, Equatable, Identi
             return "自动剩余"
         case .paceDelta:
             return "预期偏差"
+        case .fiveHourPaceRemaining:
+            return "5 小时剩余"
+        case .fiveHourPaceDelta:
+            return "5 小时预期偏差"
+        case .weeklyPaceRemaining:
+            return "7 天剩余"
+        case .weeklyPaceDelta:
+            return "7 天预期偏差"
+        case .provider, .geminiProvider:
+            return "提供商名"
+        case .account, .geminiAccount:
+            return "账号"
+        case .plan, .geminiPlan:
+            return "套餐"
+        case .usageBar, .geminiUsageBar:
+            return "用量条"
+        case .resetCountdown, .geminiResetCountdown:
+            return "重置倒计时"
+        case .resetTime, .geminiResetTime:
+            return "重置时间"
+        case .depletionETA, .geminiDepletionETA:
+            return "预计耗尽"
+        case .balance, .geminiBalance:
+            return "余额"
+        case .todayCost, .geminiTodayCost:
+            return "今日费用"
+        case .monthCost, .geminiMonthCost:
+            return "月度费用"
         case .geminiIcon:
             return "图标"
         case .geminiPrimary, .geminiDelta:
@@ -92,6 +148,14 @@ public enum MenuBarLayoutToken: String, CaseIterable, Codable, Equatable, Identi
             return "自动剩余"
         case .geminiPaceDelta:
             return "预期偏差"
+        case .geminiFiveHourPaceRemaining:
+            return "5 小时剩余"
+        case .geminiFiveHourPaceDelta:
+            return "5 小时预期偏差"
+        case .geminiWeeklyPaceRemaining:
+            return "7 天剩余"
+        case .geminiWeeklyPaceDelta:
+            return "7 天预期偏差"
         case .separator:
             return "分隔点"
         case .space:
@@ -112,9 +176,35 @@ public enum MenuBarLayoutToken: String, CaseIterable, Codable, Equatable, Identi
             return "gauge.with.dots.needle.33percent"
         case .paceDelta:
             return "chart.line.uptrend.xyaxis"
+        case .fiveHourPaceRemaining, .weeklyPaceRemaining:
+            return "gauge.with.dots.needle.33percent"
+        case .fiveHourPaceDelta, .weeklyPaceDelta:
+            return "chart.line.uptrend.xyaxis"
+        case .provider, .geminiProvider:
+            return "building.2"
+        case .account, .geminiAccount:
+            return "person.crop.circle"
+        case .plan, .geminiPlan:
+            return "person.text.rectangle"
+        case .usageBar, .geminiUsageBar:
+            return "chart.bar.fill"
+        case .resetCountdown, .geminiResetCountdown:
+            return "timer"
+        case .resetTime, .geminiResetTime:
+            return "clock"
+        case .depletionETA, .geminiDepletionETA:
+            return "hourglass"
+        case .balance, .geminiBalance:
+            return "creditcard"
+        case .todayCost, .geminiTodayCost:
+            return "dollarsign.circle"
+        case .monthCost, .geminiMonthCost:
+            return "calendar"
         case .geminiIcon:
             return "sparkles"
         case .geminiPrimary, .geminiSecondary, .geminiPaceRemaining, .geminiPaceDelta,
+             .geminiFiveHourPaceRemaining, .geminiFiveHourPaceDelta,
+             .geminiWeeklyPaceRemaining, .geminiWeeklyPaceDelta,
              .geminiRemaining, .geminiDelta:
             return "percent"
         case .separator:
@@ -145,7 +235,11 @@ public enum MenuBarLayoutToken: String, CaseIterable, Codable, Equatable, Identi
     public var isGeminiToken: Bool {
         switch self {
         case .geminiIcon, .geminiPrimary, .geminiSecondary, .geminiPaceRemaining, .geminiPaceDelta,
-             .geminiRemaining, .geminiDelta:
+             .geminiFiveHourPaceRemaining, .geminiFiveHourPaceDelta,
+             .geminiWeeklyPaceRemaining, .geminiWeeklyPaceDelta,
+             .geminiProvider, .geminiAccount, .geminiPlan, .geminiUsageBar,
+             .geminiResetCountdown, .geminiResetTime, .geminiDepletionETA, .geminiBalance,
+             .geminiTodayCost, .geminiMonthCost, .geminiRemaining, .geminiDelta:
             return true
         default:
             return false
@@ -182,15 +276,26 @@ public struct MenuBarLayout: Codable, Equatable, Sendable {
         var normalizedItems: [[MenuBarLayoutToken]] = []
 
         for item in items.prefix(12) {
-            if item.isEmpty {
-                normalizedItems.append([])
-                continue
-            }
-            let isStackContainer = item.contains { $0.isStackPlaceholder }
+            // 空数组是旧版本空容器；迁移成两个显式空槽，才能区分“第一行空、第二行有内容”。
+            let isStackContainer = item.isEmpty || item.contains { $0.isStackPlaceholder }
             var stack: [MenuBarLayoutToken] = []
-            let sourceTokens = isStackContainer ? item : Array(item.prefix(2))
+            let sourceTokens: [MenuBarLayoutToken]
+            if item.isEmpty {
+                sourceTokens = [.stackPlaceholder, .stackPlaceholder]
+            } else if isStackContainer {
+                var slots = Array(item.prefix(2))
+                while slots.count < 2 {
+                    slots.append(.stackPlaceholder)
+                }
+                sourceTokens = slots
+            } else {
+                sourceTokens = Array(item.prefix(2))
+            }
             for token in sourceTokens {
-                guard !token.isStackPlaceholder else { continue }
+                if token.isStackPlaceholder {
+                    stack.append(token)
+                    continue
+                }
                 if token.isProviderIcon {
                     guard seen.insert(token).inserted else { continue }
                     if !stack.isEmpty {
@@ -204,13 +309,11 @@ public struct MenuBarLayout: Codable, Equatable, Sendable {
                 stack.append(token)
             }
             if isStackContainer {
-                if stack.count >= 2 {
-                    normalizedItems.append(Array(stack.prefix(2)))
-                } else if let token = stack.first {
-                    normalizedItems.append([token, .stackPlaceholder])
-                } else {
-                    normalizedItems.append([.stackPlaceholder])
+                var slots = Array(stack.prefix(2))
+                while slots.count < 2 {
+                    slots.append(.stackPlaceholder)
                 }
+                normalizedItems.append(slots)
             } else if !stack.isEmpty {
                 normalizedItems.append(stack)
             }
@@ -285,10 +388,10 @@ public struct MenuBarLayout: Codable, Equatable, Sendable {
         return MenuBarLayout(items: items + [tokens])
     }
 
-    /// 新建没有内容的堆叠容器；空数组是编辑器中的可见容器，状态栏解析时会自然忽略它。
+    /// 新建没有内容的堆叠容器；两个空槽让拖入项目可以明确落到第二行。
     public func addingEmptyContainer() -> MenuBarLayout {
         guard items.count < 12 else { return self }
-        return MenuBarLayout(items: items + [[]])
+        return MenuBarLayout(items: items + [[.stackPlaceholder, .stackPlaceholder]])
     }
 
     /// 替换堆叠容器的某一行；图标仍由独立项目承载，清空最后一行会保留空容器。
@@ -342,6 +445,41 @@ public struct MenuBarLayout: Codable, Equatable, Sendable {
         return MenuBarLayout(items: updated)
     }
 
+    /// 替换独立项目唯一的一项内容；不会添加堆叠占位符，也不会改变项目的横向位置。
+    public func replacingItemToken(
+        _ token: MenuBarLayoutToken,
+        inItem item: Int
+    ) -> MenuBarLayout {
+        guard items.indices.contains(item),
+              items[item].count == 1,
+              !items[item][0].isStackPlaceholder,
+              !token.isStackPlaceholder
+        else {
+            return self
+        }
+
+        var updated = items
+        var targetItem = item
+        if !token.allowsDuplicates,
+           let source = updated.indices.first(where: { index in
+               index != item && updated[index].contains(token)
+           }) {
+            updated[source].removeAll { $0 == token }
+            if updated[source].isEmpty {
+                updated.remove(at: source)
+                if source < targetItem {
+                    targetItem -= 1
+                }
+            }
+        }
+        guard updated.indices.contains(targetItem),
+              !updated.dropFirst(targetItem + 1).contains(where: { $0.contains(token) }) else {
+            return self
+        }
+        updated[targetItem] = [token]
+        return MenuBarLayout(items: updated)
+    }
+
     /// 判断项目是否还有可填入的堆叠行，供拖放逻辑区分占位行和真实内容。
     private func hasOpenStackSlot(at item: Int) -> Bool {
         guard items.indices.contains(item) else { return false }
@@ -379,7 +517,7 @@ public struct MenuBarLayout: Codable, Equatable, Sendable {
         return MenuBarLayout(items: updated)
     }
 
-    /// 把内容拖到另一个菜单栏项目中，供编辑器调整项目内顺序和堆叠关系。
+    /// 把内容拖到堆叠容器中；普通独立项目之间不自动形成堆叠。
     public func moving(
         from sourceIndex: Int,
         inItem sourceItem: Int,
@@ -387,8 +525,14 @@ public struct MenuBarLayout: Codable, Equatable, Sendable {
         inItem targetItem: Int
     ) -> MenuBarLayout {
         guard items.indices.contains(sourceItem), items.indices.contains(targetItem),
-              items[sourceItem].indices.contains(sourceIndex),
-              hasOpenStackSlot(at: targetItem) || sourceItem == targetItem
+              items[sourceItem].indices.contains(sourceIndex)
+        else {
+            return self
+        }
+        let targetIsStackContainer = items[targetItem].isEmpty
+            || items[targetItem].contains { $0.isStackPlaceholder }
+        guard sourceItem == targetItem
+            || (targetIsStackContainer && hasOpenStackSlot(at: targetItem))
         else {
             return self
         }
@@ -396,14 +540,27 @@ public struct MenuBarLayout: Codable, Equatable, Sendable {
         let targetWasEmptyContainer = updated[targetItem].isEmpty
             || updated[targetItem].contains { $0.isStackPlaceholder }
         let token = updated[sourceItem].remove(at: sourceIndex)
-        var insertionIndex = min(max(targetIndex, 0), updated[targetItem].count)
-        if sourceItem == targetItem, sourceIndex < insertionIndex {
-            insertionIndex -= 1
-        }
-        updated[targetItem].insert(token, at: insertionIndex)
-        if targetWasEmptyContainer,
-           !updated[targetItem].contains(where: { $0.isStackPlaceholder }) {
-            updated[targetItem].append(.stackPlaceholder)
+        if sourceItem != targetItem, targetWasEmptyContainer {
+            // 两行都为空时优先第二行；否则填入第一个实际空槽。
+            var slots = Array(updated[targetItem].prefix(2))
+            while slots.count < 2 {
+                slots.append(.stackPlaceholder)
+            }
+            let targetRow = slots.allSatisfy(\.isStackPlaceholder)
+                ? 1
+                : (slots.firstIndex(of: .stackPlaceholder) ?? min(max(targetIndex, 0), 1))
+            slots[targetRow] = token
+            updated[targetItem] = slots
+        } else {
+            var insertionIndex = min(max(targetIndex, 0), updated[targetItem].count)
+            if sourceItem == targetItem, sourceIndex < insertionIndex {
+                insertionIndex -= 1
+            }
+            updated[targetItem].insert(token, at: insertionIndex)
+            if targetWasEmptyContainer,
+               !updated[targetItem].contains(where: { $0.isStackPlaceholder }) {
+                updated[targetItem].append(.stackPlaceholder)
+            }
         }
         updated.removeAll(where: \.isEmpty)
         return MenuBarLayout(items: updated)
@@ -733,9 +890,9 @@ public enum AppLocalization {
         "紧张": "Critical",
         "用量提醒": "Usage Alerts",
         "额度耗尽提醒": "Quota Depleted",
-        "5 小时或 7 天窗口剩余降至 0% 时发送系统通知。": "Notify when the 5-hour or 7-day window reaches 0% remaining.",
+        "Codex 或 Antigravity 的 5 小时或 7 天窗口剩余降至 0% 时发送系统通知。": "Notify when a Codex or Antigravity 5-hour or 7-day window reaches 0% remaining.",
         "低额度提醒": "Low Quota",
-        "剩余额度首次降到设定阈值时发送一次系统通知。": "Notify once when remaining quota first crosses the threshold.",
+        "Codex 或 Antigravity 剩余额度首次降到设定阈值时发送一次系统通知。": "Notify once when Codex or Antigravity remaining quota first crosses the threshold.",
         "提醒阈值": "Alert Threshold",
         "额度恢复到阈值以上后，下一次下降会再次提醒。": "After quota recovers above the threshold, the next drop can alert again.",
         "庆祝": "Celebrations",
@@ -2027,6 +2184,7 @@ public extension Notification.Name {
     static let popoverDisplaySettingsDidChange = Notification.Name("CodexUsage.popoverDisplaySettingsDidChange")
     static let codexRadarSettingsDidChange = Notification.Name("CodexUsage.codexRadarSettingsDidChange")
     static let geminiModelsSettingsDidChange = Notification.Name("CodexUsage.geminiModelsSettingsDidChange")
+    static let usageSnapshotDidChange = Notification.Name("CodexUsage.usageSnapshotDidChange")
 }
 
 /// 统一封装预期消耗速度的展示模型，供菜单栏、弹窗和小组件共享同一套 Pace 判断。
@@ -2179,18 +2337,22 @@ public struct UsagePaceDisplay: Equatable, Sendable {
         let minutes = totalMinutes % 60
 
         if days > 0, hours > 0 {
-            return english ? "\(days)d \(hours)h" : "\(days)天\(hours)小时"
+            var parts = ["\(days)d", "\(hours)h"]
+            if minutes > 0 {
+                parts.append("\(minutes)m")
+            }
+            return parts.joined(separator: " ")
         }
         if days > 0 {
-            return english ? "\(days)d" : "\(days)天"
+            return minutes > 0 ? "\(days)d \(minutes)m" : "\(days)d"
         }
         if hours > 0, minutes > 0 {
-            return english ? "\(hours)h \(minutes)m" : "\(hours)小时\(minutes)分"
+            return "\(hours)h \(minutes)m"
         }
         if hours > 0 {
-            return english ? "\(hours)h" : "\(hours)小时"
+            return "\(hours)h"
         }
-        return english ? "\(minutes)m" : "\(minutes)分"
+        return "\(minutes)m"
     }
 }
 

@@ -4,10 +4,25 @@ import OSLog
 @preconcurrency import UserNotifications
 import WidgetKit
 
+/// 标记触发系统通知的额度供应商，确保 Codex 与 Antigravity 的提醒文案可区分。
+enum UsageNotificationProvider: String, Equatable, Sendable {
+    case codex
+    case antigravity
+
+    var title: String {
+        switch self {
+        case .codex:
+            "Codex"
+        case .antigravity:
+            "Antigravity"
+        }
+    }
+}
+
 /// 描述一次需要交付给系统通知中心的额度变化。
 enum UsageNotificationEvent: Equatable, Sendable {
-    case depleted(windowTitle: String)
-    case lowRemaining(windowTitle: String, remainingText: String)
+    case depleted(provider: UsageNotificationProvider, windowTitle: String)
+    case lowRemaining(provider: UsageNotificationProvider, windowTitle: String, remainingText: String)
 }
 
 /// 只在额度向下跨过边界时生成事件，避免每次轮询重复通知。
@@ -16,7 +31,8 @@ enum UsageNotificationEventResolver {
     static func events(
         previous: RateLimitSnapshot,
         current: RateLimitSnapshot,
-        settings: UsageNotificationSettings
+        settings: UsageNotificationSettings,
+        provider: UsageNotificationProvider = .codex
     ) -> [UsageNotificationEvent] {
         let windows = [
             (previous.primary, current.primary),
@@ -33,18 +49,61 @@ enum UsageNotificationEventResolver {
                 return nil
             }
             if settings.notifiesWhenDepleted, previousRemaining > 0, currentRemaining == 0 {
-                return .depleted(windowTitle: currentWindow.durationLabel)
+                return .depleted(provider: provider, windowTitle: currentWindow.durationLabel)
             }
             if settings.notifiesWhenLow,
                previousRemaining > settings.lowRemainingThreshold,
                currentRemaining <= settings.lowRemainingThreshold
             {
                 return .lowRemaining(
+                    provider: provider,
                     windowTitle: currentWindow.durationLabel,
                     remainingText: currentWindow.remainingPercentText
                 )
             }
             return nil
+        }
+    }
+
+    /// 比较 Antigravity 各模型组的同一额度窗口，避免把不同供应商或不同模型组混为一谈。
+    static func geminiEvents(
+        previous: GeminiModelsSnapshot,
+        current: GeminiModelsSnapshot,
+        settings: UsageNotificationSettings
+    ) -> [UsageNotificationEvent] {
+        let previousWindows = previous.groups.reduce(into: [String: GeminiQuotaWindow]()) { result, group in
+            for window in group.windows {
+                result["\(group.id)|\(window.bucketId)"] = window
+            }
+        }
+
+        return current.groups.flatMap { group in
+            group.windows.compactMap { window in
+                let key = "\(group.id)|\(window.bucketId)"
+                guard let previousWindow = previousWindows[key],
+                      let previousRemaining = previousWindow.remainingPercent,
+                      let currentRemaining = window.remainingPercent,
+                      currentRemaining < previousRemaining
+                else {
+                    return nil
+                }
+
+                let windowTitle = "\(group.title) · \(window.title)"
+                if settings.notifiesWhenDepleted, previousRemaining > 0, currentRemaining == 0 {
+                    return .depleted(provider: .antigravity, windowTitle: windowTitle)
+                }
+                if settings.notifiesWhenLow,
+                   previousRemaining > settings.lowRemainingThreshold,
+                   currentRemaining <= settings.lowRemainingThreshold
+                {
+                    return .lowRemaining(
+                        provider: .antigravity,
+                        windowTitle: windowTitle,
+                        remainingText: window.remainingPercentText ?? "--"
+                    )
+                }
+                return nil
+            }
         }
     }
 }
@@ -61,16 +120,26 @@ struct UsageResetCelebrationDetector {
         case weekly
     }
 
+    private struct ResetObservation {
+        let key: String
+        let kind: ResetKind
+        let window: RateLimitWindow
+    }
+
     private static let defaultsKey = "celebrations.resetDetectorStates.v1"
+    private let defaultsKey: String
     private static let threshold = 1.0
 
     private let defaults: UserDefaults
     private var states: [String: State]
 
-    /// 从偏好存储恢复检测基线；损坏或旧格式数据按空状态处理，避免影响正常刷新。
-    init(defaults: UserDefaults) {
+    /// 从偏好存储恢复检测基线；不同供应商使用独立命名空间，损坏数据按空状态处理。
+    init(defaults: UserDefaults, namespace: String = "codex") {
         self.defaults = defaults
-        if let data = defaults.data(forKey: Self.defaultsKey),
+        self.defaultsKey = namespace == "codex"
+            ? Self.defaultsKey
+            : "celebrations.resetDetectorStates.\(namespace).v1"
+        if let data = defaults.data(forKey: self.defaultsKey),
            let decoded = try? JSONDecoder().decode([String: State].self, from: data)
         {
             self.states = decoded
@@ -82,11 +151,22 @@ struct UsageResetCelebrationDetector {
     /// 仅在缺少持久化状态时用缓存快照建立基线，避免启动时覆盖更可靠的跨进程记录。
     mutating func seed(with rateLimits: RateLimitSnapshot?) {
         guard let rateLimits else { return }
+        seed(observations: observations(in: rateLimits))
+    }
+
+    /// 为 Antigravity 的模型额度建立独立检测基线，避免与 Codex 的同周期窗口互相覆盖。
+    mutating func seed(with geminiSnapshot: GeminiModelsSnapshot?) {
+        guard let geminiSnapshot else { return }
+        seed(observations: observations(in: geminiSnapshot))
+    }
+
+    /// 只为尚未记录的额度窗口写入检测基线，避免启动时覆盖可靠的跨进程状态。
+    private mutating func seed(observations: [ResetObservation]) {
         var changed = false
-        for (kind, window) in observations(in: rateLimits) where states[kind.rawValue] == nil {
-            states[kind.rawValue] = State(
-                wasAboveThreshold: window.usedPercent > Self.threshold,
-                resetBoundary: window.resetsAt
+        for observation in observations where states[observation.key] == nil {
+            states[observation.key] = State(
+                wasAboveThreshold: observation.window.usedPercent > Self.threshold,
+                resetBoundary: observation.window.resetsAt
             )
             changed = true
         }
@@ -97,23 +177,37 @@ struct UsageResetCelebrationDetector {
 
     /// 更新持久化检测状态，并在用量跨过阈值且重置边界前移时返回是否应播放彩带。
     mutating func process(_ rateLimits: RateLimitSnapshot, option: UsageResetCelebrationOption) -> Bool {
+        process(observations: observations(in: rateLimits), option: option)
+    }
+
+    /// 更新 Antigravity 检测状态，并在模型额度重置时返回是否应播放彩带。
+    mutating func process(_ geminiSnapshot: GeminiModelsSnapshot, option: UsageResetCelebrationOption) -> Bool {
+        process(observations: observations(in: geminiSnapshot), option: option)
+    }
+
+    /// 统一处理不同供应商的窗口观察值，并持久化跨重启的重置基线。
+    private mutating func process(
+        observations: [ResetObservation],
+        option: UsageResetCelebrationOption
+    ) -> Bool {
         var shouldCelebrate = false
-        for (kind, window) in observations(in: rateLimits) {
-            let key = kind.rawValue
-            let previous = states[key]
-            let isAboveThreshold = window.usedPercent > Self.threshold
+        for observation in observations {
+            let previous = states[observation.key]
+            let isAboveThreshold = observation.window.usedPercent > Self.threshold
             let boundaryAdvanced = previous?.resetBoundary.flatMap { previousBoundary in
-                window.resetsAt.map { $0 > previousBoundary }
+                observation.window.resetsAt.map { $0 > previousBoundary }
             } ?? false
             let crossedBelowThreshold = previous?.wasAboveThreshold == true && !isAboveThreshold
             let suppressedCrossing = crossedBelowThreshold && !boundaryAdvanced
 
-            if crossedBelowThreshold, boundaryAdvanced, includes(kind, in: option) {
+            if crossedBelowThreshold, boundaryAdvanced, includes(observation.kind, in: option) {
                 shouldCelebrate = true
             }
-            states[key] = State(
+            states[observation.key] = State(
                 wasAboveThreshold: suppressedCrossing ? true : isAboveThreshold,
-                resetBoundary: boundaryAdvanced ? window.resetsAt : previous?.resetBoundary ?? window.resetsAt
+                resetBoundary: boundaryAdvanced
+                    ? observation.window.resetsAt
+                    : previous?.resetBoundary ?? observation.window.resetsAt
             )
         }
         persist()
@@ -121,11 +215,28 @@ struct UsageResetCelebrationDetector {
     }
 
     /// 按接口实际窗口时长区分会话与周额度，兼容只有 primary 周窗口的账号。
-    private func observations(in rateLimits: RateLimitSnapshot) -> [(ResetKind, RateLimitWindow)] {
+    private func observations(in rateLimits: RateLimitSnapshot) -> [ResetObservation] {
         [rateLimits.primary, rateLimits.secondary].compactMap { window in
             guard let window else { return nil }
             let kind: ResetKind = window.isWeeklyQuotaWindow ? .weekly : .session
-            return (kind, window)
+            return ResetObservation(key: kind.rawValue, kind: kind, window: window)
+        }
+    }
+
+    /// 将 Antigravity 支持的 5 小时和 7 天窗口转换为统一的重置观察值。
+    private func observations(in snapshot: GeminiModelsSnapshot) -> [ResetObservation] {
+        snapshot.groups.flatMap { group in
+            group.windows.compactMap { quotaWindow in
+                guard let window = quotaWindow.rateLimitWindow else {
+                    return nil
+                }
+                let kind: ResetKind = window.isWeeklyQuotaWindow ? .weekly : .session
+                return ResetObservation(
+                    key: "\(group.id)|\(quotaWindow.bucketId)",
+                    kind: kind,
+                    window: window
+                )
+            }
         }
     }
 
@@ -142,7 +253,7 @@ struct UsageResetCelebrationDetector {
     /// 将小型检测状态写入共享偏好，供下次启动和唤醒后的刷新继续使用。
     private func persist() {
         guard let data = try? JSONEncoder().encode(states) else { return }
-        defaults.set(data, forKey: Self.defaultsKey)
+        defaults.set(data, forKey: defaultsKey)
     }
 }
 
@@ -150,7 +261,10 @@ struct UsageResetCelebrationDetector {
 @MainActor
 final class UsageNotificationController {
     private var previousRateLimits: RateLimitSnapshot?
+    private var previousGeminiModels: GeminiModelsSnapshot?
     private var resetCelebrationDetector: UsageResetCelebrationDetector
+    private var geminiResetCelebrationDetector: UsageResetCelebrationDetector
+    private let defaults: UserDefaults
     private let playConfetti: () -> Void
 
     /// 注入彩带播放动作，使重置判断保持可测试且不依赖窗口实现。
@@ -158,55 +272,89 @@ final class UsageNotificationController {
         defaults: UserDefaults = MenuBarDisplaySettings.sharedDefaults,
         playConfetti: @escaping () -> Void = {}
     ) {
+        self.defaults = defaults
         self.resetCelebrationDetector = UsageResetCelebrationDetector(defaults: defaults)
+        self.geminiResetCelebrationDetector = UsageResetCelebrationDetector(
+            defaults: defaults,
+            namespace: "antigravity"
+        )
         self.playConfetti = playConfetti
     }
 
     /// 用已有缓存建立比较基线，避免应用启动后的第一次刷新被误判为额度下降。
     func seed(with snapshot: UsageSnapshot?) {
         previousRateLimits = snapshot?.rateLimits
+        previousGeminiModels = snapshot?.geminiModels
         resetCelebrationDetector.seed(with: snapshot?.rateLimits)
+        geminiResetCelebrationDetector.seed(with: snapshot?.geminiModels)
     }
 
-    /// 处理新快照并异步投递系统通知；无跨界事件时不访问通知中心。
+    /// 处理新快照并异步投递 Codex 与 Antigravity 的系统通知；无跨界事件时不访问通知中心。
     func process(_ snapshot: UsageSnapshot) {
         let current = snapshot.rateLimits
-        defer { previousRateLimits = current }
+        let previousCodex = previousRateLimits
+        let previousGemini = previousGeminiModels
+        defer {
+            previousRateLimits = current
+            previousGeminiModels = snapshot.geminiModels
+        }
         let celebrationOption = UsageResetCelebrationOption(
-            rawValue: MenuBarDisplaySettings.sharedDefaults.string(
+            rawValue: defaults.string(
                 forKey: UsageCelebrationPreferenceKeys.resetOption
             ) ?? ""
         ) ?? .off
-        if resetCelebrationDetector.process(current, option: celebrationOption) {
+        let codexShouldCelebrate = resetCelebrationDetector.process(current, option: celebrationOption)
+        let geminiShouldCelebrate: Bool
+        if let geminiSnapshot = snapshot.geminiModels {
+            let geminiEnabled = GeminiModelsSettings(defaults: defaults).isEnabled
+            geminiShouldCelebrate = geminiResetCelebrationDetector.process(
+                geminiSnapshot,
+                option: geminiEnabled ? celebrationOption : .off
+            )
+        } else {
+            geminiShouldCelebrate = false
+        }
+        if codexShouldCelebrate || geminiShouldCelebrate {
             playConfetti()
         }
-        guard let previousRateLimits else {
-            return
+        let settings = UsageNotificationSettings(defaults: defaults)
+        var events: [UsageNotificationEvent] = []
+        if let previousCodex {
+            events += UsageNotificationEventResolver.events(
+                previous: previousCodex,
+                current: current,
+                settings: settings
+            )
         }
-        let settings = UsageNotificationSettings(defaults: MenuBarDisplaySettings.sharedDefaults)
-        let events = UsageNotificationEventResolver.events(
-            previous: previousRateLimits,
-            current: current,
-            settings: settings
-        )
+        if GeminiModelsSettings(defaults: defaults).isEnabled,
+           let previousGemini,
+           let currentGemini = snapshot.geminiModels
+        {
+            events += UsageNotificationEventResolver.geminiEvents(
+                previous: previousGemini,
+                current: currentGemini,
+                settings: settings
+            )
+        }
         guard !events.isEmpty else {
             return
         }
 
+        let eventsToNotify = events
         let center = UNUserNotificationCenter.current()
         center.getNotificationSettings { settings in
             let authorization = settings.authorizationStatus
             guard authorization == .authorized || authorization == .provisional else {
                 return
             }
-            for event in events {
+            for event in eventsToNotify {
                 let content = UNMutableNotificationContent()
                 switch event {
-                case let .depleted(windowTitle):
-                    content.title = "Codex 额度已耗尽"
+                case let .depleted(provider, windowTitle):
+                    content.title = "\(provider.title) 额度已耗尽"
                     content.body = "\(windowTitle)窗口已无剩余额度。"
-                case let .lowRemaining(windowTitle, remainingText):
-                    content.title = "Codex 额度偏低"
+                case let .lowRemaining(provider, windowTitle, remainingText):
+                    content.title = "\(provider.title) 额度偏低"
                     content.body = "\(windowTitle)窗口剩余 \(remainingText)。"
                 }
                 content.sound = .default
@@ -441,6 +589,7 @@ final class UsageViewModel: ObservableObject {
         let updatedSnapshot = cachedSnapshot.withLocalCodexUsage(loadedLocalCodexUsage.summary)
         try? store.save(updatedSnapshot)
         snapshot = updatedSnapshot
+        NotificationCenter.default.post(name: .usageSnapshotDidChange, object: updatedSnapshot)
         reloadWidgetTimelines()
     }
 
@@ -460,7 +609,7 @@ final class UsageViewModel: ObservableObject {
         await refresh(forceRefreshResetCredits: true)
     }
 
-    /// 刷新用量快照；只有重置卡模块从关到开时才绕过当天缓存，保留常规轮询的每日限频。
+    /// 刷新用量快照并通知设置页同步预览；只有重置卡模块从关到开时才绕过当天缓存。
     private func refresh(forceRefreshResetCredits: Bool) async {
         logger.info("Refresh started")
         isRefreshing = true
@@ -475,6 +624,7 @@ final class UsageViewModel: ObservableObject {
             try store.save(updatedSnapshot)
             snapshot = updatedSnapshot
             geminiSnapshot = updatedSnapshot.geminiModels
+            NotificationCenter.default.post(name: .usageSnapshotDidChange, object: updatedSnapshot)
             processUsageNotifications(updatedSnapshot)
             errorMessage = nil
             logger.info("Refresh saved snapshot")
@@ -532,6 +682,8 @@ final class UsageViewModel: ObservableObject {
         }
         try? store.save(updatedSnapshot)
         snapshot = updatedSnapshot
+        processUsageNotifications(updatedSnapshot)
+        NotificationCenter.default.post(name: .usageSnapshotDidChange, object: updatedSnapshot)
         reloadWidgetTimelines()
     }
 

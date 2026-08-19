@@ -15,12 +15,33 @@ public struct UsageFormatter: Sendable {
         self.language = language
     }
 
-    public func resetTime(epochSeconds: Int?) -> String {
+    /// 将重置时间压缩为适合菜单栏扫读的相对日期；当天只显示时分，次日显示“明天”，更远日期显示短日期。
+    public func resetTime(epochSeconds: Int?, now: Date = Date()) -> String {
         guard let epochSeconds else {
             return "--"
         }
 
-        return format(epochSeconds: epochSeconds, dateFormat: "yyyy-MM-dd HH:mm")
+        let resetDate = Date(timeIntervalSince1970: TimeInterval(epochSeconds))
+        let calendar = configuredCalendar()
+        let resetDay = calendar.startOfDay(for: resetDate)
+        let currentDay = calendar.startOfDay(for: now)
+        let dayOffset = calendar.dateComponents([.day], from: currentDay, to: resetDay).day ?? 0
+        let clock = format(date: resetDate, dateFormat: "HH:mm")
+        let english = AppLocalization.usesEnglish(language: language)
+
+        if dayOffset == 0 {
+            return clock
+        }
+        if dayOffset == 1 {
+            return english ? "tomorrow " + clock : "明天 " + clock
+        }
+        if !english, dayOffset == 2 {
+            return "后天 " + clock
+        }
+        if (2...6).contains(dayOffset) {
+            return format(date: resetDate, dateFormat: "EEE HH:mm")
+        }
+        return format(date: resetDate, dateFormat: english ? "MMM d HH:mm" : "M月d日 HH:mm")
     }
 
     /// 计算用量窗口距离重置还剩多久；优先使用接口返回的相对秒数，避免本地时间漂移影响展示。
@@ -165,16 +186,23 @@ public struct UsageFormatter: Sendable {
         let minutes = (seconds % 3_600) / 60
 
         if days > 0 {
-            return AppLocalization.usesEnglish(language: language)
-                ? "\(days)d \(hours)h"
-                : "\(days) 天 \(hours) 小时"
+            var parts = ["\(days)d"]
+            if hours > 0 {
+                parts.append("\(hours)h")
+            }
+            if minutes > 0 {
+                parts.append("\(minutes)m")
+            }
+            return parts.joined(separator: " ")
         }
         if hours > 0 {
-            return AppLocalization.usesEnglish(language: language)
-                ? "\(hours)h \(minutes)m"
-                : "\(hours) 小时 \(minutes) 分"
+            var parts = ["\(hours)h"]
+            if minutes > 0 {
+                parts.append("\(minutes)m")
+            }
+            return parts.joined(separator: " ")
         }
-        return AppLocalization.usesEnglish(language: language) ? "\(minutes)m" : "\(minutes) 分"
+        return "\(minutes)m"
     }
 
     public func percent(_ value: Double?) -> String {
@@ -221,5 +249,13 @@ public struct UsageFormatter: Sendable {
         formatter.timeZone = TimeZone(secondsFromGMT: secondsFromGMT)
         formatter.dateFormat = dateFormat
         return formatter.string(from: date)
+    }
+
+    /// 使用格式器捕获的时区构造日历，确保“明天”和星期判断不受系统时区变化影响。
+    private func configuredCalendar() -> Calendar {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.locale = Locale(identifier: localeIdentifier)
+        calendar.timeZone = TimeZone(secondsFromGMT: secondsFromGMT) ?? .autoupdatingCurrent
+        return calendar
     }
 }

@@ -130,12 +130,65 @@ final class UsageViewModelTests: XCTestCase {
         XCTAssertEqual(
             UsageNotificationEventResolver.events(previous: previous, current: current, settings: settings),
             [
-                .lowRemaining(windowTitle: "5 小时", remainingText: "10%"),
-                .depleted(windowTitle: "7 天")
+                .lowRemaining(provider: .codex, windowTitle: "5 小时", remainingText: "10%"),
+                .depleted(provider: .codex, windowTitle: "7 天")
             ]
         )
         XCTAssertTrue(
             UsageNotificationEventResolver.events(previous: current, current: previous, settings: settings).isEmpty
+        )
+    }
+
+    /// 验证 Antigravity 各模型组的额度下降会生成带供应商和模型组名称的提醒事件。
+    func testUsageNotificationEventsIncludeAntigravityWindows() {
+        let settings = UsageNotificationSettings(
+            notifiesWhenDepleted: true,
+            notifiesWhenLow: true,
+            lowRemainingThreshold: 10
+        )
+        let previous = GeminiModelsSnapshot(
+            fetchedAt: Date(timeIntervalSince1970: 1_000),
+            source: .antigravityLocal,
+            groups: [
+                GeminiQuotaGroup(
+                    id: "gemini-models",
+                    title: "Gemini Models",
+                    windows: [
+                        GeminiQuotaWindow(bucketId: "session", title: "5 小时", remainingFraction: 0.22),
+                        GeminiQuotaWindow(bucketId: "weekly", title: "7 天", remainingFraction: 0.20)
+                    ]
+                )
+            ]
+        )
+        let current = GeminiModelsSnapshot(
+            fetchedAt: Date(timeIntervalSince1970: 2_000),
+            source: .antigravityLocal,
+            groups: [
+                GeminiQuotaGroup(
+                    id: "gemini-models",
+                    title: "Gemini Models",
+                    windows: [
+                        GeminiQuotaWindow(bucketId: "session", title: "5 小时", remainingFraction: 0.08),
+                        GeminiQuotaWindow(bucketId: "weekly", title: "7 天", remainingFraction: 0)
+                    ]
+                )
+            ]
+        )
+
+        XCTAssertEqual(
+            UsageNotificationEventResolver.geminiEvents(
+                previous: previous,
+                current: current,
+                settings: settings
+            ),
+            [
+                .lowRemaining(
+                    provider: .antigravity,
+                    windowTitle: "Gemini Models · 5 小时",
+                    remainingText: "8%"
+                ),
+                .depleted(provider: .antigravity, windowTitle: "Gemini Models · 7 天")
+            ]
         )
     }
 
@@ -177,6 +230,54 @@ final class UsageViewModelTests: XCTestCase {
         detector = UsageResetCelebrationDetector(defaults: defaults)
         XCTAssertFalse(detector.process(transientDrop, option: .weekly))
         detector = UsageResetCelebrationDetector(defaults: defaults)
+        XCTAssertTrue(detector.process(reset, option: .weekly))
+        XCTAssertFalse(detector.process(reset, option: .weekly))
+    }
+
+    /// 验证 Antigravity 的重置窗口使用独立基线，并能触发对应的周额度庆祝。
+    func testUsageResetCelebrationSupportsAntigravity() {
+        let suiteName = "UsageViewModelTests.AntigravityReset.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let previous = GeminiModelsSnapshot(
+            fetchedAt: Date(timeIntervalSince1970: 1_000),
+            source: .antigravityLocal,
+            groups: [
+                GeminiQuotaGroup(
+                    id: "gemini-models",
+                    title: "Gemini Models",
+                    windows: [
+                        GeminiQuotaWindow(
+                            bucketId: "weekly",
+                            title: "7d",
+                            remainingFraction: 0.20,
+                            resetsAt: Date(timeIntervalSince1970: 2_000)
+                        )
+                    ]
+                )
+            ]
+        )
+        let reset = GeminiModelsSnapshot(
+            fetchedAt: Date(timeIntervalSince1970: 2_000),
+            source: .antigravityLocal,
+            groups: [
+                GeminiQuotaGroup(
+                    id: "gemini-models",
+                    title: "Gemini Models",
+                    windows: [
+                        GeminiQuotaWindow(
+                            bucketId: "weekly",
+                            title: "7d",
+                            remainingFraction: 1,
+                            resetsAt: Date(timeIntervalSince1970: 4_000)
+                        )
+                    ]
+                )
+            ]
+        )
+
+        var detector = UsageResetCelebrationDetector(defaults: defaults, namespace: "antigravity")
+        XCTAssertFalse(detector.process(previous, option: .weekly))
         XCTAssertTrue(detector.process(reset, option: .weekly))
         XCTAssertFalse(detector.process(reset, option: .weekly))
     }
@@ -891,6 +992,49 @@ final class UsageViewModelTests: XCTestCase {
         XCTAssertGreaterThan(remainingWidth, paceWidth)
     }
 
+    /// 验证混合布局按每个项目自身的行数测量，独立项目不会被其他堆叠项目压缩而裁掉末尾。
+    func testMenuBarWidthUsesTypographyPerLayoutItem() throws {
+        let settings = MenuBarDisplaySettings()
+        let snapshot = UsageSnapshot(
+            fetchedAt: Date(timeIntervalSince1970: 1_779_940_000),
+            rateLimits: RateLimitSnapshot(
+                limitId: "codex",
+                limitName: nil,
+                primary: RateLimitWindow(usedPercent: 45, windowDurationMins: 300, resetsAt: nil),
+                secondary: RateLimitWindow(usedPercent: 45, windowDurationMins: 10_080, resetsAt: nil),
+                credits: nil,
+                planType: nil,
+                rateLimitReachedType: nil
+            )
+        )
+        let layout = MenuBarLayout(items: [[.provider], [.primary, .secondary]])
+        let display = MenuBarLayoutDisplay(layout: layout, snapshot: snapshot, settings: settings)
+        let width = StatusBarDisplayMetrics.statusItemWidth(
+            for: layout,
+            display: display,
+            settings: settings
+        )
+        let provider = try XCTUnwrap(
+            StatusLineDisplay.layoutLine(for: .provider, snapshot: snapshot, settings: settings)
+        )
+        let primary = try XCTUnwrap(
+            StatusLineDisplay.layoutLine(for: .primary, snapshot: snapshot, settings: settings)
+        )
+        let secondary = try XCTUnwrap(
+            StatusLineDisplay.layoutLine(for: .secondary, snapshot: snapshot, settings: settings)
+        )
+        let expected = ceil(
+            StatusBarDisplayMetrics.lineWidth(for: provider, settings: settings, usesSingleLineTypography: true)
+                + max(
+                    StatusBarDisplayMetrics.lineWidth(for: primary, settings: settings),
+                    StatusBarDisplayMetrics.lineWidth(for: secondary, settings: settings)
+                )
+                + CGFloat(settings.itemSpacing)
+        )
+
+        XCTAssertEqual(width, expected, accuracy: 0.001)
+    }
+
     func testStatusBarWidthIncludesHookActivityIndicatorOnlyWhenVisible() {
         let settings = MenuBarDisplaySettings()
         let iconSettings = MenuBarDisplaySettings(showsMenuBarIcon: true)
@@ -1149,7 +1293,7 @@ final class UsageViewModelTests: XCTestCase {
 
         XCTAssertEqual(display.lines.map(\.title), ["5 小时"])
         XCTAssertEqual(display.lines.map(\.value), ["55"])
-        XCTAssertEqual(display.lines.first?.resetText, "2 小时 34 分后")
+        XCTAssertEqual(display.lines.first?.resetText, "2h 34m后")
         XCTAssertEqual(display.lines.first?.tone, .warning)
         XCTAssertEqual(settings.colorHex(for: display.lines.first?.tone ?? .unavailable), "#FFB000")
 
@@ -1238,7 +1382,7 @@ final class UsageViewModelTests: XCTestCase {
         XCTAssertEqual(display.lines.map(\.title), ["5 小时", "7 天"])
         XCTAssertEqual(display.lines.map(\.value), ["82%", "89%"])
         XCTAssertEqual(display.lines.map(\.paceStatusText), ["节奏正常", "超额 5%"])
-        XCTAssertEqual(display.lines.map(\.paceProjectionText), ["持续到重置", "预计 4天6小时后耗尽"])
+        XCTAssertEqual(display.lines.map(\.paceProjectionText), ["持续到重置", "预计 4d 6h 22m后耗尽"])
         XCTAssertEqual(display.lines.map(\.paceTone), [.good, .warning])
     }
 
@@ -2145,11 +2289,26 @@ final class UsageViewModelTests: XCTestCase {
             [[.icon], [.paceRemaining], [.geminiIcon], [.paceDelta]]
         )
 
-        let movedAcrossItems = layout.moving(from: 0, inItem: 1, to: 1, inItem: 2)
-        XCTAssertEqual(
-            movedAcrossItems.items,
-            [[.icon], [.paceDelta], [.geminiIcon], [.paceRemaining]]
-        )
+        let movedAcrossIndependentItems = layout.moving(from: 0, inItem: 1, to: 1, inItem: 2)
+        XCTAssertEqual(movedAcrossIndependentItems, layout)
+
+        let movedIntoStack = MenuBarLayout(items: [
+            [.paceRemaining],
+            [.paceDelta, .stackPlaceholder]
+        ]).moving(from: 0, inItem: 0, to: 1, inItem: 1)
+        XCTAssertEqual(movedIntoStack.items, [[.paceDelta, .paceRemaining]])
+
+        let movedIntoEmptyStack = MenuBarLayout(items: [
+            [.primary],
+            []
+        ]).moving(from: 0, inItem: 0, to: 0, inItem: 1)
+        XCTAssertEqual(movedIntoEmptyStack.items, [[.stackPlaceholder, .primary]])
+
+        let movedIntoOpenSecondRow = MenuBarLayout(items: [
+            [.primary],
+            [.paceDelta, .stackPlaceholder]
+        ]).moving(from: 0, inItem: 0, to: 1, inItem: 1)
+        XCTAssertEqual(movedIntoOpenSecondRow.items, [[.paceDelta, .primary]])
 
         let stackAdded = MenuBarLayout(items: [[.icon]]).addingStack([.paceRemaining, .paceDelta])
         XCTAssertEqual(stackAdded.items, [[.icon], [.paceRemaining, .paceDelta]])
@@ -2159,7 +2318,10 @@ final class UsageViewModelTests: XCTestCase {
         )
 
         let emptyContainer = MenuBarLayout(items: [[.icon]]).addingEmptyContainer()
-        XCTAssertEqual(emptyContainer.items, [[.icon], []])
+        XCTAssertEqual(
+            emptyContainer.items,
+            [[.icon], [.stackPlaceholder, .stackPlaceholder]]
+        )
         XCTAssertEqual(
             emptyContainer.replacingStackToken(.primary, at: 0, inItem: 1).items,
             [[.icon], [.primary, .stackPlaceholder]]
@@ -2179,6 +2341,14 @@ final class UsageViewModelTests: XCTestCase {
         let configured = MenuBarLayout(items: [[.primary], []])
             .replacingStackToken(.primary, at: 0, inItem: 1)
         XCTAssertEqual(configured.items, [[.primary, .stackPlaceholder]])
+
+        let independent = MenuBarLayout(items: [[.resetTime], [.paceDelta]])
+            .replacingItemToken(.depletionETA, inItem: 0)
+        XCTAssertEqual(independent.items, [[.depletionETA], [.paceDelta]])
+
+        let iconReplaced = MenuBarLayout(items: [[.icon], [.primary], [.geminiIcon]])
+            .replacingItemToken(.depletionETA, inItem: 0)
+        XCTAssertEqual(iconReplaced.items, [[.depletionETA], [.primary], [.geminiIcon]])
     }
 
     /// 验证布局持久化会保持横向项目、去除重复额度项目，并强制图标独立。
@@ -2271,6 +2441,160 @@ final class UsageViewModelTests: XCTestCase {
         XCTAssertTrue(delta.value.hasSuffix("%"))
     }
 
+    /// 验证 5 小时和 7 天 Pace 各自使用对应窗口，不再把两个窗口混成一组。
+    func testMenuBarLayoutWindowPaceTokensResolveIndependently() throws {
+        let now = Date(timeIntervalSince1970: 1_779_940_000)
+        let snapshot = UsageSnapshot(
+            fetchedAt: now,
+            rateLimits: RateLimitSnapshot(
+                limitId: "codex",
+                limitName: nil,
+                primary: RateLimitWindow(
+                    usedPercent: 40,
+                    windowDurationMins: 300,
+                    resetsAt: nil,
+                    resetAfterSeconds: 9_000
+                ),
+                secondary: RateLimitWindow(
+                    usedPercent: 20,
+                    windowDurationMins: 10_080,
+                    resetsAt: nil,
+                    resetAfterSeconds: 500_000
+                ),
+                credits: nil,
+                planType: nil,
+                rateLimitReachedType: nil
+            )
+        )
+        let settings = MenuBarDisplaySettings()
+
+        let fiveHourDelta = try XCTUnwrap(
+            StatusLineDisplay.layoutLine(
+                for: .fiveHourPaceDelta,
+                snapshot: snapshot,
+                settings: settings,
+                now: now
+            )
+        )
+        let weeklyDelta = try XCTUnwrap(
+            StatusLineDisplay.layoutLine(
+                for: .weeklyPaceDelta,
+                snapshot: snapshot,
+                settings: settings,
+                now: now
+            )
+        )
+        let fiveHourRemaining = try XCTUnwrap(
+            StatusLineDisplay.layoutLine(
+                for: .fiveHourPaceRemaining,
+                snapshot: snapshot,
+                settings: settings,
+                now: now
+            )
+        )
+
+        XCTAssertEqual(fiveHourDelta.id, MenuBarLayoutToken.fiveHourPaceDelta.rawValue)
+        XCTAssertEqual(weeklyDelta.id, MenuBarLayoutToken.weeklyPaceDelta.rawValue)
+        XCTAssertNotEqual(fiveHourDelta.value, weeklyDelta.value)
+        XCTAssertEqual(fiveHourRemaining.value, "60%")
+    }
+
+    /// 验证 Codex 主窗口刚重置且 Pace 尚不可计算时仍保留单行剩余值，并隐藏偏差行。
+    func testMenuBarLayoutPaceRemainingFallsBackToPrimaryWindow() throws {
+        let now = Date(timeIntervalSince1970: 1_779_940_000)
+        let snapshot = UsageSnapshot(
+            fetchedAt: now,
+            rateLimits: RateLimitSnapshot(
+                limitId: "codex",
+                limitName: nil,
+                primary: RateLimitWindow(
+                    usedPercent: 0,
+                    windowDurationMins: 300,
+                    resetsAt: Int(now.timeIntervalSince1970) + 18_000
+                ),
+                secondary: nil,
+                credits: nil,
+                planType: nil,
+                rateLimitReachedType: nil
+            )
+        )
+
+        let settings = MenuBarDisplaySettings()
+        let remaining = try XCTUnwrap(
+            StatusLineDisplay.layoutLine(
+                for: .paceRemaining,
+                snapshot: snapshot,
+                settings: settings,
+                now: now
+            )
+        )
+
+        XCTAssertEqual(remaining.value, "100%")
+        XCTAssertNil(
+            StatusLineDisplay.layoutLine(
+                for: .paceDelta,
+                snapshot: snapshot,
+                settings: settings,
+                now: now
+            )
+        )
+    }
+
+    /// 验证 Antigravity 的主窗口刚重置时自动剩余仍显示 100%，不会退回百分号占位符。
+    func testMenuBarLayoutGeminiPaceRemainingFallsBackToPrimaryWindow() throws {
+        let now = Date(timeIntervalSince1970: 1_779_940_000)
+        let geminiSnapshot = GeminiModelsSnapshot(
+            fetchedAt: now,
+            source: .antigravityLocal,
+            groups: [
+                GeminiQuotaGroup(
+                    id: "gemini-models",
+                    title: "Gemini Models",
+                    windows: [
+                        GeminiQuotaWindow(
+                            bucketId: "weekly",
+                            title: "Weekly Limit Remaining",
+                            remainingFraction: 0.43,
+                            resetsAt: now.addingTimeInterval(500_000)
+                        ),
+                        GeminiQuotaWindow(
+                            bucketId: "five-hour",
+                            title: "Five Hour Limit Remaining",
+                            remainingFraction: 1,
+                            resetsAt: now.addingTimeInterval(18_000)
+                        )
+                    ]
+                )
+            ]
+        )
+        let settings = MenuBarDisplaySettings(contentMode: .paceComparison)
+        let geminiSettings = GeminiModelsSettings(
+            isEnabled: true,
+            model: .geminiModels,
+            showsInPopover: true,
+            showsInMenuBar: true
+        )
+
+        let remaining = try XCTUnwrap(
+            StatusLineDisplay.layoutGeminiLine(
+                for: .geminiPaceRemaining,
+                settings: settings,
+                geminiSettings: geminiSettings,
+                snapshot: geminiSnapshot
+            )
+        )
+
+        XCTAssertEqual(remaining.value, "100%")
+        XCTAssertNil(
+            StatusLineDisplay.layoutGeminiLine(
+                for: .geminiPaceDelta,
+                settings: settings,
+                geminiSettings: geminiSettings,
+                snapshot: geminiSnapshot
+            )
+        )
+    }
+
     /// 验证 Antigravity 的两个布局项目能解析真实内容，避免第二个提供商继续走固定尾部渲染。
     func testMenuBarLayoutGeminiTokensResolveBothLines() throws {
         let geminiSnapshot = GeminiModelsSnapshot(
@@ -2336,6 +2660,282 @@ final class UsageViewModelTests: XCTestCase {
             ].map(\.title),
             ["图标", "5 小时", "7 天", "自动剩余", "预期偏差"]
         )
+        XCTAssertEqual(
+            [
+                MenuBarLayoutToken.fiveHourPaceRemaining,
+                .weeklyPaceRemaining,
+                .geminiFiveHourPaceRemaining,
+                .geminiWeeklyPaceRemaining
+            ].map(\.title),
+            ["5 小时剩余", "7 天剩余", "5 小时剩余", "7 天剩余"]
+        )
+    }
+
+    /// 验证全部模型模式会跳过已耗尽的模型组，优先展示仍有额度的模型组。
+    func testGeminiMenuBarSkipsExhaustedGroupWhenAllModelsSelected() throws {
+        let snapshot = GeminiModelsSnapshot(
+            fetchedAt: Date(timeIntervalSince1970: 1_779_940_000),
+            source: .antigravityLocal,
+            groups: [
+                GeminiQuotaGroup(
+                    id: "gemini-models",
+                    title: "Gemini Models",
+                    windows: [
+                        GeminiQuotaWindow(
+                            bucketId: "weekly",
+                            title: "Weekly Limit Remaining",
+                            remainingFraction: 0,
+                            resetsAt: nil
+                        ),
+                        GeminiQuotaWindow(
+                            bucketId: "five-hour",
+                            title: "Five Hour Limit Remaining",
+                            remainingFraction: 0,
+                            resetsAt: nil
+                        )
+                    ]
+                ),
+                GeminiQuotaGroup(
+                    id: "claude-gpt-models",
+                    title: "Claude and GPT models",
+                    windows: [
+                        GeminiQuotaWindow(
+                            bucketId: "weekly",
+                            title: "Weekly Limit Remaining",
+                            remainingFraction: 0.39,
+                            resetsAt: nil
+                        ),
+                        GeminiQuotaWindow(
+                            bucketId: "five-hour",
+                            title: "Five Hour Limit Remaining",
+                            remainingFraction: 0.42,
+                            resetsAt: nil
+                        )
+                    ]
+                )
+            ]
+        )
+        let settings = MenuBarDisplaySettings(contentMode: .remainingWindows)
+        let geminiSettings = GeminiModelsSettings(
+            isEnabled: true,
+            model: .all,
+            showsInPopover: true,
+            showsInMenuBar: true
+        )
+
+        let lines = StatusLineDisplay.geminiLines(
+            displaySettings: settings,
+            geminiSettings: geminiSettings,
+            snapshot: snapshot
+        )
+        XCTAssertEqual(lines.first { $0.id == "gemini-weekly" }?.value, "39%")
+        XCTAssertEqual(lines.first { $0.id == "gemini-five-hour" }?.value, "42%")
+    }
+
+    /// 验证 Codex 的身份、窗口辅助信息、余额和本机费用项目都能解析真实内容。
+    func testMenuBarLayoutAdditionalCodexTokensResolveRealData() throws {
+        let now = Date(timeIntervalSince1970: 1_779_940_000)
+        let snapshot = UsageSnapshot(
+            fetchedAt: now,
+            rateLimits: RateLimitSnapshot(
+                limitId: "codex",
+                limitName: nil,
+                primary: RateLimitWindow(
+                    usedPercent: 20,
+                    windowDurationMins: 300,
+                    resetsAt: Int(now.timeIntervalSince1970) + 9_000
+                ),
+                secondary: nil,
+                credits: CreditsSnapshot(hasCredits: true, unlimited: false, balance: "$12.34"),
+                planType: nil,
+                rateLimitReachedType: nil
+            ),
+            account: CodexAccountSnapshot(email: "user@example.com", planType: "prolite"),
+            localCodexUsage: LocalCodexUsageSummary(
+                fetchedAt: now,
+                todayTokens: 10,
+                sevenDayTokens: 20,
+                lifetimeTokens: 30,
+                threadCount: 1,
+                projects: [],
+                taskCounts: LocalCodexTaskCounts(active: 0, pending: 0, scheduled: 0, done: 0),
+                dailyBuckets: [
+                    LocalCodexDailyUsageBucket(
+                        id: "today",
+                        label: "今天",
+                        tokens: 10,
+                        estimatedCostUSD: 1.23
+                    )
+                ],
+                monthCost: LocalCodexCostSummary(
+                    inputTokens: 10,
+                    cachedInputTokens: 0,
+                    outputTokens: 5,
+                    estimatedCostUSD: 4.56,
+                    pricedSessionCount: 1,
+                    sessionCount: 1
+                )
+            )
+        )
+        let settings = MenuBarDisplaySettings()
+
+        XCTAssertEqual(
+            try XCTUnwrap(StatusLineDisplay.layoutLine(for: .provider, snapshot: snapshot, settings: settings)).value,
+            "Codex"
+        )
+        XCTAssertEqual(
+            try XCTUnwrap(StatusLineDisplay.layoutLine(for: .account, snapshot: snapshot, settings: settings)).value,
+            "user@example.com"
+        )
+        XCTAssertEqual(
+            try XCTUnwrap(StatusLineDisplay.layoutLine(for: .plan, snapshot: snapshot, settings: settings)).value,
+            "Pro 5x"
+        )
+        XCTAssertEqual(
+            try XCTUnwrap(StatusLineDisplay.layoutLine(for: .balance, snapshot: snapshot, settings: settings)).value,
+            "$12.34"
+        )
+        XCTAssertEqual(
+            try XCTUnwrap(StatusLineDisplay.layoutLine(for: .todayCost, snapshot: snapshot, settings: settings)).value,
+            "$1.23"
+        )
+        XCTAssertEqual(
+            try XCTUnwrap(StatusLineDisplay.layoutLine(for: .monthCost, snapshot: snapshot, settings: settings)).value,
+            "$4.56"
+        )
+        XCTAssertNotNil(
+            StatusLineDisplay.layoutLine(for: .resetCountdown, snapshot: snapshot, settings: settings)
+        )
+        XCTAssertNotNil(
+            StatusLineDisplay.layoutLine(for: .resetTime, snapshot: snapshot, settings: settings)
+        )
+        XCTAssertNotNil(
+            StatusLineDisplay.layoutLine(for: .depletionETA, snapshot: snapshot, settings: settings, now: now)
+        )
+
+        let bar = try XCTUnwrap(StatusLineDisplay.layoutUsageBar(for: .usageBar, snapshot: snapshot))
+        XCTAssertEqual(bar.remainingPercent, 80)
+    }
+
+    /// 验证 Antigravity 的身份和窗口项目能解析，并对暂时没有数据的余额费用保持隐藏。
+    func testMenuBarLayoutAdditionalGeminiTokensResolveSupportedData() throws {
+        let now = Date()
+        let geminiSnapshot = GeminiModelsSnapshot(
+            fetchedAt: now,
+            source: .antigravityLocal,
+            accountEmail: "antigravity@example.com",
+            planName: "Gemini Pro",
+            groups: [
+                GeminiQuotaGroup(
+                    id: "gemini-models",
+                    title: "Gemini Models",
+                    windows: [
+                        GeminiQuotaWindow(
+                            bucketId: "five-hour",
+                            title: "Five Hour Limit Remaining",
+                            remainingFraction: 0.8,
+                            resetsAt: now.addingTimeInterval(9_000)
+                        ),
+                        GeminiQuotaWindow(
+                            bucketId: "weekly",
+                            title: "Weekly Limit Remaining",
+                            remainingFraction: 0.6,
+                            resetsAt: now.addingTimeInterval(500_000)
+                        )
+                    ]
+                )
+            ]
+        )
+        let settings = MenuBarDisplaySettings()
+        let geminiSettings = GeminiModelsSettings(
+            isEnabled: true,
+            model: .geminiModels,
+            showsInPopover: true,
+            showsInMenuBar: true
+        )
+
+        XCTAssertEqual(
+            try XCTUnwrap(
+                StatusLineDisplay.layoutGeminiLine(
+                    for: .geminiProvider,
+                    settings: settings,
+                    geminiSettings: geminiSettings,
+                    snapshot: geminiSnapshot
+                )
+            ).value,
+            "Antigravity"
+        )
+        XCTAssertEqual(
+            try XCTUnwrap(
+                StatusLineDisplay.layoutGeminiLine(
+                    for: .geminiAccount,
+                    settings: settings,
+                    geminiSettings: geminiSettings,
+                    snapshot: geminiSnapshot
+                )
+            ).value,
+            "antigravity@example.com"
+        )
+        XCTAssertEqual(
+            try XCTUnwrap(
+                StatusLineDisplay.layoutGeminiLine(
+                    for: .geminiPlan,
+                    settings: settings,
+                    geminiSettings: geminiSettings,
+                    snapshot: geminiSnapshot
+                )
+            ).value,
+            "Gemini Pro"
+        )
+        XCTAssertNotNil(
+            StatusLineDisplay.layoutGeminiLine(
+                for: .geminiResetCountdown,
+                settings: settings,
+                geminiSettings: geminiSettings,
+                snapshot: geminiSnapshot
+            )
+        )
+        XCTAssertNotNil(
+            StatusLineDisplay.layoutGeminiLine(
+                for: .geminiResetTime,
+                settings: settings,
+                geminiSettings: geminiSettings,
+                snapshot: geminiSnapshot
+            )
+        )
+        XCTAssertNotNil(
+            StatusLineDisplay.layoutGeminiLine(
+                for: .geminiDepletionETA,
+                settings: settings,
+                geminiSettings: geminiSettings,
+                snapshot: geminiSnapshot
+            )
+        )
+        XCTAssertNil(
+            StatusLineDisplay.layoutGeminiLine(
+                for: .geminiBalance,
+                settings: settings,
+                geminiSettings: geminiSettings,
+                snapshot: geminiSnapshot
+            )
+        )
+        XCTAssertNil(
+            StatusLineDisplay.layoutGeminiLine(
+                for: .geminiTodayCost,
+                settings: settings,
+                geminiSettings: geminiSettings,
+                snapshot: geminiSnapshot
+            )
+        )
+
+        let bar = try XCTUnwrap(
+            StatusLineDisplay.layoutGeminiUsageBar(
+                for: .geminiUsageBar,
+                geminiSettings: geminiSettings,
+                snapshot: geminiSnapshot
+            )
+        )
+        XCTAssertEqual(bar.remainingPercent, 80)
     }
 
     /// 验证关闭 Antigravity 后，自定义布局中的图标和所有配额项目都会从菜单栏消失。
@@ -2460,7 +3060,7 @@ final class UsageViewModelTests: XCTestCase {
         )
 
         XCTAssertEqual(display?.valueText, "98% · +20%")
-        XCTAssertEqual(display?.detailText, "用得偏快 20% · 预计 21分后用完")
+        XCTAssertEqual(display?.detailText, "用得偏快 20% · 预计 21m后用完")
         XCTAssertEqual(display?.tone, .danger)
     }
 
