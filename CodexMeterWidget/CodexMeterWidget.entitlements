@@ -6,8 +6,8 @@
 	<true/>
 	<key>com.apple.security.application-groups</key>
 	<array>
-		<!-- 兼容标识：与主应用共同读取旧 App Group 中的快照。 -->
-		<string>group.com.jinsihou.CodexUsage</string>
+		<!-- Widget 与主应用通过同一个 CodexMeter App Group 共享快照。 -->
+		<string>group.com.jinsihou.CodexMeter</string>
 	</array>
 </dict>
 </plist>

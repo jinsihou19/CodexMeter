@@ -2,9 +2,9 @@ import Foundation
 import Security
 
 public struct UsageSnapshotStore: Sendable {
-    // 兼容标识：更换 App Group 或 Widget Bundle ID 会导致旧设置、快照和桌面组件失联。
-    public static let defaultAppGroupIdentifier = "group.com.jinsihou.CodexUsage"
-    private static let widgetExtensionBundleIdentifier = "com.jinsihou.CodexUsage.WidgetExtension"
+    // 主应用、Widget 和 hook 必须共享这一组稳定的 CodexMeter 身份标识。
+    public static let defaultAppGroupIdentifier = "group.com.jinsihou.CodexMeter"
+    private static let widgetExtensionBundleIdentifier = "com.jinsihou.CodexMeter.WidgetExtension"
 
     private let appGroupIdentifier: String
     private let fallbackDirectory: URL
@@ -88,7 +88,7 @@ public struct UsageSnapshotStore: Sendable {
     private func candidateSnapshotURLs() -> [URL] {
         let fallbackURL = fallbackSnapshotURL()
         let appGroupURL = AppGroupAccess.containerURL(for: appGroupIdentifier)?
-            .appendingPathComponent("CodexUsage", isDirectory: true)
+            .appendingPathComponent("CodexMeter", isDirectory: true)
             .appendingPathComponent(fileName, isDirectory: false)
         let externalGroupURL = usesDefaultFallbackDirectory ? AppGroupAccess.externalDirectory(
             for: appGroupIdentifier
@@ -124,7 +124,7 @@ public struct UsageSnapshotStore: Sendable {
         }
 
         return dataContainerURL
-            .appendingPathComponent("Library/Application Support/CodexUsage", isDirectory: true)
+            .appendingPathComponent("Library/Application Support/CodexMeter", isDirectory: true)
     }
 }
 
@@ -145,7 +145,7 @@ enum AppGroupAccess {
         return FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent("Library/Group Containers", isDirectory: true)
             .appendingPathComponent(identifier, isDirectory: true)
-            .appendingPathComponent("CodexUsage", isDirectory: true)
+            .appendingPathComponent("CodexMeter", isDirectory: true)
     }
 
     /// 读取当前进程的 application-groups entitlement；没有授权时立即回退，不依赖 FileManager 的宽松路径返回。

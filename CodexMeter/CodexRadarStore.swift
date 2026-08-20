@@ -16,7 +16,7 @@ final class CodexRadarStore: ObservableObject {
     private let store: CodexRadarSnapshotStore
     private let settingsProvider: @MainActor @Sendable () -> CodexRadarSettings
     private let nowProvider: @Sendable () -> Date
-    private let logger = Logger(subsystem: "com.jinsihou.CodexUsage", category: "CodexRadar")
+    private let logger = Logger(subsystem: "com.jinsihou.CodexMeter", category: "CodexRadar")
     private var refreshTask: Task<Void, Never>?
     private var hasStartedRefreshLoop = false
     private var settingsObserver: NSObjectProtocol?

@@ -4,7 +4,7 @@
 
 将项目的正式名称统一为 `CodexMeter`，重写 README 并使用现有截图介绍主要能力；同时接入 Sparkle 2，让桥接版本之后的发布能够自动检查、下载和安装更新。
 
-本次改动必须保留旧版设置、缓存、Widget 配置和登录启动状态。当前已发布版本没有更新器，因此现有用户需要手动安装一次桥接版本；桥接完成后的版本才支持无感自动更新。
+本次改动以完整统一标识为目标，不保留旧版设置、缓存和 Widget 容器的自动兼容。现有用户需要重新配置一次应用和 Widget；改名完成后的版本继续支持无感自动更新。
 
 ## 命名与兼容边界
 
@@ -17,14 +17,14 @@
 - README、发布脚本和历史设计文档中的现行产品名称。
 - 截图文件名及 README 图片引用。
 
-以下旧标识必须保留，并在代码或工程配置中标明其兼容用途：
+以下持久化标识同步改为 CodexMeter，并在代码和工程配置中保持一致：
 
-- 主应用 Bundle ID：`com.jinsihou.CodexUsage`。
-- App Group：`group.com.jinsihou.CodexUsage`。
-- Widget Bundle ID、Widget kind、UserDefaults key、缓存文件位置等已持久化标识。
-- 桥接阶段的实际 App 包名和可执行文件名 `CodexUsage.app`，用于覆盖 `/Applications/CodexUsage.app`，避免产生两个应用。
+- 主应用 Bundle ID：`com.jinsihou.CodexMeter`。
+- App Group：`group.com.jinsihou.CodexMeter`。
+- Widget Bundle ID、Widget kind、UserDefaults key、缓存文件位置等已持久化标识统一使用 CodexMeter。
+- 实际 App 包名和可执行文件名统一为 `CodexMeter.app`。
 
-主应用通过 `CFBundleDisplayName = CodexMeter` 对用户展示新名称。内部 target 和代码采用新名称，构建产物通过显式 `PRODUCT_NAME = CodexUsage` 保留兼容包名。以后若要彻底删除旧标识，需要单独设计有签名保障的数据与 Widget 迁移，不包含在本次范围内。
+主应用通过 `CFBundleDisplayName = CodexMeter` 对用户展示名称，内部 target、代码和构建产物也统一使用 CodexMeter。
 
 ## 自动更新架构
 
@@ -82,13 +82,13 @@ README 重写为中文项目首页，包含：
 - 先扩展发布脚本测试，验证 Universal 架构、`CodexMeter` 产物命名、兼容 App 包名、appcast 地址和签名步骤；确认测试先失败，再实现脚本。
 - 为更新按钮与控制器协作留下一个小型 XCTest，验证设置页触发标准更新检查且禁用状态正确。
 - 运行完整 XCTest、Debug 构建和 Release Universal 构建。
-- 安装到 `/Applications/CodexUsage.app` 后验证 Finder/界面显示 `CodexMeter`，旧设置和缓存仍可读取，Widget target 可构建。
+- 安装到 `/Applications/CodexMeter.app` 后验证 Finder/界面显示 `CodexMeter`，Widget target 可构建。
 - 验证主应用与 Widget 的版本号一致，主应用二进制包含 `arm64 x86_64`。
 - 使用本地测试 appcast 或发布前测试源完成一次旧桥接构建到新构建的 Sparkle 更新演练。
 
 ## 不包含内容
 
-- 不更换兼容 Bundle ID、App Group、Widget kind 或持久化 key。
+- 不保留旧 Bundle ID、App Group、Widget kind 或持久化 key。
 - 不开发自定义更新下载器、安装器或更新 UI。
 - 不增加多更新频道、灰度发布、增量包或强制更新。
 - 不自动提交或推送源码；默认创建 GitHub Release 并配置 Pages，调用者可显式设置 `CODEX_PUBLISH_RELEASE=0` 跳过远程发布。

@@ -434,7 +434,7 @@ final class UsageViewModel: ObservableObject {
     private let geminiSettingsProvider: @MainActor @Sendable () -> GeminiModelsSettings
     private let processUsageNotifications: @MainActor @Sendable (UsageSnapshot) -> Void
     private let localCodexUsageLoader: @Sendable () async -> LocalCodexUsageSnapshot?
-    private let logger = Logger(subsystem: "com.jinsihou.CodexUsage", category: "Usage")
+    private let logger = Logger(subsystem: "com.jinsihou.CodexMeter", category: "Usage")
     private var refreshTask: Task<Void, Never>?
     private var hasStartedRefreshLoop = false
     private var isRefreshingLocalUsage = false
@@ -448,7 +448,7 @@ final class UsageViewModel: ObservableObject {
         store: UsageSnapshotStore = UsageSnapshotStore(),
         reloadWidgetTimelines: @escaping () -> Void = {
             DispatchQueue.global(qos: .utility).async {
-                WidgetCenter.shared.reloadTimelines(ofKind: "CodexUsageWidget")
+                WidgetCenter.shared.reloadTimelines(ofKind: "CodexMeterWidget")
                 WidgetCenter.shared.reloadTimelines(ofKind: "CodexLocalUsageWidget")
             }
         },

@@ -213,6 +213,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let settingsWindowOpener = SettingsWindowOpener()
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        offerLegacyConfigurationMigration()
         MenuBarDisplaySettings.migrateStandardDefaultsToSharedDefaults()
         MenuBarDisplaySettings.migrateLegacyDisplayDefaults()
         updater.start()
@@ -234,6 +235,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         radarStore.start()
         if AppBehaviorSettings(defaults: MenuBarDisplaySettings.sharedDefaults).opensSettingsAtLaunch {
             settingsWindowOpener.open()
+        }
+    }
+
+    /// 首次启动时询问是否迁移旧身份配置；缓存、凭据和每日请求状态不参与迁移。
+    private func offerLegacyConfigurationMigration() {
+        let migration = CodexMeterConfigurationMigration()
+        guard migration.shouldPrompt else { return }
+
+        let language = migration.preferredLanguage
+        let alert = NSAlert()
+        alert.alertStyle = .informational
+        alert.messageText = AppLocalization.string("检测到旧版配置", language: language)
+        alert.informativeText = AppLocalization.string(
+            "CodexMeter 检测到旧版 CodexUsage 的配置数据。是否迁移显示和偏好设置？缓存、授权和每日请求状态不会迁移。",
+            language: language
+        )
+        alert.addButton(withTitle: AppLocalization.string("迁移配置", language: language))
+        alert.addButton(withTitle: AppLocalization.string("暂不迁移", language: language))
+
+        if alert.runModal() == .alertFirstButtonReturn {
+            migration.migrate()
+        } else {
+            migration.skip()
         }
     }
 

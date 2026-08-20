@@ -1316,7 +1316,7 @@ struct SettingsView: View {
             if reloadAll {
                 WidgetCenter.shared.reloadAllTimelines()
             } else {
-                WidgetCenter.shared.reloadTimelines(ofKind: "CodexUsageWidget")
+                WidgetCenter.shared.reloadTimelines(ofKind: "CodexMeterWidget")
                 WidgetCenter.shared.reloadTimelines(ofKind: "CodexLocalUsageWidget")
             }
         }

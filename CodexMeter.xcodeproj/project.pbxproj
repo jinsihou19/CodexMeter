@@ -149,7 +149,7 @@
 		10000000000000000000001E /* CodexMeter.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = CodexMeter.entitlements; sourceTree = "<group>"; };
 		100000000000000000000021 /* CodexMeterShared.framework */ = {isa = PBXFileReference; explicitFileType = wrapper.framework; includeInIndex = 0; path = CodexMeterShared.framework; sourceTree = BUILT_PRODUCTS_DIR; };
 		100000000000000000000022 /* CodexMeterTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = CodexMeterTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
-		100000000000000000000023 /* CodexUsage.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = CodexUsage.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		100000000000000000000023 /* CodexMeter.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = CodexMeter.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		100000000000000000000024 /* CodexMeterWidgetExtension.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = CodexMeterWidgetExtension.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		10000000000000000000002A /* CodexMeterWidgetBundle.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CodexMeterWidgetBundle.swift; sourceTree = "<group>"; };
 		10000000000000000000002B /* CodexMeterWidget.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CodexMeterWidget.swift; sourceTree = "<group>"; };
@@ -261,7 +261,7 @@
 			isa = PBXGroup;
 			children = (
 				100000000000000000000021 /* CodexMeterShared.framework */,
-				100000000000000000000023 /* CodexUsage.app */,
+				100000000000000000000023 /* CodexMeter.app */,
 				100000000000000000000024 /* CodexMeterWidgetExtension.appex */,
 				100000000000000000000022 /* CodexMeterTests.xctest */,
 			);
@@ -365,8 +365,8 @@
 			packageProductDependencies = (
 				200000000000000000000003 /* Sparkle */,
 			);
-			productName = CodexUsage;
-			productReference = 100000000000000000000023 /* CodexUsage.app */;
+			productName = CodexMeter;
+			productReference = 100000000000000000000023 /* CodexMeter.app */;
 			productType = "com.apple.product-type.application";
 		};
 		100000000000000000000054 /* CodexMeterWidgetExtension */ = {
@@ -723,7 +723,7 @@
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
 				INSTALL_PATH = "@rpath";
 				LD_DYLIB_INSTALL_NAME = "@rpath/$(EXECUTABLE_PATH)";
-				PRODUCT_BUNDLE_IDENTIFIER = com.jinsihou.CodexUsageShared;
+				PRODUCT_BUNDLE_IDENTIFIER = com.jinsihou.CodexMeterShared;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SKIP_INSTALL = YES;
 				SWIFT_VERSION = 6.0;
@@ -744,7 +744,7 @@
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
 				INSTALL_PATH = "@rpath";
 				LD_DYLIB_INSTALL_NAME = "@rpath/$(EXECUTABLE_PATH)";
-				PRODUCT_BUNDLE_IDENTIFIER = com.jinsihou.CodexUsageShared;
+				PRODUCT_BUNDLE_IDENTIFIER = com.jinsihou.CodexMeterShared;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SKIP_INSTALL = YES;
 				SWIFT_VERSION = 6.0;
@@ -766,7 +766,7 @@
 					"@executable_path/../Frameworks",
 					"@loader_path/../Frameworks",
 				);
-				PRODUCT_BUNDLE_IDENTIFIER = com.jinsihou.CodexUsageTests;
+				PRODUCT_BUNDLE_IDENTIFIER = com.jinsihou.CodexMeterTests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_VERSION = 6.0;
 				TEST_HOST = "";
@@ -788,7 +788,7 @@
 					"@executable_path/../Frameworks",
 					"@loader_path/../Frameworks",
 				);
-				PRODUCT_BUNDLE_IDENTIFIER = com.jinsihou.CodexUsageTests;
+				PRODUCT_BUNDLE_IDENTIFIER = com.jinsihou.CodexMeterTests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_VERSION = 6.0;
 				TEST_HOST = "";
@@ -812,10 +812,10 @@
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
-				MARKETING_VERSION = 1.2.0;
-				PRODUCT_BUNDLE_IDENTIFIER = com.jinsihou.CodexUsage;
+				MARKETING_VERSION = 1.2.1;
+				PRODUCT_BUNDLE_IDENTIFIER = com.jinsihou.CodexMeter;
 				PRODUCT_MODULE_NAME = CodexMeter;
-				PRODUCT_NAME = CodexUsage;
+				PRODUCT_NAME = CodexMeter;
 				SKIP_INSTALL = NO;
 				SWIFT_VERSION = 6.0;
 			};
@@ -838,10 +838,10 @@
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
-				MARKETING_VERSION = 1.2.0;
-				PRODUCT_BUNDLE_IDENTIFIER = com.jinsihou.CodexUsage;
+				MARKETING_VERSION = 1.2.1;
+				PRODUCT_BUNDLE_IDENTIFIER = com.jinsihou.CodexMeter;
 				PRODUCT_MODULE_NAME = CodexMeter;
-				PRODUCT_NAME = CodexUsage;
+				PRODUCT_NAME = CodexMeter;
 				SKIP_INSTALL = NO;
 				SWIFT_VERSION = 6.0;
 			};
@@ -864,8 +864,8 @@
 					"@executable_path/../Frameworks",
 					"@executable_path/../../../../Frameworks",
 				);
-				MARKETING_VERSION = 1.2.0;
-				PRODUCT_BUNDLE_IDENTIFIER = com.jinsihou.CodexUsage.WidgetExtension;
+				MARKETING_VERSION = 1.2.1;
+				PRODUCT_BUNDLE_IDENTIFIER = com.jinsihou.CodexMeter.WidgetExtension;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SKIP_INSTALL = YES;
 				SWIFT_VERSION = 6.0;
@@ -890,8 +890,8 @@
 					"@executable_path/../Frameworks",
 					"@executable_path/../../../../Frameworks",
 				);
-				MARKETING_VERSION = 1.2.0;
-				PRODUCT_BUNDLE_IDENTIFIER = com.jinsihou.CodexUsage.WidgetExtension;
+				MARKETING_VERSION = 1.2.1;
+				PRODUCT_BUNDLE_IDENTIFIER = com.jinsihou.CodexMeter.WidgetExtension;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SKIP_INSTALL = YES;
 				SWIFT_VERSION = 6.0;

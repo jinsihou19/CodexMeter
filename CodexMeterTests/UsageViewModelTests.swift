@@ -911,8 +911,15 @@ final class UsageViewModelTests: XCTestCase {
         XCTAssertEqual(viewModel.snapshot?.geminiModels, geminiSnapshot)
         XCTAssertEqual(viewModel.geminiSnapshot, geminiSnapshot)
         let display = StatusLineDisplay.menuBarDisplay(
-            viewModel: viewModel,
-            settings: MenuBarDisplaySettings()
+            snapshot: viewModel.snapshot,
+            settings: MenuBarDisplaySettings(),
+            geminiSettings: GeminiModelsSettings(
+                isEnabled: true,
+                model: .all,
+                showsInPopover: true,
+                showsInMenuBar: true
+            ),
+            geminiSnapshot: viewModel.geminiSnapshot
         )
         XCTAssertEqual(display.trailingGeminiLines.map(\.label), ["7d", "5h"])
         XCTAssertEqual(display.trailingGeminiLines.map(\.value), ["42%", "--"])
@@ -1216,6 +1223,73 @@ final class UsageViewModelTests: XCTestCase {
         XCTAssertEqual(sharedDefaults.string(forKey: MenuBarPreferenceKeys.layoutDensity), MenuBarLayoutDensity.normal.rawValue)
         XCTAssertEqual(sharedDefaults.string(forKey: MenuBarPreferenceKeys.goodColorHex), "#00C853")
         XCTAssertFalse(sharedDefaults.bool(forKey: MenuBarPreferenceKeys.showsSecondaryWindow))
+    }
+
+    /// 验证旧身份迁移只复制显示和偏好设置，且 App Group 配置覆盖旧 Bundle 同名值。
+    func testCodexMeterConfigurationMigrationCopiesOnlySettings() {
+        let currentSuiteName = "CodexMeterTests.configurationMigration.\(UUID().uuidString)"
+        let currentDefaults = UserDefaults(suiteName: currentSuiteName)!
+        defer {
+            currentDefaults.removePersistentDomain(forName: currentSuiteName)
+        }
+
+        let migration = CodexMeterConfigurationMigration(
+            currentDefaults: currentDefaults,
+            currentDomainName: currentSuiteName,
+            legacyDomains: [
+                [
+                    AppLanguagePreferenceKeys.selectedLanguage: AppLanguage.english.rawValue,
+                    MenuBarPreferenceKeys.showsMenuBarIcon: false,
+                    "usage.resetCredits.dailyAttempt": Data(),
+                    "unrelated.windowState": true
+                ],
+                [
+                    MenuBarPreferenceKeys.showsMenuBarIcon: true,
+                    PopoverPreferenceKeys.showsTopInvocations: true,
+                    "celebrations.resetDetectorStates.v1": Data()
+                ]
+            ]
+        )
+
+        XCTAssertTrue(migration.shouldPrompt)
+        XCTAssertEqual(migration.legacyConfigurationCount, 3)
+        XCTAssertEqual(migration.preferredLanguage, .english)
+        XCTAssertEqual(migration.migrate(), 3)
+        XCTAssertFalse(migration.shouldPrompt)
+        XCTAssertEqual(
+            currentDefaults.string(forKey: AppLanguagePreferenceKeys.selectedLanguage),
+            AppLanguage.english.rawValue
+        )
+        XCTAssertTrue(currentDefaults.bool(forKey: MenuBarPreferenceKeys.showsMenuBarIcon))
+        XCTAssertTrue(currentDefaults.bool(forKey: PopoverPreferenceKeys.showsTopInvocations))
+        XCTAssertNil(currentDefaults.object(forKey: "usage.resetCredits.dailyAttempt"))
+        XCTAssertNil(currentDefaults.object(forKey: "unrelated.windowState"))
+    }
+
+    /// 验证用户选择暂不迁移后不会在后续启动中重复弹出提示。
+    func testCodexMeterConfigurationMigrationRemembersSkip() {
+        let currentSuiteName = "CodexMeterTests.configurationMigrationSkip.\(UUID().uuidString)"
+        let currentDefaults = UserDefaults(suiteName: currentSuiteName)!
+        defer {
+            currentDefaults.removePersistentDomain(forName: currentSuiteName)
+        }
+
+        let migration = CodexMeterConfigurationMigration(
+            currentDefaults: currentDefaults,
+            currentDomainName: currentSuiteName,
+            legacyDomains: [[MenuBarPreferenceKeys.contentMode: MenuBarContentMode.paceComparison.rawValue]]
+        )
+        XCTAssertTrue(migration.shouldPrompt)
+
+        migration.skip()
+
+        let nextLaunch = CodexMeterConfigurationMigration(
+            currentDefaults: currentDefaults,
+            currentDomainName: currentSuiteName,
+            legacyDomains: [[MenuBarPreferenceKeys.contentMode: MenuBarContentMode.paceComparison.rawValue]]
+        )
+        XCTAssertFalse(nextLaunch.shouldPrompt)
+        XCTAssertNil(currentDefaults.object(forKey: MenuBarPreferenceKeys.contentMode))
     }
 
     func testMenuBarDisplaySettingsMigratesLegacyDefaultsToCurrentDefaults() {

@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Any
 
 
-APP_GROUP_ID = "group.com.jinsihou.CodexUsage"
+APP_GROUP_ID = "group.com.jinsihou.CodexMeter"
 STATE_FILE_NAME = "codex-activity.json"
 STATE_EXPIRATION_SECONDS = {
     "idle": 3,
@@ -35,7 +35,7 @@ def activity_file_path() -> Path:
         / "Library"
         / "Group Containers"
         / APP_GROUP_ID
-        / "CodexUsage"
+        / "CodexMeter"
         / STATE_FILE_NAME
     )
 

@@ -4,8 +4,8 @@
 <dict>
 	<key>com.apple.security.application-groups</key>
 	<array>
-		<!-- 兼容标识：保留旧 App Group 以继续读取设置和缓存。 -->
-		<string>group.com.jinsihou.CodexUsage</string>
+		<!-- 主应用与 Widget 通过同一个 CodexMeter App Group 共享设置和快照。 -->
+		<string>group.com.jinsihou.CodexMeter</string>
 	</array>
 </dict>
 </plist>

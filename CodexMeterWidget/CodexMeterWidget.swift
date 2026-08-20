@@ -5,7 +5,7 @@ import WidgetKit
 
 struct CodexMeterWidget: Widget {
     // 兼容标识：已添加到桌面的旧 Widget 依赖该 kind，正式改名后仍不可修改。
-    let kind = "CodexUsageWidget"
+    let kind = "CodexMeterWidget"
 
     var body: some WidgetConfiguration {
         StaticConfiguration(kind: kind, provider: CodexMeterTimelineProvider()) { entry in
@@ -38,7 +38,7 @@ struct CodexMeterEntry: TimelineEntry {
 
 struct CodexMeterTimelineProvider: TimelineProvider {
     private let store = UsageSnapshotStore()
-    private let logger = Logger(subsystem: "com.jinsihou.CodexUsage", category: "Widget")
+    private let logger = Logger(subsystem: "com.jinsihou.CodexMeter", category: "Widget")
 
     func placeholder(in context: Context) -> CodexMeterEntry {
         CodexMeterEntry(date: Date(), snapshot: UsageSnapshot(

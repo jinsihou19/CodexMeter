@@ -258,7 +258,7 @@ public enum CodexHookActivityLocation {
         fallbackDirectory: URL? = nil
     ) -> URL {
         if let appGroupURL = AppGroupAccess.containerURL(for: appGroupIdentifier) {
-            return appGroupURL.appendingPathComponent("CodexUsage", isDirectory: true)
+            return appGroupURL.appendingPathComponent("CodexMeter", isDirectory: true)
         }
         return fallbackDirectory ?? externalWritableDirectory(appGroupIdentifier: appGroupIdentifier)
     }
@@ -268,6 +268,6 @@ public enum CodexHookActivityLocation {
         FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent("Library/Group Containers", isDirectory: true)
             .appendingPathComponent(appGroupIdentifier, isDirectory: true)
-            .appendingPathComponent("CodexUsage", isDirectory: true)
+            .appendingPathComponent("CodexMeter", isDirectory: true)
     }
 }

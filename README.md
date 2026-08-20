@@ -39,11 +39,9 @@
 
 系统要求：macOS 14.0 或更新版本。
 
-### 从旧版 CodexUsage 升级
+### 标识迁移
 
-构建产物、DMG 和安装路径均使用 `CodexMeter.app`。Bundle ID 和 App Group 仍保留旧标识，因此原有设置、额度缓存和 Widget 数据会继续保留。
-
-如果“应用程序”中仍有 `CodexUsage.app`，安装 `CodexMeter.app` 后退出并删除旧应用，避免同时启动两个菜单栏进程。
+应用、Bundle ID、App Group、Widget kind 和缓存目录统一使用 CodexMeter 标识。完整改名后，旧版本的设置、缓存和 Widget 需要重新配置。
 
 ## 自动更新
 
@@ -65,7 +63,7 @@ CodexMeter 从 `CODEX_HOME/auth.json` 或 `~/.codex/auth.json` 读取本机 Code
 
 token 只在内存中用于请求，不会由应用另行落盘。项目 hook 只写入轻量活动状态，不包含 prompt、transcript 或工具输出。
 
-为保留旧版数据，Bundle ID、App Group、Widget kind 和缓存目录继续使用旧兼容标识；请勿在普通改名中修改它们。
+Bundle ID、App Group、Widget kind 和缓存目录统一使用 CodexMeter 标识；这些标识必须保持一致，否则主应用、Widget 和 hook 无法共享数据。
 
 ## 开发
 
@@ -117,4 +115,4 @@ CODEX_PUBLISH_RELEASE=0 bash script/package_release.sh
 - `.codex/hooks.json`
 - `.codex/hooks/codex_activity.py`
 
-通过 `/hooks` 信任项目 hook 后，活动状态会写入旧版兼容 App Group 容器，CodexMeter 会聚合并显示当前 Codex 会话状态。
+通过 `/hooks` 信任项目 hook 后，活动状态会写入 CodexMeter App Group 容器，CodexMeter 会聚合并显示当前 Codex 会话状态。

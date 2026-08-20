@@ -866,6 +866,10 @@ public enum AppLocalization {
         "小组件": "Widget",
         "关于": "About",
         "CodexMeter 设置": "CodexMeter Settings",
+        "检测到旧版配置": "Legacy Configuration Found",
+        "CodexMeter 检测到旧版 CodexUsage 的配置数据。是否迁移显示和偏好设置？缓存、授权和每日请求状态不会迁移。": "CodexMeter found configuration data from the previous CodexUsage identity. Migrate display and preference settings? Caches, credentials, and daily request state will not be migrated.",
+        "迁移配置": "Migrate Configuration",
+        "暂不迁移": "Not Now",
         "版本": "Version",
         "系统": "System",
         "语言": "Language",
@@ -2177,14 +2181,14 @@ public struct MenuBarDisplaySettings: Equatable, Sendable {
 
 public extension Notification.Name {
     // 兼容标识：旧版观察者和共享偏好继续使用原通知名，正式改名后不可修改。
-    static let menuBarDisplaySettingsDidChange = Notification.Name("CodexUsage.menuBarDisplaySettingsDidChange")
-    static let appBehaviorSettingsDidChange = Notification.Name("CodexUsage.appBehaviorSettingsDidChange")
-    static let surfaceAppearanceSettingsDidChange = Notification.Name("CodexUsage.surfaceAppearanceSettingsDidChange")
-    static let widgetDisplaySettingsDidChange = Notification.Name("CodexUsage.widgetDisplaySettingsDidChange")
-    static let popoverDisplaySettingsDidChange = Notification.Name("CodexUsage.popoverDisplaySettingsDidChange")
-    static let codexRadarSettingsDidChange = Notification.Name("CodexUsage.codexRadarSettingsDidChange")
-    static let geminiModelsSettingsDidChange = Notification.Name("CodexUsage.geminiModelsSettingsDidChange")
-    static let usageSnapshotDidChange = Notification.Name("CodexUsage.usageSnapshotDidChange")
+    static let menuBarDisplaySettingsDidChange = Notification.Name("CodexMeter.menuBarDisplaySettingsDidChange")
+    static let appBehaviorSettingsDidChange = Notification.Name("CodexMeter.appBehaviorSettingsDidChange")
+    static let surfaceAppearanceSettingsDidChange = Notification.Name("CodexMeter.surfaceAppearanceSettingsDidChange")
+    static let widgetDisplaySettingsDidChange = Notification.Name("CodexMeter.widgetDisplaySettingsDidChange")
+    static let popoverDisplaySettingsDidChange = Notification.Name("CodexMeter.popoverDisplaySettingsDidChange")
+    static let codexRadarSettingsDidChange = Notification.Name("CodexMeter.codexRadarSettingsDidChange")
+    static let geminiModelsSettingsDidChange = Notification.Name("CodexMeter.geminiModelsSettingsDidChange")
+    static let usageSnapshotDidChange = Notification.Name("CodexMeter.usageSnapshotDidChange")
 }
 
 /// 统一封装预期消耗速度的展示模型，供菜单栏、弹窗和小组件共享同一套 Pace 判断。
@@ -2620,5 +2624,120 @@ public extension Color {
 public extension UsageRemainingTone {
     func statusBarColor(settings: MenuBarDisplaySettings) -> Color {
         settings.color(for: self)
+    }
+}
+
+/// 管理 CodexUsage 身份切换到 CodexMeter 后的设置迁移；只复制偏好键，不搬运行状态或凭据。
+public struct CodexMeterConfigurationMigration {
+    public static let legacyAppGroupIdentifier = "group.com.jinsihou.CodexUsage"
+    public static let legacyBundleIdentifier = "com.jinsihou.CodexUsage"
+
+    private static let decisionKey = "codexMeter.configurationMigrationDecision"
+    private static let migratedDecision = "migrated"
+    private static let skippedDecision = "skipped"
+    private static let configurationKeyPrefixes = [
+        "app.",
+        "celebrations.",
+        "codexRadar.",
+        "geminiModels.",
+        "menuBar.",
+        "notifications.",
+        "popover.",
+        "surface.",
+        "usage.",
+        "widget."
+    ]
+    private static let ignoredKeys: Set<String> = [
+        "celebrations.resetDetectorStates.v1",
+        "usage.resetCredits.dailyAttempt"
+    ]
+
+    private let currentDefaults: UserDefaults
+    private let currentDomainName: String
+    private let legacyDomains: [[String: Any]]
+
+    /// 使用当前共享偏好和旧 Bundle/App Group 持久化域创建迁移器；测试可注入隔离字典。
+    public init(
+        currentDefaults: UserDefaults = MenuBarDisplaySettings.sharedDefaults,
+        currentDomainName: String = UsageSnapshotStore.defaultAppGroupIdentifier,
+        legacyDomains: [[String: Any]]? = nil
+    ) {
+        self.currentDefaults = currentDefaults
+        self.currentDomainName = currentDomainName
+        self.legacyDomains = legacyDomains ?? Self.loadLegacyDomains()
+    }
+
+    /// 只有旧配置存在、当前配置为空且用户尚未做过选择时才需要弹窗。
+    public var shouldPrompt: Bool {
+        guard decision == nil else { return false }
+        guard currentConfiguration.isEmpty else { return false }
+        return !legacyConfiguration.isEmpty
+    }
+
+    /// 返回可迁移设置数量，供提示或日志展示，不包含缓存和每日请求状态。
+    public var legacyConfigurationCount: Int {
+        legacyConfiguration.count
+    }
+
+    /// 从旧 Bundle 和 App Group 合并配置到当前域；新域已有的键优先，避免覆盖用户刚设置的值。
+    @discardableResult
+    public func migrate() -> Int {
+        let existingConfiguration = currentConfiguration
+        var copiedCount = 0
+        for (key, value) in legacyConfiguration where existingConfiguration[key] == nil {
+            currentDefaults.set(value, forKey: key)
+            copiedCount += 1
+        }
+        currentDefaults.set(Self.migratedDecision, forKey: Self.decisionKey)
+        currentDefaults.synchronize()
+        return copiedCount
+    }
+
+    /// 记录用户暂不迁移，避免每次启动重复打扰；旧数据仍保留在原持久化域中。
+    public func skip() {
+        currentDefaults.set(Self.skippedDecision, forKey: Self.decisionKey)
+        currentDefaults.synchronize()
+    }
+
+    /// 从旧配置读取语言偏好，让首次迁移提示沿用用户原来的语言。
+    public var preferredLanguage: AppLanguage? {
+        guard let rawValue = legacyConfiguration[AppLanguagePreferenceKeys.selectedLanguage] as? String else {
+            return nil
+        }
+        return AppLanguage(rawValue: rawValue)
+    }
+
+    /// 读取当前域中真正属于 CodexMeter 的持久化设置，忽略系统窗口状态等无关数据。
+    private var currentConfiguration: [String: Any] {
+        Self.configuration(from: currentDefaults.persistentDomain(forName: currentDomainName) ?? [:])
+    }
+
+    /// 按旧域优先级合并设置；旧 Bundle 是基础，旧 App Group 覆盖同名键。
+    private var legacyConfiguration: [String: Any] {
+        legacyDomains.reduce(into: [String: Any]()) { result, domain in
+            for (key, value) in Self.configuration(from: domain) {
+                result[key] = value
+            }
+        }
+    }
+
+    /// 读取旧 Bundle 和旧 App Group 的持久化域，不触碰标准全局偏好或运行时文件。
+    private static func loadLegacyDomains() -> [[String: Any]] {
+        [legacyBundleIdentifier, legacyAppGroupIdentifier].compactMap { identifier in
+            guard let defaults = UserDefaults(suiteName: identifier) else { return nil }
+            return defaults.persistentDomain(forName: identifier)
+        }
+    }
+
+    /// 过滤为应用设置键，明确排除每日请求状态等不应迁移的运行数据。
+    private static func configuration(from domain: [String: Any]) -> [String: Any] {
+        domain.filter { key, _ in
+            !ignoredKeys.contains(key) && configurationKeyPrefixes.contains(where: key.hasPrefix)
+        }
+    }
+
+    /// 读取当前迁移决策；只从当前持久化域读取，避免 UserDefaults 注册默认值造成误判。
+    private var decision: String? {
+        currentDefaults.persistentDomain(forName: currentDomainName)?[Self.decisionKey] as? String
     }
 }

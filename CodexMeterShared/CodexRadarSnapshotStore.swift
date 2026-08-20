@@ -73,12 +73,12 @@ public struct CodexRadarSnapshotStore: Sendable {
         uniqueSnapshotURLs().first ?? fallbackSnapshotURL()
     }
 
-    /// 返回旧版兼容缓存位置；App Group 尚无雷达文件时用于首屏读取历史快照。
+    /// 返回本地回退缓存位置；App Group 不可用时用于首屏读取最近快照。
     private func fallbackSnapshotURL() -> URL {
         fallbackDirectory.appendingPathComponent(fileName, isDirectory: false)
     }
 
-    /// 返回去重后的雷达缓存路径；ad-hoc 下会恢复旧版 Group Containers 目录，并继续兼容 Widget 容器。
+    /// 返回去重后的雷达缓存路径；ad-hoc 下继续使用可写的 Group Containers 和 Widget 容器。
     private func uniqueSnapshotURLs() -> [URL] {
         var urls: [URL] = []
         for url in candidateSnapshotURLs() where !urls.contains(url) {
@@ -87,10 +87,10 @@ public struct CodexRadarSnapshotStore: Sendable {
         return urls
     }
 
-    /// 生成雷达缓存候选路径，保证没有 App Group entitlement 时仍优先写入旧版可写共享目录。
+    /// 生成雷达缓存候选路径，保证没有 App Group entitlement 时仍可写入 CodexMeter 共享目录。
     private func candidateSnapshotURLs() -> [URL] {
         let appGroupURL = AppGroupAccess.containerURL(for: appGroupIdentifier)?
-            .appendingPathComponent("CodexUsage", isDirectory: true)
+            .appendingPathComponent("CodexMeter", isDirectory: true)
             .appendingPathComponent(fileName, isDirectory: false)
         let externalGroupURL = usesDefaultFallbackDirectory ? AppGroupAccess.externalDirectory(
             for: appGroupIdentifier

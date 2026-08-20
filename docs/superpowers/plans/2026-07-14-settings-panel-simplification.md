@@ -236,9 +236,9 @@ Expected: `BUILD SUCCEEDED`.
 
 - [ ] **Step 4: Install and launch the fresh build**
 
-Read `TARGET_BUILD_DIR` and `FULL_PRODUCT_NAME` from `xcodebuild -showBuildSettings`, stop only the running CodexMeter/CodexUsage process, replace `/Applications/CodexUsage.app` with that build product, and launch it with `open -n /Applications/CodexUsage.app`.
+Read `TARGET_BUILD_DIR` and `FULL_PRODUCT_NAME` from `xcodebuild -showBuildSettings`, stop the running CodexMeter process, replace `/Applications/CodexMeter.app` with that build product, and launch it with `open -n /Applications/CodexMeter.app`.
 
-Expected: `/Applications/CodexUsage.app` runs and displays as CodexMeter.
+Expected: `/Applications/CodexMeter.app` runs and displays as CodexMeter.
 
 - [ ] **Step 5: Inspect the settings window**
 
