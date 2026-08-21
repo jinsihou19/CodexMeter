@@ -5,6 +5,7 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 APP_NAME="CodexMeter"
+LEGACY_APP_NAME="CodexUsage"
 SCHEME_NAME="CodexMeter"
 WIDGET_PROCESS_NAME="CodexMeterWidgetExtension"
 WIDGET_BUNDLE_ID="com.jinsihou.CodexMeter.WidgetExtension"
@@ -15,6 +16,7 @@ BUILD_DIR="$ROOT_DIR/build/universal"
 DIST_DIR="$ROOT_DIR/dist"
 APPCAST_WORK_DIR="$BUILD_DIR/appcast"
 INSTALLED_APP_PATH="/Applications/$APP_NAME.app"
+LEGACY_INSTALLED_APP_PATH="/Applications/$LEGACY_APP_NAME.app"
 GITHUB_REPOSITORY="jinsihou19/CodexMeter"
 PUBLISH_RELEASE="${CODEX_PUBLISH_RELEASE:-1}"
 INSTALL_LOCAL="${CODEX_INSTALL_LOCAL:-1}"
@@ -62,6 +64,25 @@ find_sparkle_bin_dir() {
     -print \
     -quit \
     | xargs -I{} dirname "{}"
+}
+
+# 安装前正常结束所有同名实例，并等待进程退出，避免替换运行中的 App 后留下多个菜单栏项目。
+stop_running_process() {
+  local process_name="$1"
+  if ! pgrep -x "$process_name" >/dev/null 2>&1; then
+    return 0
+  fi
+
+  pkill -TERM -x "$process_name" 2>/dev/null || true
+  for _ in {1..50}; do
+    if ! pgrep -x "$process_name" >/dev/null 2>&1; then
+      return 0
+    fi
+    sleep 0.1
+  done
+
+  echo "等待 $process_name 退出超时，已取消安装" >&2
+  return 1
 }
 
 if [ -e "$DMG_PATH" ]; then
@@ -167,17 +188,19 @@ release_write_notes \
 
 # WidgetKit 会保留 extension 进程；本机安装前一并结束，Actions runner 则跳过该步骤。
 if [ "$INSTALL_LOCAL" = "1" ]; then
-  pkill -x "$WIDGET_PROCESS_NAME" 2>/dev/null || true
-  pkill -x "$APP_NAME" 2>/dev/null || true
+  for process_name in "$APP_NAME" "$LEGACY_APP_NAME" "$WIDGET_PROCESS_NAME"; do
+    stop_running_process "$process_name"
+  done
   pluginkit -r "$INSTALLED_APP_PATH/Contents/PlugIns/CodexMeterWidgetExtension.appex" 2>/dev/null || true
-  rm -rf "$INSTALLED_APP_PATH"
+  pluginkit -r "$LEGACY_INSTALLED_APP_PATH/Contents/PlugIns/CodexMeterWidgetExtension.appex" 2>/dev/null || true
+  rm -rf "$INSTALLED_APP_PATH" "$LEGACY_INSTALLED_APP_PATH"
   ditto "$APP_PATH" "$INSTALLED_APP_PATH"
   # 构建会把临时产物注册进插件数据库；安装后改登稳定路径，否则系统组件库可能只记住 build 目录。
   pluginkit -r "$APP_PATH/Contents/PlugIns/CodexMeterWidgetExtension.appex" 2>/dev/null || true
   "$LSREGISTER" -f "$INSTALLED_APP_PATH"
   pluginkit -a "$INSTALLED_APP_PATH/Contents/PlugIns/CodexMeterWidgetExtension.appex"
   pluginkit -e use -i "$WIDGET_BUNDLE_ID"
-  open -n "$INSTALLED_APP_PATH"
+  open "$INSTALLED_APP_PATH"
 fi
 
 # 发布模式创建唯一 Release；Actions 会在同一任务中继续部署 appcast 到 Pages。

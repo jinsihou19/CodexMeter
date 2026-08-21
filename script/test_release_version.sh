@@ -64,8 +64,10 @@ assert_equal "2.0.0" "$(release_read_project_setting "$PROJECT_FILE" MARKETING_V
 assert_equal "8" "$(release_read_project_setting "$PROJECT_FILE" CURRENT_PROJECT_VERSION)" "更新构建号"
 
 assert_script_contains 'DMG_PATH="$DIST_DIR/$APP_NAME-$MARKETING_VERSION-$BUILD_NUMBER-universal.dmg"' "产物唯一命名"
-assert_script_contains 'APP_PATH="$BUILD_DIR/Release/$COMPATIBLE_PRODUCT_NAME.app"' "构建使用兼容 App 包名"
+assert_script_contains 'APP_PATH="$BUILD_DIR/Release/$APP_NAME.app"' "构建使用当前 App 包名"
 assert_script_contains 'INSTALLED_APP_PATH="/Applications/$APP_NAME.app"' "安装使用品牌名称"
+assert_script_contains 'LEGACY_APP_NAME="CodexUsage"' "安装清理旧版 App"
+assert_script_contains 'stop_running_process "$process_name"' "安装前等待旧实例退出"
 assert_script_contains 'ditto "$APP_PATH" "$DMG_ROOT/$APP_NAME.app"' "DMG 使用品牌名称"
 assert_script_contains 'ARCHS="arm64 x86_64"' "构建 Universal App"
 assert_script_contains 'APP_ARCHS="$(lipo -archs' "验证 Universal 架构"
@@ -89,6 +91,11 @@ assert_script_contains 'MARKETING_VERSION="$MARKETING_VERSION"' "语义版本注
 assert_script_contains 'if [ -e "$DMG_PATH" ]; then' "禁止覆盖旧产物"
 assert_script_contains 'release_update_project_versions "$PROJECT_FILE" "$MARKETING_VERSION" "$NEXT_BUILD_NUMBER"' "发布后推进版本"
 assert_script_contains '--notes-file "$RELEASE_NOTES_PATH"' "发布使用分类说明"
+assert_script_contains 'open "$INSTALLED_APP_PATH"' "安装后启动唯一实例"
+if grep -Fq 'open -n "$INSTALLED_APP_PATH"' "$PACKAGE_SCRIPT"; then
+  echo "安装不应强制打开新实例" >&2
+  exit 1
+fi
 release_validate_marketing_version "$(release_read_project_setting "$ACTUAL_PROJECT_FILE" MARKETING_VERSION)"
 release_validate_build_number "$(release_read_project_setting "$ACTUAL_PROJECT_FILE" CURRENT_PROJECT_VERSION)"
 

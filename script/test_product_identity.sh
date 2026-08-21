@@ -32,10 +32,15 @@ grep -Fq 'CheckForUpdatesView' "$ROOT_DIR/CodexMeter/SettingsView.swift"
 if rg -n --hidden -g '!.git' -g '!build' -g '!dist' -g '!.gitnexus' \
   -g '!script/test_product_identity.sh' -g '!CodexMeterShared/MenuBarDisplaySettings.swift' \
   -g '!CodexMeter/CodexMeterApp.swift' \
+  -g '!script/package_release.sh' \
   'CodexUsage\.app|com\.jinsihou\.CodexUsage|group\.com\.jinsihou\.CodexUsage|CodexUsageWidget"|CodexUsageShared|CodexUsageTests|CodexUsage\.WidgetExtension|Application Support/CodexUsage' \
   "$ROOT_DIR" >/dev/null; then
   echo "Legacy CodexUsage identity remains" >&2
   exit 1
 fi
+
+# 旧包名只允许出现在发布脚本的迁移清理逻辑中，不能回到工程身份配置。
+grep -Fq 'LEGACY_APP_NAME="CodexUsage"' "$ROOT_DIR/script/package_release.sh"
+grep -Fq 'rm -rf "$INSTALLED_APP_PATH" "$LEGACY_INSTALLED_APP_PATH"' "$ROOT_DIR/script/package_release.sh"
 
 echo "Product identity tests passed"
