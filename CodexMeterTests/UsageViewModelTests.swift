@@ -361,7 +361,7 @@ final class UsageViewModelTests: XCTestCase {
         XCTAssertFalse(aboutSource.contains("Form {"))
     }
 
-    /// 验证更新委托和通知查询不依赖 Swift 6.2 或新 SDK 的并发标注。
+    /// 验证更新委托和通知查询不依赖 Swift 6.2 或新 SDK 的并发标注，并保持通知回调脱离主 actor。
     func testConcurrencyBridgesRemainCompatibleWithXcode16() throws {
         let projectRoot = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent()
@@ -378,6 +378,8 @@ final class UsageViewModelTests: XCTestCase {
         XCTAssertTrue(settingsSource.contains("@preconcurrency SPUStandardUserDriverDelegate"))
         XCTAssertFalse(settingsSource.contains("@MainActor SPUStandardUserDriverDelegate"))
         XCTAssertTrue(usageSource.contains("center.getNotificationSettings"))
+        XCTAssertTrue(usageSource.contains("private nonisolated static func enqueueNotifications"))
+        XCTAssertTrue(usageSource.contains("Self.enqueueNotifications(events)"))
         XCTAssertTrue(usageSource.contains("@preconcurrency import UserNotifications"))
         XCTAssertFalse(usageSource.contains("await center.notificationSettings()"))
     }

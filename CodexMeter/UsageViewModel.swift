@@ -371,14 +371,18 @@ final class UsageNotificationController {
             return
         }
 
-        let eventsToNotify = events
+        Self.enqueueNotifications(events)
+    }
+
+    /// 在系统通知回调队列查询权限并投递提醒，避免从主 actor 继承错误的执行器约束。
+    private nonisolated static func enqueueNotifications(_ events: [UsageNotificationEvent]) {
         let center = UNUserNotificationCenter.current()
         center.getNotificationSettings { settings in
             let authorization = settings.authorizationStatus
             guard authorization == .authorized || authorization == .provisional else {
                 return
             }
-            for event in eventsToNotify {
+            for event in events {
                 let content = UNMutableNotificationContent()
                 switch event {
                 case let .depleted(provider, windowTitle):
