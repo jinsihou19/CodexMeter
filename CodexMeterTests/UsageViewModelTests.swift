@@ -46,6 +46,7 @@ final class UsageViewModelTests: XCTestCase {
         XCTAssertTrue(source.contains("case notifications"))
         XCTAssertTrue(source.contains("private var notificationsPane: some View"))
         XCTAssertTrue(source.contains("title: \"重置通知\""))
+        XCTAssertTrue(source.contains("title: \"重置后启动下一周期\""))
         XCTAssertTrue(source.contains("title: \"重置时播放彩带\""))
         XCTAssertTrue(source.contains("title: \"播放彩带\""))
         XCTAssertTrue(source.contains(".playUsageResetConfettiPreview"))
@@ -300,6 +301,21 @@ final class UsageViewModelTests: XCTestCase {
         let events = detector.processEvents(reset)
         XCTAssertEqual(events.map(\.kind), [.session, .weekly])
         XCTAssertEqual(events.map(\.windowTitle), ["5 小时", "7 天"])
+    }
+
+    /// 验证自动化只消费 Codex 的 5 小时重置事件，并使用固定的最小请求参数。
+    func testCodexSessionStarterRequiresEnabledSessionReset() {
+        let suiteName = "UsageViewModelTests.AutoStartSession.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let session = UsageResetEvent(kind: .session, windowTitle: "5 小时")
+        let weekly = UsageResetEvent(kind: .weekly, windowTitle: "7 天")
+
+        XCTAssertFalse(CodexSessionStarter.shouldStart(after: [session], defaults: defaults))
+        defaults.set(true, forKey: UsageAutomationPreferenceKeys.startsSessionAfterReset)
+        XCTAssertFalse(CodexSessionStarter.shouldStart(after: [weekly], defaults: defaults))
+        XCTAssertTrue(CodexSessionStarter.shouldStart(after: [session], defaults: defaults))
+        XCTAssertEqual(CodexSessionStarter.arguments, ["exec", "--ephemeral", "--skip-git-repo-check", "ok"])
     }
 
     /// 验证 Antigravity 的重置窗口使用独立基线，并能触发对应的周额度庆祝。

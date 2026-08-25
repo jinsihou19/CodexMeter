@@ -315,6 +315,50 @@ struct UsageResetCelebrationDetector {
     }
 }
 
+/// 在后台发送最小 Codex 请求；只消费 Codex 的 5 小时重置事件，不处理 Antigravity。
+enum CodexSessionStarter {
+    static let arguments = ["exec", "--ephemeral", "--skip-git-repo-check", "ok"]
+    private static let logger = Logger(subsystem: "com.jinsihou.CodexMeter", category: "Automation")
+
+    /// 仅在用户开启自动化且本轮包含 5 小时重置时启动下一周期。
+    static func shouldStart(after events: [UsageResetEvent], defaults: UserDefaults) -> Bool {
+        defaults.bool(forKey: UsageAutomationPreferenceKeys.startsSessionAfterReset)
+            && events.contains(where: { $0.kind == .session })
+    }
+
+    /// 从 GUI 应用可用的 PATH 和常见安装位置寻找 Codex，并在后台执行一次。
+    static func start(environment: [String: String] = ProcessInfo.processInfo.environment) {
+        DispatchQueue.global(qos: .utility).async {
+            let process = Process()
+            let codexBinary = environment["CODEX_BIN"]
+            process.executableURL = URL(fileURLWithPath: codexBinary ?? "/usr/bin/env")
+            process.arguments = codexBinary == nil ? ["codex"] + arguments : arguments
+            var processEnvironment = environment
+            let home = FileManager.default.homeDirectoryForCurrentUser.path
+            processEnvironment["PATH"] = [
+                environment["PATH"],
+                home + "/.local/bin",
+                "/opt/homebrew/bin",
+                "/usr/local/bin"
+            ].compactMap { $0 }.joined(separator: ":")
+            process.environment = processEnvironment
+            process.standardOutput = FileHandle.nullDevice
+            process.standardError = FileHandle.nullDevice
+            do {
+                try process.run()
+                process.waitUntilExit()
+                guard process.terminationStatus == 0 else {
+                    logger.error("自动启动下一额度周期失败；状态=\(process.terminationStatus)")
+                    return
+                }
+                logger.info("已向 Codex 发送 ok，下一额度周期已启动。")
+            } catch {
+                logger.error("自动启动下一额度周期失败：\(error.localizedDescription, privacy: .public)")
+            }
+        }
+    }
+}
+
 /// 把用量边界事件交给 macOS 通知中心；权限请求只由用户主动开启设置时触发。
 @MainActor
 final class UsageNotificationController {
@@ -363,6 +407,9 @@ final class UsageNotificationController {
         ) ?? .off
         let settings = UsageNotificationSettings(defaults: defaults)
         let codexResetEvents = resetCelebrationDetector.processEvents(current)
+        if CodexSessionStarter.shouldStart(after: codexResetEvents, defaults: defaults) {
+            CodexSessionStarter.start()
+        }
         let geminiResetEvents: [UsageResetEvent]
         if let geminiSnapshot = snapshot.geminiModels {
             let geminiEnabled = GeminiModelsSettings(defaults: defaults).isEnabled

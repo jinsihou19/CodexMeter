@@ -899,6 +899,9 @@ public enum AppLocalization {
         "Codex 或 Antigravity 剩余额度首次降到设定阈值时发送一次系统通知。": "Notify once when Codex or Antigravity remaining quota first crosses the threshold.",
         "重置通知": "Quota Reset Notifications",
         "Codex 或 Antigravity 的 5 小时或 7 天窗口重置时发送系统通知，并标明产品和窗口。": "Notify when a Codex or Antigravity 5-hour or 7-day window resets, identifying the product and window.",
+        "自动化": "Automation",
+        "重置后启动下一周期": "Start Next Window After Reset",
+        "Codex 的 5 小时额度重置后自动发送一次 ok，让下一周期立即开始计时。": "Send one ok prompt after the Codex 5-hour quota resets so the next window starts immediately.",
         "提醒阈值": "Alert Threshold",
         "额度恢复到阈值以上后，下一次下降会再次提醒。": "After quota recovers above the threshold, the next drop can alert again.",
         "庆祝": "Celebrations",
@@ -1172,6 +1175,10 @@ public enum UsageNotificationPreferenceKeys {
 
 public enum UsageCelebrationPreferenceKeys {
     public static let resetOption = "celebrations.resetOption"
+}
+
+public enum UsageAutomationPreferenceKeys {
+    public static let startsSessionAfterReset = "automation.startsSessionAfterReset"
 }
 
 public extension Notification.Name {

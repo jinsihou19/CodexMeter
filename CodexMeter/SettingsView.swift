@@ -168,6 +168,7 @@ struct SettingsView: View {
     @AppStorage(UsageNotificationPreferenceKeys.notifiesWhenReset, store: MenuBarDisplaySettings.sharedDefaults) private var notifiesWhenReset = UsageNotificationSettings.defaultNotifiesWhenReset
     @AppStorage(UsageNotificationPreferenceKeys.lowRemainingThreshold, store: MenuBarDisplaySettings.sharedDefaults) private var lowRemainingThreshold = UsageNotificationSettings.defaultLowRemainingThreshold
     @AppStorage(UsageCelebrationPreferenceKeys.resetOption, store: MenuBarDisplaySettings.sharedDefaults) private var resetCelebrationOption = UsageResetCelebrationOption.off.rawValue
+    @AppStorage(UsageAutomationPreferenceKeys.startsSessionAfterReset, store: MenuBarDisplaySettings.sharedDefaults) private var startsSessionAfterReset = false
     @AppStorage(CodexRadarPreferenceKeys.isEnabled, store: MenuBarDisplaySettings.sharedDefaults) private var codexRadarEnabled = CodexRadarSettings.defaultIsEnabled
     @AppStorage(CodexRadarPreferenceKeys.showsScoreChart, store: MenuBarDisplaySettings.sharedDefaults) private var codexRadarShowsScoreChart = CodexRadarSettings.defaultShowsScoreChart
     @AppStorage(GeminiModelsPreferenceKeys.isEnabled, store: MenuBarDisplaySettings.sharedDefaults) private var geminiModelsEnabled = GeminiModelsSettings.defaultIsEnabled
@@ -506,6 +507,14 @@ struct SettingsView: View {
                         .pickerStyle(.menu)
                     }
                 }
+            }
+
+            Section(AppLocalization.string("自动化")) {
+                SettingsToggleRow(
+                    title: "重置后启动下一周期",
+                    subtitle: "Codex 的 5 小时额度重置后自动发送一次 ok，让下一周期立即开始计时。",
+                    isOn: $startsSessionAfterReset
+                )
             }
 
             Section(AppLocalization.string("庆祝")) {
