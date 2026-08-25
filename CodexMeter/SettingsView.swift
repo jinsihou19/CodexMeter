@@ -165,6 +165,7 @@ struct SettingsView: View {
     @AppStorage(AppLanguagePreferenceKeys.selectedLanguage, store: MenuBarDisplaySettings.sharedDefaults) private var selectedLanguage = AppLanguage.system.rawValue
     @AppStorage(UsageNotificationPreferenceKeys.notifiesWhenDepleted, store: MenuBarDisplaySettings.sharedDefaults) private var notifiesWhenDepleted = UsageNotificationSettings.defaultNotifiesWhenDepleted
     @AppStorage(UsageNotificationPreferenceKeys.notifiesWhenLow, store: MenuBarDisplaySettings.sharedDefaults) private var notifiesWhenLow = UsageNotificationSettings.defaultNotifiesWhenLow
+    @AppStorage(UsageNotificationPreferenceKeys.notifiesWhenReset, store: MenuBarDisplaySettings.sharedDefaults) private var notifiesWhenReset = UsageNotificationSettings.defaultNotifiesWhenReset
     @AppStorage(UsageNotificationPreferenceKeys.lowRemainingThreshold, store: MenuBarDisplaySettings.sharedDefaults) private var lowRemainingThreshold = UsageNotificationSettings.defaultLowRemainingThreshold
     @AppStorage(UsageCelebrationPreferenceKeys.resetOption, store: MenuBarDisplaySettings.sharedDefaults) private var resetCelebrationOption = UsageResetCelebrationOption.off.rawValue
     @AppStorage(CodexRadarPreferenceKeys.isEnabled, store: MenuBarDisplaySettings.sharedDefaults) private var codexRadarEnabled = CodexRadarSettings.defaultIsEnabled
@@ -508,6 +509,14 @@ struct SettingsView: View {
             }
 
             Section(AppLocalization.string("庆祝")) {
+                SettingsToggleRow(
+                    title: "重置通知",
+                    subtitle: "Codex 或 Antigravity 的 5 小时或 7 天窗口重置时发送系统通知，并标明产品和窗口。",
+                    isOn: usageNotificationBinding(
+                        $notifiesWhenReset,
+                        key: UsageNotificationPreferenceKeys.notifiesWhenReset
+                    )
+                )
                 SettingsPickerRow(
                     title: "重置时播放彩带",
                     subtitle: "额度重置时播放全屏彩带。",
@@ -1372,6 +1381,7 @@ struct SettingsView: View {
         let notificationSettings = UsageNotificationSettings(defaults: MenuBarDisplaySettings.sharedDefaults)
         notifiesWhenDepleted = notificationSettings.notifiesWhenDepleted
         notifiesWhenLow = notificationSettings.notifiesWhenLow
+        notifiesWhenReset = notificationSettings.notifiesWhenReset
         lowRemainingThreshold = notificationSettings.lowRemainingThreshold
         let codexRadarSettings = CodexRadarSettings(defaults: MenuBarDisplaySettings.sharedDefaults)
         codexRadarEnabled = codexRadarSettings.isEnabled

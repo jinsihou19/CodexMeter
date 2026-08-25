@@ -897,6 +897,8 @@ public enum AppLocalization {
         "Codex 或 Antigravity 的 5 小时或 7 天窗口剩余降至 0% 时发送系统通知。": "Notify when a Codex or Antigravity 5-hour or 7-day window reaches 0% remaining.",
         "低额度提醒": "Low Quota",
         "Codex 或 Antigravity 剩余额度首次降到设定阈值时发送一次系统通知。": "Notify once when Codex or Antigravity remaining quota first crosses the threshold.",
+        "重置通知": "Quota Reset Notifications",
+        "Codex 或 Antigravity 的 5 小时或 7 天窗口重置时发送系统通知，并标明产品和窗口。": "Notify when a Codex or Antigravity 5-hour or 7-day window resets, identifying the product and window.",
         "提醒阈值": "Alert Threshold",
         "额度恢复到阈值以上后，下一次下降会再次提醒。": "After quota recovers above the threshold, the next drop can alert again.",
         "庆祝": "Celebrations",
@@ -1164,6 +1166,7 @@ public enum AppLocalization {
 public enum UsageNotificationPreferenceKeys {
     public static let notifiesWhenDepleted = "notifications.quotaDepleted"
     public static let notifiesWhenLow = "notifications.lowRemaining"
+    public static let notifiesWhenReset = "notifications.quotaReset"
     public static let lowRemainingThreshold = "notifications.lowRemainingThreshold"
 }
 
@@ -1206,20 +1209,24 @@ public enum UsageResetCelebrationOption: String, CaseIterable, Identifiable, Sen
 public struct UsageNotificationSettings: Equatable, Sendable {
     public static let defaultNotifiesWhenDepleted = false
     public static let defaultNotifiesWhenLow = false
+    public static let defaultNotifiesWhenReset = false
     public static let defaultLowRemainingThreshold = 10
 
     public let notifiesWhenDepleted: Bool
     public let notifiesWhenLow: Bool
     public let lowRemainingThreshold: Int
+    public let notifiesWhenReset: Bool
 
     public init(
         notifiesWhenDepleted: Bool = Self.defaultNotifiesWhenDepleted,
         notifiesWhenLow: Bool = Self.defaultNotifiesWhenLow,
-        lowRemainingThreshold: Int = Self.defaultLowRemainingThreshold
+        lowRemainingThreshold: Int = Self.defaultLowRemainingThreshold,
+        notifiesWhenReset: Bool = Self.defaultNotifiesWhenReset
     ) {
         self.notifiesWhenDepleted = notifiesWhenDepleted
         self.notifiesWhenLow = notifiesWhenLow
         self.lowRemainingThreshold = max(1, min(50, lowRemainingThreshold))
+        self.notifiesWhenReset = notifiesWhenReset
     }
 
     public init(defaults: UserDefaults) {
@@ -1229,7 +1236,9 @@ public struct UsageNotificationSettings: Equatable, Sendable {
             notifiesWhenLow: defaults.object(forKey: UsageNotificationPreferenceKeys.notifiesWhenLow)
                 as? Bool ?? Self.defaultNotifiesWhenLow,
             lowRemainingThreshold: defaults.object(forKey: UsageNotificationPreferenceKeys.lowRemainingThreshold)
-                as? Int ?? Self.defaultLowRemainingThreshold
+                as? Int ?? Self.defaultLowRemainingThreshold,
+            notifiesWhenReset: defaults.object(forKey: UsageNotificationPreferenceKeys.notifiesWhenReset)
+                as? Bool ?? Self.defaultNotifiesWhenReset
         )
     }
 }

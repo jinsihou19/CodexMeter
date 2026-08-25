@@ -23,6 +23,7 @@ enum UsageNotificationProvider: String, Equatable, Sendable {
 enum UsageNotificationEvent: Equatable, Sendable {
     case depleted(provider: UsageNotificationProvider, windowTitle: String)
     case lowRemaining(provider: UsageNotificationProvider, windowTitle: String, remainingText: String)
+    case reset(provider: UsageNotificationProvider, windowTitle: String)
 }
 
 /// 只在额度向下跨过边界时生成事件，避免每次轮询重复通知。
@@ -108,6 +109,12 @@ enum UsageNotificationEventResolver {
     }
 }
 
+/// 描述一次已确认的额度窗口重置，供彩带和系统通知分别决定是否消费。
+struct UsageResetEvent: Equatable, Sendable {
+    let kind: UsageResetCelebrationOption
+    let windowTitle: String
+}
+
 /// 持久化额度重置检测基线，使睡眠和应用重启后的首次刷新仍能识别真实重置。
 struct UsageResetCelebrationDetector {
     private struct State: Codable {
@@ -124,6 +131,7 @@ struct UsageResetCelebrationDetector {
         let key: String
         let kind: ResetKind
         let window: RateLimitWindow
+        let windowTitle: String
     }
 
     private static let defaultsKey = "celebrations.resetDetectorStates.v1"
@@ -185,12 +193,24 @@ struct UsageResetCelebrationDetector {
         processKind(geminiSnapshot, option: option) != nil
     }
 
+    /// 返回本次快照确认的全部窗口重置，调用方可按产品和窗口分别发送通知。
+    mutating func processEvents(_ rateLimits: RateLimitSnapshot) -> [UsageResetEvent] {
+        process(observations: observations(in: rateLimits), option: .both)
+    }
+
+    /// 返回 Antigravity 本次快照确认的全部窗口重置，调用方可保留模型组名称。
+    mutating func processEvents(_ geminiSnapshot: GeminiModelsSnapshot) -> [UsageResetEvent] {
+        process(observations: observations(in: geminiSnapshot), option: .both)
+    }
+
     /// 更新 Codex 检测状态，并返回触发彩带的窗口类型；无重置时返回 nil。
     mutating func processKind(
         _ rateLimits: RateLimitSnapshot,
         option: UsageResetCelebrationOption
     ) -> UsageResetCelebrationOption? {
-        process(observations: observations(in: rateLimits), option: option)
+        preferredKind(
+            from: process(observations: observations(in: rateLimits), option: option)
+        )
     }
 
     /// 更新 Antigravity 检测状态，并返回触发彩带的窗口类型；无重置时返回 nil。
@@ -198,15 +218,22 @@ struct UsageResetCelebrationDetector {
         _ geminiSnapshot: GeminiModelsSnapshot,
         option: UsageResetCelebrationOption
     ) -> UsageResetCelebrationOption? {
-        process(observations: observations(in: geminiSnapshot), option: option)
+        preferredKind(
+            from: process(observations: observations(in: geminiSnapshot), option: option)
+        )
     }
 
-    /// 统一处理不同供应商的窗口观察值，并持久化跨重启的重置基线；同轮同时重置时周窗口优先。
+    /// 在多个重置事件中选出彩带展示类型；同轮同时重置时周窗口优先。
+    private func preferredKind(from events: [UsageResetEvent]) -> UsageResetCelebrationOption? {
+        events.first(where: { $0.kind == .weekly })?.kind ?? events.first?.kind
+    }
+
+    /// 统一处理不同供应商的窗口观察值，并持久化跨重启的重置基线。
     private mutating func process(
         observations: [ResetObservation],
         option: UsageResetCelebrationOption
-    ) -> UsageResetCelebrationOption? {
-        var celebrationType: UsageResetCelebrationOption?
+    ) -> [UsageResetEvent] {
+        var resetEvents: [UsageResetEvent] = []
         for observation in observations {
             let previous = states[observation.key]
             let isAboveThreshold = observation.window.usedPercent > Self.threshold
@@ -224,9 +251,9 @@ struct UsageResetCelebrationDetector {
                 case .weekly:
                     candidate = .weekly
                 }
-                if candidate == .weekly || celebrationType == nil {
-                    celebrationType = candidate
-                }
+                resetEvents.append(
+                    UsageResetEvent(kind: candidate, windowTitle: observation.windowTitle)
+                )
             }
             states[observation.key] = State(
                 wasAboveThreshold: suppressedCrossing ? true : isAboveThreshold,
@@ -236,7 +263,7 @@ struct UsageResetCelebrationDetector {
             )
         }
         persist()
-        return celebrationType
+        return resetEvents
     }
 
     /// 按接口实际窗口时长区分会话与周额度，兼容只有 primary 周窗口的账号。
@@ -244,7 +271,12 @@ struct UsageResetCelebrationDetector {
         [rateLimits.primary, rateLimits.secondary].compactMap { window in
             guard let window else { return nil }
             let kind: ResetKind = window.isWeeklyQuotaWindow ? .weekly : .session
-            return ResetObservation(key: kind.rawValue, kind: kind, window: window)
+            return ResetObservation(
+                key: kind.rawValue,
+                kind: kind,
+                window: window,
+                windowTitle: window.durationLabel
+            )
         }
     }
 
@@ -259,7 +291,8 @@ struct UsageResetCelebrationDetector {
                 return ResetObservation(
                     key: "\(group.id)|\(quotaWindow.bucketId)",
                     kind: kind,
-                    window: window
+                    window: window,
+                    windowTitle: "\(group.title) · \(quotaWindow.title)"
                 )
             }
         }
@@ -328,28 +361,38 @@ final class UsageNotificationController {
                 forKey: UsageCelebrationPreferenceKeys.resetOption
             ) ?? ""
         ) ?? .off
-        let codexCelebrationType = resetCelebrationDetector.processKind(current, option: celebrationOption)
-        let geminiCelebrationType: UsageResetCelebrationOption?
+        let settings = UsageNotificationSettings(defaults: defaults)
+        let codexResetEvents = resetCelebrationDetector.processEvents(current)
+        let geminiResetEvents: [UsageResetEvent]
         if let geminiSnapshot = snapshot.geminiModels {
             let geminiEnabled = GeminiModelsSettings(defaults: defaults).isEnabled
-            geminiCelebrationType = geminiResetCelebrationDetector.processKind(
-                geminiSnapshot,
-                option: geminiEnabled ? celebrationOption : .off
-            )
+            if geminiEnabled {
+                geminiResetEvents = geminiResetCelebrationDetector.processEvents(geminiSnapshot)
+            } else {
+                _ = geminiResetCelebrationDetector.processKind(geminiSnapshot, option: .off)
+                geminiResetEvents = []
+            }
         } else {
-            geminiCelebrationType = nil
+            geminiResetEvents = []
         }
-        let celebrationType: UsageResetCelebrationOption?
-        if codexCelebrationType == .weekly || geminiCelebrationType == .weekly {
-            celebrationType = .weekly
-        } else {
-            celebrationType = codexCelebrationType ?? geminiCelebrationType
-        }
+        let resetKinds = (codexResetEvents + geminiResetEvents).map(\.kind)
+        let celebrationType = resetKinds.first(where: {
+            $0 == .weekly && celebrationOption.celebratesWeeklyReset
+        }) ?? resetKinds.first(where: {
+            $0 == .session && celebrationOption.celebratesSessionReset
+        })
         if let celebrationType {
             playConfetti(celebrationType)
         }
-        let settings = UsageNotificationSettings(defaults: defaults)
         var events: [UsageNotificationEvent] = []
+        if settings.notifiesWhenReset {
+            events += codexResetEvents.map {
+                .reset(provider: .codex, windowTitle: $0.windowTitle)
+            }
+            events += geminiResetEvents.map {
+                .reset(provider: .antigravity, windowTitle: $0.windowTitle)
+            }
+        }
         if let previousCodex {
             events += UsageNotificationEventResolver.events(
                 previous: previousCodex,
@@ -391,6 +434,9 @@ final class UsageNotificationController {
                 case let .lowRemaining(provider, windowTitle, remainingText):
                     content.title = "\(provider.title) 额度偏低"
                     content.body = "\(windowTitle)窗口剩余 \(remainingText)。"
+                case let .reset(provider, windowTitle):
+                    content.title = "\(provider.title) · \(windowTitle) 已重置"
+                    content.body = "额度已恢复，可继续使用。"
                 }
                 content.sound = .default
                 let request = UNNotificationRequest(

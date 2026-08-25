@@ -45,6 +45,7 @@ final class UsageViewModelTests: XCTestCase {
         XCTAssertTrue(source.contains("DisclosureGroup(AppLocalization.string(\"连接详情\")"))
         XCTAssertTrue(source.contains("case notifications"))
         XCTAssertTrue(source.contains("private var notificationsPane: some View"))
+        XCTAssertTrue(source.contains("title: \"重置通知\""))
         XCTAssertTrue(source.contains("title: \"重置时播放彩带\""))
         XCTAssertTrue(source.contains("title: \"播放彩带\""))
         XCTAssertTrue(source.contains(".playUsageResetConfettiPreview"))
@@ -268,6 +269,37 @@ final class UsageViewModelTests: XCTestCase {
             detector.processKind(reset, option: .session)?.rawValue,
             UsageResetCelebrationOption.session.rawValue
         )
+    }
+
+    /// 验证同一轮多个窗口重置会保留各自的窗口标题，供系统通知区分产品额度窗口。
+    func testUsageResetEventsKeepEachWindowTitle() {
+        let suiteName = "UsageViewModelTests.ResetEvents.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let previous = RateLimitSnapshot(
+            limitId: "codex",
+            limitName: nil,
+            primary: RateLimitWindow(usedPercent: 62, windowDurationMins: 300, resetsAt: 2_000),
+            secondary: RateLimitWindow(usedPercent: 72, windowDurationMins: 10_080, resetsAt: 3_000),
+            credits: nil,
+            planType: nil,
+            rateLimitReachedType: nil
+        )
+        let reset = RateLimitSnapshot(
+            limitId: "codex",
+            limitName: nil,
+            primary: RateLimitWindow(usedPercent: 1, windowDurationMins: 300, resetsAt: 4_000),
+            secondary: RateLimitWindow(usedPercent: 1, windowDurationMins: 10_080, resetsAt: 5_000),
+            credits: nil,
+            planType: nil,
+            rateLimitReachedType: nil
+        )
+
+        var detector = UsageResetCelebrationDetector(defaults: defaults)
+        XCTAssertTrue(detector.processEvents(previous).isEmpty)
+        let events = detector.processEvents(reset)
+        XCTAssertEqual(events.map(\.kind), [.session, .weekly])
+        XCTAssertEqual(events.map(\.windowTitle), ["5 小时", "7 天"])
     }
 
     /// 验证 Antigravity 的重置窗口使用独立基线，并能触发对应的周额度庆祝。
