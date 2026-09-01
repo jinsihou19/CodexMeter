@@ -92,6 +92,51 @@ final class LocalCodexUsageReaderTests: XCTestCase {
         XCTAssertEqual(refreshedSnapshot.summary.lifetimeTokens, 1_122_000)
     }
 
+    /// 验证新缓存字段、乱序累计事件和一次性裸 usage 行使用同一准确口径聚合。
+    func testReaderSupportsCurrentCodexUsageShapes() async throws {
+        let now = try XCTUnwrap(ISO8601DateFormatter().date(from: "2026-08-28T12:00:00Z"))
+        let databaseURL = try temporaryFile(named: "state_5.sqlite", contents: Data())
+        let sessionURL = try temporaryFile(
+            named: "rollout-current-shapes.jsonl",
+            contents: Data("""
+            {"timestamp":"2026-08-28T01:00:00Z","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":1000,"cached_input_tokens":400,"output_tokens":100,"total_tokens":1100},"last_token_usage":{"input_tokens":1000,"cached_input_tokens":400,"output_tokens":100,"total_tokens":1100}}}}
+            {"timestamp":"2026-08-28T00:59:00Z","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":950,"cache_read_input_tokens":380,"output_tokens":90,"total_tokens":1040},"last_token_usage":{"input_tokens":50,"cache_read_input_tokens":20,"output_tokens":10,"total_tokens":60}}}}
+            {"timestamp":"2026-08-28T01:01:00Z","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":1100,"cache_read_input_tokens":450,"output_tokens":110,"total_tokens":1210},"last_token_usage":{"input_tokens":100,"cache_read_input_tokens":50,"output_tokens":10,"total_tokens":110}}}}
+            {"timestamp":"2026-08-28T01:02:00Z","model":"gpt-5.5","usage":{"input_tokens":200,"cache_read_input_tokens":80,"output_tokens":20,"total_tokens":220}}
+            """.utf8)
+        )
+        let reader = LocalCodexUsageReader(
+            now: { now },
+            databaseURL: databaseURL,
+            automationFiles: [],
+            diagnostics: testDiagnosticLog(),
+            query: { _, sql in
+                if sql.contains("AS threadCount") {
+                    return Self.json([["threadCount": 1, "lastUpdatedAt": now.timeIntervalSince1970]])
+                }
+                if sql.contains("AS rolloutPath") {
+                    return Self.json([[
+                        "threadID": "current-shapes",
+                        "rolloutPath": sessionURL.path,
+                        "cwd": "/Users/test/CurrentShapes",
+                        "model": "gpt-5.5",
+                        "tokensUsed": 1_430
+                    ]])
+                }
+                return Self.json([])
+            }
+        )
+
+        let loadedSnapshot = await reader.load()
+        let snapshot = try XCTUnwrap(loadedSnapshot)
+
+        XCTAssertEqual(snapshot.summary.todayTokens, 1_430)
+        XCTAssertEqual(snapshot.summary.lifetimeTokens, 1_430)
+        XCTAssertEqual(snapshot.summary.monthCost?.inputTokens, 1_300)
+        XCTAssertEqual(snapshot.summary.monthCost?.cachedInputTokens, 530)
+        XCTAssertEqual(snapshot.summary.monthCost?.outputTokens, 130)
+    }
+
     /// 验证费用按事件当时的模型、历史生效价和长上下文阈值计算，增量刷新也保留模型上下文。
     func testReaderPricesEachTokenEventWithHistoricalModelContext() async throws {
         let now = try XCTUnwrap(ISO8601DateFormatter().date(from: "2026-07-30T12:00:00Z"))

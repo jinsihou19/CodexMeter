@@ -599,7 +599,7 @@ struct LocalCodexUsageReader: Sendable {
         return entry
     }
 
-    /// 解析模型上下文和 token_count；每个增量绑定当时模型，避免用线程最终模型回填历史费用。
+    /// 解析模型上下文、token_count 和无事件包装的 usage；每个增量绑定当时模型。
     private static func parseUsageLine(
         _ data: Data,
         entry: inout SessionUsageCache,
@@ -608,20 +608,33 @@ struct LocalCodexUsageReader: Sendable {
         fractionalTimestampFormatter: ISO8601DateFormatter,
         timestampFormatter: ISO8601DateFormatter
     ) {
-        guard let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let payload = object["payload"] as? [String: Any]
-        else { return }
+        guard let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return }
+        let payload = object["payload"] as? [String: Any]
         if object["type"] as? String == "turn_context" {
-            entry.activeModel = (payload["model"] as? String).flatMap(normalizedModelName)
+            entry.activeModel = (payload?["model"] as? String).flatMap(normalizedModelName)
             return
         }
-        guard object["type"] as? String == "event_msg",
-              let timestamp = object["timestamp"] as? String,
-              payload["type"] as? String == "token_count",
-              let info = payload["info"] as? [String: Any]
-        else { return }
-        let cumulative = (info["total_token_usage"] as? [String: Any]).map(SessionTokenSample.init(json:))
-        let lastUsage = (info["last_token_usage"] as? [String: Any]).map(SessionTokenSample.init(json:))
+        let timestamp: String?
+        let cumulative: SessionTokenSample?
+        let lastUsage: SessionTokenSample?
+        let eventModel: String?
+        if object["type"] as? String == "event_msg",
+           payload?["type"] as? String == "token_count",
+           let info = payload?["info"] as? [String: Any],
+           let eventTimestamp = object["timestamp"] as? String
+        {
+            timestamp = eventTimestamp
+            cumulative = (info["total_token_usage"] as? [String: Any]).map(SessionTokenSample.init(json:))
+            lastUsage = (info["last_token_usage"] as? [String: Any]).map(SessionTokenSample.init(json:))
+            eventModel = entry.activeModel
+        } else if object["type"] == nil, let bareUsage = bareUsage(in: object) {
+            timestamp = object["timestamp"] as? String
+            cumulative = nil
+            lastUsage = bareUsage.sample
+            eventModel = bareUsage.model ?? entry.activeModel
+        } else {
+            return
+        }
         let identity = SessionTokenEventIdentity(cumulative: cumulative, lastUsage: lastUsage)
         guard let delta = normalizedDelta(
             cumulative: cumulative,
@@ -629,12 +642,14 @@ struct LocalCodexUsageReader: Sendable {
             latestTotal: &entry.latestTotal
         ) else { return }
         entry.lifetimeUsage.add(delta)
-        let date = fractionalTimestampFormatter.date(from: timestamp) ?? timestampFormatter.date(from: timestamp)
-        let day = date.map(dayFormatter.string(from:))
+        let date = timestamp.flatMap {
+            fractionalTimestampFormatter.date(from: $0) ?? timestampFormatter.date(from: $0)
+        }
+        let day = date.map(dayFormatter.string(from:)) ?? entry.recentEvents.last?.day
         let event = SessionUsageEvent(
             identity: identity,
             day: day,
-            model: entry.activeModel,
+            model: eventModel,
             usage: delta,
             sequence: entry.nextEventSequence
         )
@@ -643,6 +658,24 @@ struct LocalCodexUsageReader: Sendable {
             entry.events.append(event)
         }
         if day.map({ $0 >= historyDay }) == true { entry.recentEvents.append(event) }
+    }
+
+    /// 从命令行一次性输出的四种规范容器中提取 usage，避免把 prompt 中的任意字段误认为用量。
+    private static func bareUsage(in object: [String: Any]) -> (sample: SessionTokenSample, model: String?)? {
+        let envelopes = [
+            object,
+            object["data"] as? [String: Any],
+            object["result"] as? [String: Any],
+            object["response"] as? [String: Any]
+        ].compactMap { $0 }
+        guard let usage = envelopes.lazy.compactMap({ $0["usage"] as? [String: Any] }).first,
+              let sample = SessionTokenSample(bareJSON: usage)
+        else { return nil }
+        let model = envelopes.lazy.compactMap {
+            ($0["model"] as? String).flatMap(normalizedModelName)
+                ?? ($0["model_name"] as? String).flatMap(normalizedModelName)
+        }.first
+        return (sample, model)
     }
 
     /// 清理日志模型名中的空白；空值保留为 nil，后续才能明确回退到 SQLite 线程模型。
@@ -666,6 +699,9 @@ struct LocalCodexUsageReader: Sendable {
             let current = cumulative.snapshot()
             latestTotal = current
             return lastDelta ?? current.nonzero
+        }
+        if cumulative.looksLikeStaleRegression(comparedWith: previous, lastUsage: lastUsage) {
+            return nil
         }
         if cumulative.isConfirmedReset(comparedWith: previous) {
             let current = cumulative.snapshot()
@@ -1138,8 +1174,28 @@ private struct SessionTokenSample: Codable, Equatable, Sendable {
     /// 从 JSON 保留字段缺失与负值语义，归一化层再决定是否接受该样本。
     init(json: [String: Any]) {
         input = (json["input_tokens"] as? NSNumber)?.int64Value
-        cachedInput = (json["cached_input_tokens"] as? NSNumber)?.int64Value
+        cachedInput = [json["cached_input_tokens"], json["cache_read_input_tokens"]]
+            .compactMap { ($0 as? NSNumber)?.int64Value }
+            .max()
         output = (json["output_tokens"] as? NSNumber)?.int64Value
+        reasoningOutput = (json["reasoning_output_tokens"] as? NSNumber)?.int64Value
+        totalTokens = (json["total_tokens"] as? NSNumber)?.int64Value
+    }
+
+    /// 解析一次性输出的 usage 别名；输入和输出任一缺失时拒绝计数。
+    init?(bareJSON json: [String: Any]) {
+        guard let input = (json["input_tokens"] as? NSNumber)
+            ?? (json["prompt_tokens"] as? NSNumber)
+            ?? (json["input"] as? NSNumber),
+            let output = (json["output_tokens"] as? NSNumber)
+                ?? (json["completion_tokens"] as? NSNumber)
+                ?? (json["output"] as? NSNumber)
+        else { return nil }
+        self.input = input.int64Value
+        cachedInput = [json["cached_input_tokens"], json["cache_read_input_tokens"], json["cached_tokens"]]
+            .compactMap { ($0 as? NSNumber)?.int64Value }
+            .max()
+        self.output = output.int64Value
         reasoningOutput = (json["reasoning_output_tokens"] as? NSNumber)?.int64Value
         totalTokens = (json["total_tokens"] as? NSNumber)?.int64Value
     }
@@ -1162,6 +1218,26 @@ private struct SessionTokenSample: Codable, Equatable, Sendable {
             && input >= 0
             && totalTokens < previous.reportedTotal
             && input < previous.input
+    }
+
+    /// 判定累计值回退是否只是乱序旧事件；近似上一高水位时跳过，不触发计数器重置。
+    func looksLikeStaleRegression(
+        comparedWith previous: SessionTokenUsage,
+        lastUsage: SessionTokenSample?
+    ) -> Bool {
+        let regressed = input.map { $0 < previous.input } == true
+            || cachedInput.map { $0 < previous.cachedInput } == true
+            || output.map { $0 < previous.output } == true
+            || reasoningOutput.map { $0 < previous.reasoningOutput } == true
+        guard regressed,
+              let lastUsage,
+              !lastUsage.hasNegativeValue
+        else { return false }
+        let current = snapshot(missingFrom: previous)
+        let last = lastUsage.snapshot()
+        guard previous.total > 0, current.total > 0, last.total > 0 else { return false }
+        return Double(current.total) >= Double(previous.total) * 0.98
+            || Double(current.total) + Double(last.total) * 2 >= Double(previous.total)
     }
 }
 
@@ -1285,7 +1361,7 @@ private struct SessionUsageCache: Codable, Sendable {
 
 /// 所有 rollout 的持久化增量缓存；时区改变时必须整体重建日期键。
 private struct LocalUsageCache: Codable, Sendable {
-    static let currentVersion = 5
+    static let currentVersion = 6
 
     var version = currentVersion
     let timeZoneIdentifier: String
