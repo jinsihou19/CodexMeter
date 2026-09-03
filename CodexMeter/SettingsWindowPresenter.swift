@@ -70,14 +70,19 @@ final class SettingsWindowPresenter {
     func applyCurrentAppearance() {
         let mode = SurfaceAppearanceSettings(defaults: MenuBarDisplaySettings.sharedDefaults).appearanceMode
         window?.appearance = mode.appKitAppearance
+        window?.backgroundColor = .windowBackgroundColor
         window?.title = AppLocalization.string("CodexMeter 设置")
     }
 
-    /// 创建一次可复用的设置窗口；尺寸与 SwiftUI 根视图保持一致，关闭时不释放。
+    /// 创建可复用的全尺寸内容窗口；保留系统窗口底板，仅由标题栏和侧栏承载 Liquid Glass。
     private func makeWindow() -> NSWindow {
         let settingsWindow = NSWindow(contentViewController: makeContentViewController())
         settingsWindow.title = AppLocalization.string("CodexMeter 设置")
-        settingsWindow.styleMask = [.titled, .closable, .miniaturizable, .resizable]
+        settingsWindow.styleMask = [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView]
+        settingsWindow.titlebarAppearsTransparent = true
+        settingsWindow.titlebarSeparatorStyle = .none
+        settingsWindow.toolbarStyle = .unified
+        settingsWindow.isMovableByWindowBackground = true
         settingsWindow.isReleasedWhenClosed = false
         settingsWindow.setContentSize(NSSize(
             width: SettingsPanelLayout.windowWidth,

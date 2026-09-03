@@ -202,6 +202,7 @@ struct SettingsView: View {
     @AppStorage(PopoverPreferenceKeys.showsTokenActivity, store: MenuBarDisplaySettings.sharedDefaults) private var popoverShowsTokenActivity = PopoverDisplaySettings.defaultShowsTokenActivity
     @AppStorage(PopoverPreferenceKeys.showsActivityInsights, store: MenuBarDisplaySettings.sharedDefaults) private var popoverShowsActivityInsights = PopoverDisplaySettings.defaultShowsActivityInsights
     @AppStorage(PopoverPreferenceKeys.showsTopInvocations, store: MenuBarDisplaySettings.sharedDefaults) private var popoverShowsTopInvocations = PopoverDisplaySettings.defaultShowsTopInvocations
+    @AppStorage(PopoverPreferenceKeys.showsAnalytics, store: MenuBarDisplaySettings.sharedDefaults) private var popoverShowsAnalytics = PopoverDisplaySettings.defaultShowsAnalytics
     @AppStorage(PopoverPreferenceKeys.showsSyncDetails, store: MenuBarDisplaySettings.sharedDefaults) private var popoverShowsSyncDetails = PopoverDisplaySettings.defaultShowsSyncDetails
     @AppStorage(PopoverPreferenceKeys.showsAdditionalLimits, store: MenuBarDisplaySettings.sharedDefaults) private var popoverShowsAdditionalLimits = PopoverDisplaySettings.defaultShowsAdditionalLimits
     @AppStorage(PopoverPreferenceKeys.showsResetCredits, store: MenuBarDisplaySettings.sharedDefaults) private var popoverShowsResetCredits = PopoverDisplaySettings.defaultShowsResetCredits
@@ -231,16 +232,13 @@ struct SettingsView: View {
         themedContent
     }
 
-    /// 强制浅色或深色时覆盖设置页的 SwiftUI 环境，自动模式继续沿用系统外观。
-    @ViewBuilder private var themedContent: some View {
+    /// 把外观偏好应用到整个设置窗口，确保原生分栏创建的独立呈现层使用同一配色。
+    private var themedContent: some View {
         let mode = currentSurfaceAppearanceSettings.appearanceMode
         let language = AppLanguage(rawValue: selectedLanguage) ?? .system
-        let baseContent = content.environment(\.locale, language.locale)
-        if let colorScheme = mode.colorScheme {
-            baseContent.environment(\.colorScheme, colorScheme)
-        } else {
-            baseContent
-        }
+        return content
+            .environment(\.locale, language.locale)
+            .preferredColorScheme(mode.colorScheme)
     }
 
     /// 当前选择直接参与视图渲染，确保切换语言时侧栏和窗口标题同步刷新。
@@ -253,23 +251,26 @@ struct SettingsView: View {
         AppLocalization.string(key, language: activeLanguage)
     }
 
-    /// 使用原生侧栏和分组表单承载八个稳定入口；只重组呈现，不改变设置存储与通知路径。
+    /// 使用原生分栏结构承载设置页，让新系统自动为侧栏和窗口顶部提供 Liquid Glass。
     private var content: some View {
-        HStack(spacing: 0) {
+        NavigationSplitView {
             sidebar
-
-            Divider()
-
+                .navigationSplitViewColumnWidth(
+                    min: SettingsPanelLayout.sidebarWidth,
+                    ideal: SettingsPanelLayout.sidebarWidth,
+                    max: SettingsPanelLayout.sidebarWidth
+                )
+        } detail: {
             contentPane
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         }
+        .navigationSplitViewStyle(.balanced)
         .frame(
             minWidth: 800,
             idealWidth: SettingsPanelLayout.windowWidth,
             minHeight: 560,
             idealHeight: SettingsPanelLayout.windowHeight
         )
-        .background(Color(nsColor: .windowBackgroundColor))
         .onAppear {
             normalizeStoredSettings()
             updateLaunchAtLoginState()
@@ -343,7 +344,6 @@ struct SettingsView: View {
             .buttonStyle(.plain)
             .help(localized("打开关于"))
         }
-        .frame(width: SettingsPanelLayout.sidebarWidth)
     }
 
     /// List 使用可空选择以支持系统侧栏语义，清空选择时仍保留当前页面。
@@ -767,7 +767,7 @@ struct SettingsView: View {
         .scrollContentBackground(.hidden)
     }
 
-    /// 下拉面板按额度、Profiles、本机消耗、雷达和显示分组，明确云端与本机数据边界。
+    /// 下拉面板按额度、云端数据、本机消耗、雷达和显示分组，明确云端与本机数据边界。
     private var popoverPane: some View {
         Form {
             Section(AppLocalization.string("额度与用量")) {
@@ -822,9 +822,9 @@ struct SettingsView: View {
                 )
             }
 
-            Section(AppLocalization.string("Profiles")) {
+            Section(AppLocalization.string("云端数据")) {
                 SettingsToggleRow(
-                    title: "显示 Profile 概览",
+                    title: "显示云端概览",
                     subtitle: "展示累计 Token、峰值、最长任务和连续天数。",
                     isOn: popoverBinding(
                         $popoverShowsProfileOverview,
@@ -848,6 +848,11 @@ struct SettingsView: View {
                     title: "显示最常用插件",
                     subtitle: "展示最近统计里最常用的插件或技能。",
                     isOn: popoverBinding($popoverShowsTopInvocations, key: PopoverPreferenceKeys.showsTopInvocations)
+                )
+                SettingsToggleRow(
+                    title: "显示分析",
+                    subtitle: "展示套餐用量、模型轮次和工具调用趋势。",
+                    isOn: popoverBinding($popoverShowsAnalytics, key: PopoverPreferenceKeys.showsAnalytics)
                 )
             }
 
@@ -1133,6 +1138,7 @@ struct SettingsView: View {
             showsTokenActivity: popoverShowsTokenActivity,
             showsActivityInsights: popoverShowsActivityInsights,
             showsTopInvocations: popoverShowsTopInvocations,
+            showsAnalytics: popoverShowsAnalytics,
             showsSyncDetails: popoverShowsSyncDetails,
             showsAdditionalLimits: popoverShowsAdditionalLimits,
             showsResetCredits: popoverShowsResetCredits,
@@ -1433,6 +1439,7 @@ struct SettingsView: View {
         popoverShowsTokenActivity = popoverSettings.showsTokenActivity
         popoverShowsActivityInsights = popoverSettings.showsActivityInsights
         popoverShowsTopInvocations = popoverSettings.showsTopInvocations
+        popoverShowsAnalytics = popoverSettings.showsAnalytics
         popoverShowsSyncDetails = popoverSettings.showsSyncDetails
         popoverShowsAdditionalLimits = popoverSettings.showsAdditionalLimits
         popoverShowsResetCredits = popoverSettings.showsResetCredits

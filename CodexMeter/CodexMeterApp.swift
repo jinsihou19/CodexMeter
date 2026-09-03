@@ -369,8 +369,13 @@ final class StatusBarController: NSObject {
         ])
     }
 
+    /// 使用系统标准弹窗外观，让 macOS 26 自动提供与系统一致的 Liquid Glass。
     private func configurePopover() {
         popover.behavior = .transient
+        popover.appearance = configuredPopoverAppearance
+        if #available(macOS 26.0, *) {
+            popover.hasFullSizeContent = true
+        }
         popover.contentSize = preferredPopoverSize
         popover.contentViewController = makePopoverContentController()
     }
@@ -419,10 +424,10 @@ final class StatusBarController: NSObject {
         let settings = MenuBarDisplaySettings(defaults: MenuBarDisplaySettings.sharedDefaults)
         applyStatusDisplay(settings: settings)
         resetPopoverSizeAfterContentChange()
+        popover.appearance = configuredPopoverAppearance
         popover.contentViewController = makePopoverContentController()
         popover.contentSize = preferredPopoverSize
         refreshPopoverSizeFromFittingContent(realign: popover.isShown)
-        configurePopoverWindowAppearance()
     }
 
     /// 设置项会增减下拉内容模块；丢弃上一版高度，避免首次打开沿用旧布局留下大块空白。
@@ -501,30 +506,54 @@ final class StatusBarController: NSObject {
     }
 
     private func makePopoverContentController() -> NSViewController {
-        let controller = NSHostingController(
+        let hostingController = NSHostingController(
             rootView: MenuBarView(
                 viewModel: viewModel,
                 radarStore: radarStore,
-                updater: AppUpdater.shared
-            ) { [weak self] size in
-                self?.updatePopoverSize(for: size)
-            }
+                updater: AppUpdater.shared,
+                onSizeChange: { [weak self] size in
+                    self?.updatePopoverSize(for: size)
+                },
+                onColorSchemeChange: { [weak self] colorScheme in
+                    self?.applyPopoverColorScheme(colorScheme)
+                }
+            )
         )
-        controller.view.wantsLayer = true
-        controller.view.layer?.backgroundColor = NSColor.clear.cgColor
-        controller.preferredContentSize = preferredPopoverSize
-        return controller
+        hostingController.preferredContentSize = preferredPopoverSize
+
+        if #available(macOS 26.0, *) {
+            let glassView = NSGlassEffectView()
+            glassView.style = .regular
+            glassView.cornerRadius = 26
+            glassView.contentView = hostingController.view
+
+            let glassController = NSViewController()
+            glassController.addChild(hostingController)
+            glassController.view = glassView
+            glassController.preferredContentSize = preferredPopoverSize
+            return glassController
+        }
+
+        return hostingController
     }
 
-    /// 清掉 AppKit 宿主窗口的默认不透明底色，让 SwiftUI 半透明弹窗背景真正透出桌面内容。
-    private func configurePopoverWindowAppearance() {
-        guard let popoverWindow = popover.contentViewController?.view.window else {
-            return
+    /// 返回设置指定的弹窗外观；浅色使用振动外观，避免 Aqua 在深色背景上增加不透明白膜。
+    private var configuredPopoverAppearance: NSAppearance? {
+        switch SurfaceAppearanceSettings(defaults: MenuBarDisplaySettings.sharedDefaults).appearanceMode {
+        case .automatic:
+            nil
+        case .light:
+            NSAppearance(named: .vibrantLight)
+        case .dark:
+            NSAppearance(named: .darkAqua)
         }
-        popoverWindow.isOpaque = false
-        popoverWindow.backgroundColor = .clear
-        popoverWindow.contentView?.wantsLayer = true
-        popoverWindow.contentView?.layer?.backgroundColor = NSColor.clear.cgColor
+    }
+
+    /// 同步弹窗文字外观；玻璃统一保持 regular，避免 clear 造成过度透射。
+    private func applyPopoverColorScheme(_ colorScheme: ColorScheme) {
+        popover.appearance = NSAppearance(
+            named: colorScheme == .dark ? .darkAqua : .vibrantLight
+        )
     }
 
     /// 接收 SwiftUI 内容实测尺寸，先裁剪到屏幕可用范围，再合并连续变化以避免弹窗抖动。
@@ -609,7 +638,6 @@ final class StatusBarController: NSObject {
             context.allowsImplicitAnimation = false
             popover.contentSize = newSize
             popover.contentViewController?.preferredContentSize = newSize
-            configurePopoverWindowAppearance()
             if realign, popover.isShown, let button = statusItem.button {
                 alignPopoverWindow(to: button)
             }
@@ -629,7 +657,10 @@ final class StatusBarController: NSObject {
             NSApp.activate(ignoringOtherApps: true)
             refreshPopoverSizeFromFittingContent(realign: false)
             popover.show(relativeTo: sender.bounds, of: sender, preferredEdge: .minY)
-            configurePopoverWindowAppearance()
+            if #available(macOS 26.0, *), popover.contentViewController?.view is NSGlassEffectView {
+                popover.contentViewController?.view.window?.isOpaque = false
+                popover.contentViewController?.view.window?.backgroundColor = .clear
+            }
             alignPopoverWindow(to: sender)
             activatePopoverWindow()
             Task { await viewModel.refreshLocalCodexUsage() }
@@ -653,11 +684,10 @@ final class StatusBarController: NSObject {
         popoverWindow.setFrame(alignedFrame, display: true)
     }
 
+    /// 在弹窗首帧前完成激活，避免系统材质从非活动态闪变到活动态。
     private func activatePopoverWindow() {
-        DispatchQueue.main.async { [weak self] in
-            NSApp.activate(ignoringOtherApps: true)
-            self?.popover.contentViewController?.view.window?.makeKey()
-        }
+        NSApp.activate(ignoringOtherApps: true)
+        popover.contentViewController?.view.window?.makeKey()
     }
 }
 

@@ -666,6 +666,7 @@ final class UsageViewModelTests: XCTestCase {
         defaults.set(false, forKey: PopoverPreferenceKeys.showsLocalOverview)
         defaults.set(false, forKey: PopoverPreferenceKeys.showsLocalTrend)
         defaults.set(false, forKey: PopoverPreferenceKeys.showsLocalProjects)
+        defaults.set(false, forKey: PopoverPreferenceKeys.showsAnalytics)
 
         let widgetSettings = WidgetDisplaySettings(defaults: defaults)
         let surfaceSettings = SurfaceAppearanceSettings(defaults: defaults)
@@ -696,7 +697,9 @@ final class UsageViewModelTests: XCTestCase {
         XCTAssertFalse(popoverSettings.showsLocalTrend)
         XCTAssertFalse(popoverSettings.showsLocalProjects)
         XCTAssertFalse(popoverSettings.showsAnyLocalSection)
+        XCTAssertFalse(popoverSettings.showsAnalytics)
         XCTAssertTrue(PopoverDisplaySettings().showsResetCredits)
+        XCTAssertTrue(PopoverDisplaySettings().showsAnalytics)
         XCTAssertFalse(PopoverDisplaySettings().showsTopInvocations)
         XCTAssertFalse(PopoverDisplaySettings().showsSyncDetails)
         XCTAssertFalse(PopoverDisplaySettings().showsLocalOverview)

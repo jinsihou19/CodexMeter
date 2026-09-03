@@ -54,8 +54,7 @@ struct CodexRadarSection: View {
                 }
             }
             .padding(5)
-            .background(Color(nsColor: .controlBackgroundColor).opacity(0.46))
-            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .popoverCardSurface(opacity: 0.46)
         }
     }
 

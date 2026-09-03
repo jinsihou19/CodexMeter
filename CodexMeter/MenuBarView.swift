@@ -34,6 +34,32 @@ private enum TokenActivityMode: String, CaseIterable, Identifiable {
     }
 }
 
+/// 定义分析卡片的三个官方统计口径，窗口长度与 Codex 分析页保持一致。
+private enum CodexAnalyticsMode: String, CaseIterable, Identifiable {
+    case packageUsage
+    case productActivity
+    case toolActivity
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .packageUsage: "套餐"
+        case .productActivity: "轮次"
+        case .toolActivity: "工具"
+        }
+    }
+
+    /// 从完整分析快照中选择当前图表数据。
+    func buckets(from snapshot: CodexAnalyticsSnapshot) -> [CodexAnalyticsDailyBucket] {
+        switch self {
+        case .packageUsage: snapshot.packageUsage
+        case .productActivity: snapshot.productActivity
+        case .toolActivity: snapshot.toolActivity
+        }
+    }
+}
+
 /// 定义本机热力图的聚合口径，三种模式共享同一份逐日本机数据。
 private enum LocalUsageHeatmapMode: String, CaseIterable, Identifiable {
     case daily
@@ -61,15 +87,18 @@ private func currentAppLanguage() -> AppLanguage {
 }
 
 struct MenuBarView: View {
+    @Environment(\.colorScheme) private var systemColorScheme
     @ObservedObject var viewModel: UsageViewModel
     @ObservedObject var radarStore: CodexRadarStore
     @ObservedObject var updater: AppUpdater
     let onSizeChange: ((CGSize) -> Void)?
+    let onColorSchemeChange: ((ColorScheme) -> Void)?
     @State private var activityMode = TokenActivityMode.daily
     @State private var measuredScrollContentHeight: CGFloat = 0
     // 重建后首帧先使用安全的可滚动容器，避免未完成测量的长内容溢出弹窗。
     @State private var usesScrollableContent = true
     @State private var activePaceHelpText: String?
+    @State private var popoverColorSchemeOverride: ColorScheme?
     @AppStorage(AppLanguagePreferenceKeys.selectedLanguage, store: MenuBarDisplaySettings.sharedDefaults) private var selectedLanguage = AppLanguage.system.rawValue
     private var formatter: UsageFormatter {
         UsageFormatter(language: currentAppLanguage())
@@ -87,16 +116,24 @@ struct MenuBarView: View {
         SurfaceAppearanceSettings(defaults: MenuBarDisplaySettings.sharedDefaults)
     }
 
+    /// 返回弹窗当前实际使用的主题；临时选择优先，其次跟随设置和系统外观。
+    private var effectivePopoverColorScheme: ColorScheme {
+        popoverColorSchemeOverride ?? appearanceSettings.appearanceMode.colorScheme ?? systemColorScheme
+    }
+
+    /// 创建弹窗内容，并把尺寸与主题变化同步给 AppKit 宿主。
     init(
         viewModel: UsageViewModel,
         radarStore: CodexRadarStore,
         updater: AppUpdater = .shared,
-        onSizeChange: ((CGSize) -> Void)? = nil
+        onSizeChange: ((CGSize) -> Void)? = nil,
+        onColorSchemeChange: ((ColorScheme) -> Void)? = nil
     ) {
         self.viewModel = viewModel
         self.radarStore = radarStore
         self.updater = updater
         self.onSizeChange = onSizeChange
+        self.onColorSchemeChange = onColorSchemeChange
     }
 
     var body: some View {
@@ -106,20 +143,23 @@ struct MenuBarView: View {
     /// 将弹窗内容包在全局外观层中，确保设置页的明暗和透明度立即影响下拉框。
     @ViewBuilder private var themedBody: some View {
         let activeAppearance = appearanceSettings
+        let activeColorScheme = effectivePopoverColorScheme
         let language = AppLanguage(rawValue: selectedLanguage) ?? .system
-        let baseContent = contentBody
+        contentBody
             .environment(\.locale, language.locale)
+            .environment(\.colorScheme, activeColorScheme)
             .background(
                 PopoverSurfaceBackground(
-                    appearanceMode: activeAppearance.appearanceMode,
+                    appearanceMode: activeColorScheme == .dark ? .dark : .light,
                     opacity: activeAppearance.cardOpacity
                 )
             )
-        if let colorScheme = activeAppearance.appearanceMode.colorScheme {
-            baseContent.environment(\.colorScheme, colorScheme)
-        } else {
-            baseContent
-        }
+            .onReceive(NotificationCenter.default.publisher(for: .surfaceAppearanceSettingsDidChange)) { _ in
+                popoverColorSchemeOverride = nil
+            }
+            .onChange(of: activeColorScheme, initial: true) { _, colorScheme in
+                onColorSchemeChange?(colorScheme)
+            }
     }
 
     private var contentBody: some View {
@@ -225,6 +265,17 @@ struct MenuBarView: View {
             if let snapshot = viewModel.snapshot {
                 MenuBarAccountSummary(snapshot: snapshot)
             }
+            Button {
+                popoverColorSchemeOverride = effectivePopoverColorScheme == .dark ? .light : .dark
+            } label: {
+                Image(systemName: effectivePopoverColorScheme == .dark ? "moon.fill" : "sun.max.fill")
+                    .symbolRenderingMode(.hierarchical)
+                    .frame(width: 22, height: 22)
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(.secondary)
+            .help(AppLocalization.usesEnglish() ? "Toggle popover theme" : "切换下拉框主题")
+            .accessibilityLabel(AppLocalization.usesEnglish() ? "Toggle popover theme" : "切换下拉框主题")
         }
     }
 
@@ -453,13 +504,24 @@ private struct PopoverSurfaceBackground: View {
     let appearanceMode: SurfaceAppearanceMode
     let opacity: Double
 
-    var body: some View {
-        Rectangle()
-            .fill(backgroundColor.opacity(SurfaceAppearanceSettings.normalizedCardOpacity(opacity)))
+    /// 新系统由 AppKit 原生玻璃宿主绘制；旧系统保留中性材质回退。
+    @ViewBuilder var body: some View {
+        if #available(macOS 26.0, *) {
+            Color.clear
+        } else {
+            ZStack {
+                Rectangle().fill(.ultraThinMaterial)
+                Rectangle().fill(
+                    effectiveColorScheme == .light
+                        ? .white.opacity(normalizedOpacity * 0.10)
+                        : .black.opacity(normalizedOpacity * 0.12)
+                )
+            }
+        }
     }
 
-    private var backgroundColor: Color {
-        effectiveColorScheme == .dark ? .black : .white
+    private var normalizedOpacity: Double {
+        SurfaceAppearanceSettings.normalizedCardOpacity(opacity)
     }
 
     private var effectiveColorScheme: ColorScheme {
@@ -551,8 +613,7 @@ private struct GeminiModelsSection: View {
             }
         }
         .padding(8)
-        .background(Color(nsColor: .controlBackgroundColor).opacity(0.46))
-        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .popoverCardSurface(opacity: 0.46)
     }
 
     /// 按选择的配额组过滤窗口；摘要接口只有总 Gemini 组时仍保留真实返回的数据。
@@ -808,8 +869,7 @@ private struct QuotaSummaryCard: View {
         .padding(8)
         .fixedSize(horizontal: false, vertical: true)
         .frame(maxWidth: .infinity, alignment: .topLeading)
-        .background(Color(nsColor: .controlBackgroundColor).opacity(0.55))
-        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .popoverCardSurface(opacity: 0.55)
     }
 
     /// 将共享用量文案压缩为卡片底部短标签，并按当前语言切换前缀。
@@ -1699,6 +1759,198 @@ private struct ResetCreditRow: View {
     }
 }
 
+/// 在菜单窗口用一张可切换卡片展示官方分析页的套餐、轮次和插件活动。
+private struct CodexAnalyticsSection: View {
+    let snapshot: CodexAnalyticsSnapshot
+    @State private var mode = CodexAnalyticsMode.packageUsage
+
+    var body: some View {
+        let buckets = mode.buckets(from: snapshot)
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Label(AppLocalization.string("分析"), systemImage: "chart.xyaxis.line")
+                    .font(.caption.weight(.semibold))
+                Spacer()
+                Picker("", selection: $mode) {
+                    ForEach(CodexAnalyticsMode.allCases) { item in
+                        Text(AppLocalization.string(item.title)).tag(item)
+                    }
+                }
+                .labelsHidden()
+                .pickerStyle(.segmented)
+                .frame(width: 156)
+            }
+
+            if mode != .packageUsage {
+                HStack(alignment: .firstTextBaseline) {
+                    Text("7 \(AppLocalization.string("天"))")
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                    Text(String(format: "%.0f", buckets.reduce(0) { $0 + $1.total }))
+                        .fontWeight(.semibold)
+                        .monospacedDigit()
+                }
+                .font(.caption2)
+            }
+
+            CodexAnalyticsChart(
+                buckets: buckets,
+                colors: analyticsColors,
+                usesPercentUnit: mode == .packageUsage
+            )
+                .id(mode)
+
+            Label(AppLocalization.string("分析数据最多延迟 6 小时"), systemImage: "info.circle")
+                .font(.caption2)
+                .foregroundStyle(.tertiary)
+        }
+        .menuSectionCard(padding: 8)
+    }
+
+    /// 复用项目统一图表色，总量最高的系列固定使用暖橙主题色。
+    private var analyticsColors: [Color] {
+        [
+            CodexMeterChartPalette.primary,
+            CodexMeterChartPalette.tokenCachedInput,
+            CodexMeterChartPalette.tokenOutput,
+            Color.secondary
+        ]
+    }
+
+}
+
+/// 绘制按模型或工具堆叠的紧凑日柱图，最多单列三个主要系列并合并其余项。
+private struct CodexAnalyticsChart: View {
+    let buckets: [CodexAnalyticsDailyBucket]
+    let colors: [Color]
+    let usesPercentUnit: Bool
+    @State private var selectedDate: String?
+    private let otherKey = "__other__"
+
+    var body: some View {
+        let keys = visibleKeys
+        let maximum = max(1, buckets.map { normalizedTotal($0, keys: keys) }.max() ?? 1)
+        VStack(alignment: .leading, spacing: 5) {
+            if keys.isEmpty {
+                Text(AppLocalization.string("暂无数据"))
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+                    .frame(maxWidth: .infinity, minHeight: 52)
+            } else {
+                GeometryReader { geometry in
+                    HStack(alignment: .bottom, spacing: buckets.count > 10 ? 2 : 5) {
+                        ForEach(buckets) { bucket in
+                            VStack(spacing: 0) {
+                                ForEach(Array(keys.enumerated()), id: \.element) { index, key in
+                                    Rectangle()
+                                        .fill(colors[index % colors.count])
+                                        .frame(height: geometry.size.height * CGFloat(value(for: key, in: bucket) / maximum))
+                                }
+                            }
+                            .opacity(activeBucket.id == bucket.id ? 1 : 0.72)
+                            .frame(maxWidth: .infinity, alignment: .bottom)
+                            .overlay {
+                                if activeBucket.id == bucket.id {
+                                    RoundedRectangle(cornerRadius: 2)
+                                        .stroke(colors[0], lineWidth: 1)
+                                }
+                            }
+                            .contentShape(Rectangle())
+                            .onHover { hovering in
+                                if hovering { selectedDate = bucket.date }
+                            }
+                            .onTapGesture { selectedDate = bucket.date }
+                            .help(tooltip(for: bucket, keys: keys))
+                        }
+                    }
+                }
+                .frame(height: 52)
+
+                selectedDetails(keys: keys)
+            }
+        }
+        .animation(.easeOut(duration: 0.12), value: selectedDate)
+    }
+
+    /// 展示选中日期的合计与各系列数值，同时承担图例职责。
+    private func selectedDetails(keys: [String]) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            HStack {
+                Text(activeBucket.date)
+                    .foregroundStyle(.secondary)
+                Spacer()
+                Text(formattedValue(normalizedTotal(activeBucket, keys: keys)))
+                    .fontWeight(.semibold)
+            }
+            .font(.caption2.monospacedDigit())
+
+            LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], alignment: .leading, spacing: 3) {
+                ForEach(Array(keys.enumerated()), id: \.element) { index, key in
+                    HStack(spacing: 4) {
+                        Circle().fill(colors[index % colors.count]).frame(width: 5, height: 5)
+                        Text(displayName(key)).lineLimit(1)
+                        Spacer(minLength: 2)
+                        Text(formattedValue(value(for: key, in: activeBucket)))
+                            .monospacedDigit()
+                    }
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                }
+            }
+        }
+    }
+
+    /// 整数计数不显示小数，套餐用量保留必要小数并补充百分号。
+    private func formattedValue(_ value: Double) -> String {
+        let number = value.rounded() == value ? String(format: "%.0f", value) : String(format: "%.1f", value)
+        return usesPercentUnit ? "\(number)%" : number
+    }
+
+    /// 默认选中总量最高的日期；悬停或点击后保留用户选择。
+    private var activeBucket: CodexAnalyticsDailyBucket {
+        buckets.first { $0.date == selectedDate }
+            ?? buckets.max { $0.total < $1.total }
+            ?? buckets.last
+            ?? CodexAnalyticsDailyBucket(date: "--", values: [:])
+    }
+
+    /// 选取总量最高的三个系列，并在需要时追加“其他”。
+    private var visibleKeys: [String] {
+        var totals: [String: Double] = [:]
+        for bucket in buckets {
+            for (key, value) in bucket.values { totals[key, default: 0] += value }
+        }
+        let sorted = totals.keys.sorted { totals[$0, default: 0] > totals[$1, default: 0] }
+        return Array(sorted.prefix(3)) + (sorted.count > 3 ? [otherKey] : [])
+    }
+
+    /// 返回某天指定可见系列的值，“其他”汇总未进入前三的系列。
+    private func value(for key: String, in bucket: CodexAnalyticsDailyBucket) -> Double {
+        if key != otherKey { return bucket.values[key, default: 0] }
+        let primaryKeys = Set(visibleKeys.filter { $0 != otherKey })
+        return bucket.values.filter { !primaryKeys.contains($0.key) }.reduce(0) { $0 + $1.value }
+    }
+
+    /// 返回某天参与绘图的总值。
+    private func normalizedTotal(_ bucket: CodexAnalyticsDailyBucket, keys: [String]) -> Double {
+        keys.reduce(0) { $0 + value(for: $1, in: bucket) }
+    }
+
+    /// 生成柱状图悬停明细，不展示零值系列。
+    private func tooltip(for bucket: CodexAnalyticsDailyBucket, keys: [String]) -> String {
+        let values = keys.compactMap { key -> String? in
+            let value = value(for: key, in: bucket)
+            return value > 0 ? "\(displayName(key)) \(formattedValue(value))" : nil
+        }
+        return ([bucket.date] + values).joined(separator: " · ")
+    }
+
+    /// 把内部聚合键转换成用户可见名称。
+    private func displayName(_ key: String) -> String {
+        key == otherKey ? AppLocalization.string("其他") : key
+    }
+}
+
 private struct ProfileStatsSection: View {
     let stats: CodexProfileStats
     @Binding var activityMode: TokenActivityMode
@@ -1707,7 +1959,7 @@ private struct ProfileStatsSection: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            SectionTitle("Profile")
+            SectionTitle("云端数据")
 
             if popoverSettings.showsProfileOverview {
                 LazyVGrid(columns: metricColumns, alignment: .leading, spacing: 6) {
@@ -1725,6 +1977,10 @@ private struct ProfileStatsSection: View {
                     activityMode: $activityMode,
                     formatter: formatter
                 )
+            }
+
+            if popoverSettings.showsAnalytics, let analytics = stats.analytics, analytics.hasData {
+                CodexAnalyticsSection(snapshot: analytics)
             }
 
             if popoverSettings.showsActivityInsights {
@@ -1807,8 +2063,7 @@ private struct TokenActivitySection: View {
             TokenActivityChart(buckets: activityMode.buckets(from: stats), formatter: formatter)
         }
         .padding(5)
-        .background(Color(nsColor: .controlBackgroundColor).opacity(0.52))
-        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .popoverCardSurface(opacity: 0.52)
     }
 }
 
@@ -2017,18 +2272,47 @@ private struct MenuBarSizePreferenceKey: PreferenceKey {
     }
 }
 
-private extension View {
+extension View {
+    /// 在浅色主题中使用系统玻璃材质，深色主题保持现有卡片对比度。
+    func popoverCardSurface(opacity: Double) -> some View {
+        modifier(PopoverCardSurfaceModifier(opacity: opacity))
+    }
+
+    /// 为弹窗区块统一添加内边距和卡片材质。
     func menuSectionCard(padding: CGFloat) -> some View {
         self
             .padding(padding)
-            .background(Color(nsColor: .controlBackgroundColor).opacity(0.46))
-            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .popoverCardSurface(opacity: 0.46)
+    }
+}
+
+/// 统一菜单卡片的中性分隔样式，玻璃只由弹窗根层绘制一次。
+struct PopoverCardSurfaceModifier: ViewModifier {
+    @Environment(\.colorScheme) private var colorScheme
+    let opacity: Double
+
+    /// 浅色卡片只加中性暗部边界，避免多层白色覆盖吞掉背景透射。
+    func body(content: Content) -> some View {
+        let shape = RoundedRectangle(cornerRadius: 8, style: .continuous)
+        return content
+            .background(
+                colorScheme == .light
+                    ? Color.black.opacity(opacity * 0.05)
+                    : Color.black.opacity(opacity * 0.12),
+                in: shape
+            )
+            .overlay(
+                shape.stroke(
+                    colorScheme == .light ? .black.opacity(0.08) : .white.opacity(0.14),
+                    lineWidth: 0.5
+                )
+            )
     }
 }
 
 private extension PopoverDisplaySettings {
-    /// Profile 数据分成多个模块显示；全部关闭时整块 Profile 区域都隐藏。
+    /// 云端数据分成多个模块显示；全部关闭时整块区域都隐藏。
     var showsAnyProfileSection: Bool {
-        showsProfileOverview || showsTokenActivity || showsActivityInsights || showsTopInvocations
+        showsProfileOverview || showsTokenActivity || showsActivityInsights || showsTopInvocations || showsAnalytics
     }
 }

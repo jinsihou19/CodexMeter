@@ -956,6 +956,11 @@ public enum AppLocalization {
         "显示账户摘要": "Show Account Summary",
         "在标题栏右侧显示账户邮箱和可读套餐标签。": "Show the account email and plan label in the header.",
         "用量": "Usage",
+        "分析": "Analytics",
+        "套餐": "Plan",
+        "轮次": "Turns",
+        "工具": "Tools",
+        "分析数据最多延迟 6 小时": "Analytics may be delayed by up to 6 hours",
         "显示用量速度": "Show Usage Pace",
         "展示当前用量相对预期节奏是偏快还是有余量。": "Show whether usage is ahead of or below the expected pace.",
         "显示额外额度": "Show Additional Limits",
@@ -964,13 +969,15 @@ public enum AppLocalization {
         "半年活跃": "6-Month Activity",
         "Token 构成": "Token Mix",
         "剩余": "Remaining",
-        "显示 Profile 概览": "Show Profile Overview",
+        "云端数据": "Cloud Data",
+        "显示云端概览": "Show Cloud Overview",
         "展示累计 Token、峰值、最长任务和连续天数。": "Show lifetime tokens, peak usage, longest task, and streak.",
         "显示 Token 活动": "Show Token Activity",
         "展示每日、每周和累计 Token 活动柱状图。": "Show daily, weekly, and lifetime token activity charts.",
         "显示额度重置卡": "Show Reset Credits",
         "在额度与用量中显示可用重置卡数量和到期时间。": "Show available reset credits and expiry under quota and usage.",
-        "Profiles": "Profiles",
+        "显示分析": "Show Analytics",
+        "展示套餐用量、模型轮次和工具调用趋势。": "Show plan usage, model turns, and tool activity trends.",
         "本机消耗与成本": "Local Usage & Cost",
         "显示概览": "Show Overview",
         "展示本机 Token、费用构成和项目消耗排行。": "Show local tokens, cost mix, and project usage rankings.",
@@ -1286,6 +1293,7 @@ public enum PopoverPreferenceKeys {
     public static let showsTokenActivity = "popover.showsTokenActivity"
     public static let showsActivityInsights = "popover.showsActivityInsights"
     public static let showsTopInvocations = "popover.showsTopInvocations"
+    public static let showsAnalytics = "popover.showsAnalytics"
     public static let showsSyncDetails = "popover.showsSyncDetails"
     public static let showsAdditionalLimits = "popover.showsAdditionalLimits"
     public static let showsResetCredits = "popover.showsResetCredits"
@@ -1302,6 +1310,7 @@ public enum PopoverPreferenceKeys {
         showsTokenActivity,
         showsActivityInsights,
         showsTopInvocations,
+        showsAnalytics,
         showsSyncDetails,
         showsAdditionalLimits,
         showsResetCredits,
@@ -1640,6 +1649,7 @@ public struct PopoverDisplaySettings: Equatable, Sendable {
     public static let defaultShowsTokenActivity = true
     public static let defaultShowsActivityInsights = true
     public static let defaultShowsTopInvocations = false
+    public static let defaultShowsAnalytics = true
     public static let defaultShowsSyncDetails = false
     public static let defaultShowsAdditionalLimits = false
     public static let defaultShowsResetCredits = true
@@ -1653,6 +1663,7 @@ public struct PopoverDisplaySettings: Equatable, Sendable {
     public let showsTokenActivity: Bool
     public let showsActivityInsights: Bool
     public let showsTopInvocations: Bool
+    public let showsAnalytics: Bool
     public let showsSyncDetails: Bool
     public let showsAdditionalLimits: Bool
     public let showsResetCredits: Bool
@@ -1667,6 +1678,7 @@ public struct PopoverDisplaySettings: Equatable, Sendable {
         showsTokenActivity: Bool = Self.defaultShowsTokenActivity,
         showsActivityInsights: Bool = Self.defaultShowsActivityInsights,
         showsTopInvocations: Bool = Self.defaultShowsTopInvocations,
+        showsAnalytics: Bool = Self.defaultShowsAnalytics,
         showsSyncDetails: Bool = Self.defaultShowsSyncDetails,
         showsAdditionalLimits: Bool = Self.defaultShowsAdditionalLimits,
         showsResetCredits: Bool = Self.defaultShowsResetCredits,
@@ -1680,6 +1692,7 @@ public struct PopoverDisplaySettings: Equatable, Sendable {
         self.showsTokenActivity = showsTokenActivity
         self.showsActivityInsights = showsActivityInsights
         self.showsTopInvocations = showsTopInvocations
+        self.showsAnalytics = showsAnalytics
         self.showsSyncDetails = showsSyncDetails
         self.showsAdditionalLimits = showsAdditionalLimits
         self.showsResetCredits = showsResetCredits
@@ -1704,6 +1717,8 @@ public struct PopoverDisplaySettings: Equatable, Sendable {
                 ?? Self.defaultShowsActivityInsights,
             showsTopInvocations: defaults.object(forKey: PopoverPreferenceKeys.showsTopInvocations) as? Bool
                 ?? Self.defaultShowsTopInvocations,
+            showsAnalytics: defaults.object(forKey: PopoverPreferenceKeys.showsAnalytics) as? Bool
+                ?? Self.defaultShowsAnalytics,
             showsSyncDetails: defaults.object(forKey: PopoverPreferenceKeys.showsSyncDetails) as? Bool
                 ?? Self.defaultShowsSyncDetails,
             showsAdditionalLimits: additionalLimits,

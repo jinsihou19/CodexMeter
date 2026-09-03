@@ -166,6 +166,31 @@ final class DirectCodexUsageClientTests: XCTestCase {
               }
             }
             """,
+            "/backend-api/wham/usage/daily-token-usage-breakdown": """
+            {
+              "units": "percent",
+              "data": [
+                {"date": "2026-06-18", "models": [{"model": "gpt-5.6-sol", "credits": 12.5}]},
+                {"date": "2026-06-19", "models": [{"model": "gpt-5.6-terra", "credits": 7}]}
+              ]
+            }
+            """,
+            "/backend-api/wham/analytics/daily-workspace-usage-counts": """
+            {
+              "data": [
+                {"date": "2026-06-19", "models": [{"model": "gpt-5.6-sol", "turns": 9}]},
+                {"date": "2026-06-20", "totals": {"turns": 5}, "models": null}
+              ]
+            }
+            """,
+            "/backend-api/wham/analytics/daily-plugin-usage-metrics": """
+            {
+              "data_freshness_ts": "2026-06-19T00:00:00Z",
+              "data": [
+                {"date": "2026-06-19", "plugin_usage_overviews": [{"display_name": "GitHub", "invocation_counts": 4}]}
+              ]
+            }
+            """,
             "/backend-api/wham/rate-limit-reset-credits": """
             {
               "available_count": 2,
@@ -208,6 +233,10 @@ final class DirectCodexUsageClientTests: XCTestCase {
         XCTAssertEqual(snapshot.profileStats?.latestDailyTokens, 2_000)
         XCTAssertEqual(snapshot.profileStats?.recentDailyTokens, 3_000)
         XCTAssertEqual(snapshot.profileStats?.topInvocations.first?.displayName, "superpowers")
+        XCTAssertEqual(snapshot.profileStats?.analytics?.packageUsage.last?.values["gpt-5.6-terra"], 7)
+        XCTAssertEqual(snapshot.profileStats?.analytics?.productActivity.first?.values["gpt-5.6-sol"], 9)
+        XCTAssertEqual(snapshot.profileStats?.analytics?.productActivity.last?.values["其他"], 5)
+        XCTAssertEqual(snapshot.profileStats?.analytics?.toolActivity.first?.values["GitHub"], 4)
         XCTAssertEqual(snapshot.resetCredits?.availableCount, 2)
         XCTAssertEqual(snapshot.resetCredits?.credits.count, 2)
         XCTAssertEqual(snapshot.resetCredits?.credits.first?.localizedStatus, "可用")
@@ -215,8 +244,15 @@ final class DirectCodexUsageClientTests: XCTestCase {
         XCTAssertEqual(Set(recorder.requestURLs.map(\.path)), [
             "/backend-api/wham/usage",
             "/backend-api/wham/profiles/me",
+            "/backend-api/wham/usage/daily-token-usage-breakdown",
+            "/backend-api/wham/analytics/daily-workspace-usage-counts",
+            "/backend-api/wham/analytics/daily-plugin-usage-metrics",
             "/backend-api/wham/rate-limit-reset-credits"
         ])
+        XCTAssertEqual(
+            recorder.headerValue("ChatGPT-Account-ID", forPath: "/backend-api/wham/usage/daily-token-usage-breakdown"),
+            "account-123"
+        )
         XCTAssertEqual(recorder.headerValue("OpenAI-Beta", forPath: "/backend-api/wham/rate-limit-reset-credits"), "codex-1")
         XCTAssertEqual(recorder.headerValue("originator", forPath: "/backend-api/wham/rate-limit-reset-credits"), "Codex Desktop")
         XCTAssertEqual(recorder.headerValue("ChatGPT-Account-ID", forPath: "/backend-api/wham/rate-limit-reset-credits"), "account-123")

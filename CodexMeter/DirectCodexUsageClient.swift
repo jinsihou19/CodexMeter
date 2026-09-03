@@ -69,6 +69,10 @@ struct DirectCodexUsageClient: UsageRateLimitFetching {
         let authContext = try loadAuthContext()
         async let usageResponse = fetchUsageResponse(accessToken: authContext.accessToken)
         async let profileStats = fetchProfileStatsIfAvailable(accessToken: authContext.accessToken)
+        async let analytics = fetchAnalyticsIfAvailable(
+            accessToken: authContext.accessToken,
+            accountID: authContext.accountID
+        )
         let fetchedUsageResponse = try await usageResponse
         let fetchedRateLimits = fetchedUsageResponse.codexSnapshot
         let inlineResetCredits = fetchedUsageResponse.resetCredits?.resetCreditsSnapshot
@@ -83,11 +87,12 @@ struct DirectCodexUsageClient: UsageRateLimitFetching {
             planType: authContext.planType ?? fetchedRateLimits.planType
         )
 
+        let fetchedProfileStats = await profileStats
         return UsageSnapshot(
             fetchedAt: Date(),
             rateLimits: fetchedRateLimits,
             account: account.isEmpty ? nil : account,
-            profileStats: await profileStats,
+            profileStats: fetchedProfileStats?.withAnalytics(await analytics),
             resetCredits: resetCredits
         )
     }
@@ -174,6 +179,99 @@ struct DirectCodexUsageClient: UsageRateLimitFetching {
         } catch {
             throw DirectCodexUsageClientError.network(error.localizedDescription)
         }
+    }
+
+    /// 并发读取分析页的套餐、轮次和插件活动；任一接口失败只丢弃对应图表。
+    private func fetchAnalyticsIfAvailable(
+        accessToken: String,
+        accountID: String?
+    ) async -> CodexAnalyticsSnapshot? {
+        async let packageResponse: WhamDailyTokenUsageResponse? = analyticsResponse(
+            path: "/wham/usage/daily-token-usage-breakdown",
+            days: 30,
+            accessToken: accessToken,
+            accountID: accountID
+        )
+        async let activityResponse: WhamDailyActivityResponse? = analyticsResponse(
+            path: "/wham/analytics/daily-workspace-usage-counts",
+            days: 7,
+            extraQueryItems: [URLQueryItem(name: "workspace_user", value: "true")],
+            accessToken: accessToken,
+            accountID: accountID
+        )
+        async let toolResponse: WhamDailyPluginUsageResponse? = analyticsResponse(
+            path: "/wham/analytics/daily-plugin-usage-metrics",
+            days: 7,
+            extraQueryItems: [
+                URLQueryItem(name: "top_plugin_limit", value: "100"),
+                URLQueryItem(name: "workspace_user", value: "true")
+            ],
+            accessToken: accessToken,
+            accountID: accountID
+        )
+
+        let snapshot = CodexAnalyticsSnapshot(
+            packageUsage: await packageResponse?.analyticsBuckets ?? [],
+            productActivity: await activityResponse?.analyticsBuckets ?? [],
+            toolActivity: await toolResponse?.analyticsBuckets ?? []
+        )
+        return snapshot.hasData ? snapshot : nil
+    }
+
+    /// 请求单个分析接口；HTTP 或解析失败返回 nil，不能阻断额度主请求。
+    private func analyticsResponse<Response: Decodable>(
+        path: String,
+        days: Int,
+        extraQueryItems: [URLQueryItem] = [],
+        accessToken: String,
+        accountID: String?
+    ) async -> Response? {
+        guard let url = analyticsURL(path: path, days: days, extraQueryItems: extraQueryItems) else {
+            return nil
+        }
+        var request = authenticatedRequest(url: url, accessToken: accessToken)
+        if let accountID, !accountID.isEmpty {
+            request.setValue(accountID, forHTTPHeaderField: "ChatGPT-Account-ID")
+        }
+        do {
+            let (data, response) = try await transport(request)
+            guard (200..<300).contains(response.statusCode) else { return nil }
+            return try JSONDecoder().decode(Response.self, from: data)
+        } catch {
+            return nil
+        }
+    }
+
+    /// 基于已配置的用量接口主机生成 UTC 日期范围，测试环境也会自动沿用替代主机。
+    private func analyticsURL(
+        path: String,
+        days: Int,
+        extraQueryItems: [URLQueryItem]
+    ) -> URL? {
+        guard days > 0, var components = URLComponents(url: endpointURL, resolvingAgainstBaseURL: false) else {
+            return nil
+        }
+        let backendPath = components.path.range(of: "/wham/").map { String(components.path[..<$0.lowerBound]) }
+            ?? "/backend-api"
+        components.path = backendPath + path
+
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(secondsFromGMT: 0)!
+        let endDate = currentDate()
+        guard let startDate = calendar.date(byAdding: .day, value: 1 - days, to: endDate) else {
+            return nil
+        }
+        let formatter = DateFormatter()
+        formatter.calendar = calendar
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = calendar.timeZone
+        formatter.dateFormat = "yyyy-MM-dd"
+        components.queryItems = [
+            URLQueryItem(name: "start_date", value: formatter.string(from: startDate)),
+            URLQueryItem(name: "end_date", value: formatter.string(from: endDate)),
+            URLQueryItem(name: "group_by", value: "day")
+        ] + extraQueryItems
+        return components.url
     }
 
     /// 请求额度重置卡接口，并把接口返回的可用数量和每张卡生命周期转成共享快照。
@@ -755,6 +853,136 @@ private struct WhamResetCredit: Decodable {
 
 private struct WhamProfileResponse: Decodable {
     let stats: WhamProfileStats?
+}
+
+/// 对应个人套餐用量接口的逐日模型拆分。
+private struct WhamDailyTokenUsageResponse: Decodable {
+    let data: [WhamDailyTokenUsage]
+
+    /// 合并同日同模型数据，保留接口返回的套餐用量单位。
+    var analyticsBuckets: [CodexAnalyticsDailyBucket] {
+        data.map { day in
+            CodexAnalyticsDailyBucket(
+                date: day.date,
+                values: day.models.reduce(into: [:]) { result, model in
+                    result[model.model, default: 0] += model.credits
+                }
+            )
+        }
+    }
+}
+
+/// 保存套餐用量接口的一天数据。
+private struct WhamDailyTokenUsage: Decodable {
+    let date: String
+    let models: [WhamAnalyticsModel]
+}
+
+/// 保存产品活动接口的逐日模型轮次。
+private struct WhamDailyActivityResponse: Decodable {
+    let data: [WhamDailyActivity]
+
+    /// 将服务端模型轮次转换成共用图表桶。
+    var analyticsBuckets: [CodexAnalyticsDailyBucket] {
+        data.map { day in
+            var values = day.models.reduce(into: [:]) { result, model in
+                result[model.model, default: 0] += model.turns
+            }
+            if values.isEmpty, day.totalTurns > 0 {
+                values["其他"] = day.totalTurns
+            }
+            return CodexAnalyticsDailyBucket(
+                date: day.date,
+                values: values
+            )
+        }
+    }
+}
+
+/// 保存产品活动接口的一天数据。
+private struct WhamDailyActivity: Decodable {
+    let date: String
+    let models: [WhamAnalyticsModel]
+    let totalTurns: Double
+
+    enum CodingKeys: String, CodingKey {
+        case date
+        case models
+        case totals
+    }
+
+    /// 模型拆分缺失时保留总轮次，避免整个轮次图表被解码失败清空。
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        date = try container.decode(String.self, forKey: .date)
+        models = try container.decodeIfPresent([WhamAnalyticsModel].self, forKey: .models) ?? []
+        totalTurns = try container.decodeIfPresent(WhamActivityTotals.self, forKey: .totals)?.turns ?? 0
+    }
+}
+
+/// 保存轮次接口的每日总计，用于模型拆分不可用时降级展示。
+private struct WhamActivityTotals: Decodable {
+    let turns: Double
+}
+
+/// 兼容套餐用量和轮次接口共用的模型条目。
+private struct WhamAnalyticsModel: Decodable {
+    let model: String
+    let credits: Double
+    let turns: Double
+
+    enum CodingKeys: String, CodingKey {
+        case model
+        case credits
+        case turns
+    }
+
+    /// 两个接口分别省略 credits 或 turns，缺失值按零处理。
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        model = try container.decode(String.self, forKey: .model)
+        credits = try container.decodeIfPresent(Double.self, forKey: .credits) ?? 0
+        turns = try container.decodeIfPresent(Double.self, forKey: .turns) ?? 0
+    }
+}
+
+/// 对应插件活动接口的逐日调用统计。
+private struct WhamDailyPluginUsageResponse: Decodable {
+    let data: [WhamDailyPluginUsage]
+
+    /// 按展示名汇总同一天的插件调用次数。
+    var analyticsBuckets: [CodexAnalyticsDailyBucket] {
+        data.map { day in
+            CodexAnalyticsDailyBucket(
+                date: day.date,
+                values: day.pluginUsageOverviews.reduce(into: [:]) { result, plugin in
+                    result[plugin.displayName, default: 0] += plugin.invocationCount
+                }
+            )
+        }
+    }
+}
+
+/// 保存插件活动接口的一天数据。
+private struct WhamDailyPluginUsage: Decodable {
+    let date: String
+    let pluginUsageOverviews: [WhamPluginUsageOverview]
+
+    enum CodingKeys: String, CodingKey {
+        case date
+        case pluginUsageOverviews = "plugin_usage_overviews"
+    }
+}
+
+/// 保存单个插件的展示名和调用次数。
+private struct WhamPluginUsageOverview: Decodable {
+    let displayName: String
+    let invocationCount: Double
+
+    enum CodingKeys: String, CodingKey {
+        case displayName = "display_name"
+        case invocationCount = "invocation_counts"
+    }
 }
 
 private struct WhamProfileStats: Decodable {

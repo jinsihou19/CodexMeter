@@ -872,6 +872,46 @@ public enum CodexPlanFormatter {
     }
 }
 
+/// 保存分析页按日拆分后的单项数据；键为模型或工具名，值沿用接口返回单位。
+public struct CodexAnalyticsDailyBucket: Codable, Equatable, Identifiable, Sendable {
+    public let date: String
+    public let values: [String: Double]
+
+    public init(date: String, values: [String: Double]) {
+        self.date = date
+        self.values = values.filter { $0.value > 0 }
+    }
+
+    public var id: String { date }
+
+    /// 返回当天所有系列的合计值。
+    public var total: Double { values.values.reduce(0, +) }
+}
+
+/// 保存 Codex 分析接口的三类个人活动，供菜单窗口绘制紧凑趋势图。
+public struct CodexAnalyticsSnapshot: Codable, Equatable, Sendable {
+    public let packageUsage: [CodexAnalyticsDailyBucket]
+    public let productActivity: [CodexAnalyticsDailyBucket]
+    public let toolActivity: [CodexAnalyticsDailyBucket]
+
+    public init(
+        packageUsage: [CodexAnalyticsDailyBucket] = [],
+        productActivity: [CodexAnalyticsDailyBucket] = [],
+        toolActivity: [CodexAnalyticsDailyBucket] = []
+    ) {
+        self.packageUsage = packageUsage
+        self.productActivity = productActivity
+        self.toolActivity = toolActivity
+    }
+
+    /// 仅在至少一类接口返回有效数据时展示分析模块。
+    public var hasData: Bool {
+        [packageUsage, productActivity, toolActivity].contains { buckets in
+            buckets.contains { $0.total > 0 }
+        }
+    }
+}
+
 public struct CodexProfileStats: Codable, Equatable, Sendable {
     public let lifetimeTokens: Int64?
     public let peakDailyTokens: Int64?
@@ -890,6 +930,7 @@ public struct CodexProfileStats: Codable, Equatable, Sendable {
     public let weeklyUsageBuckets: [CodexTokenUsageBucket]
     public let cumulativeDailyUsageBuckets: [CodexTokenUsageBucket]
     public let topInvocations: [CodexTopInvocation]
+    public let analytics: CodexAnalyticsSnapshot?
 
     public init(
         lifetimeTokens: Int64?,
@@ -908,7 +949,8 @@ public struct CodexProfileStats: Codable, Equatable, Sendable {
         dailyUsageBuckets: [CodexTokenUsageBucket] = [],
         weeklyUsageBuckets: [CodexTokenUsageBucket] = [],
         cumulativeDailyUsageBuckets: [CodexTokenUsageBucket] = [],
-        topInvocations: [CodexTopInvocation] = []
+        topInvocations: [CodexTopInvocation] = [],
+        analytics: CodexAnalyticsSnapshot? = nil
     ) {
         self.lifetimeTokens = lifetimeTokens
         self.peakDailyTokens = peakDailyTokens
@@ -927,6 +969,7 @@ public struct CodexProfileStats: Codable, Equatable, Sendable {
         self.weeklyUsageBuckets = weeklyUsageBuckets
         self.cumulativeDailyUsageBuckets = cumulativeDailyUsageBuckets
         self.topInvocations = topInvocations
+        self.analytics = analytics
     }
 
     public var latestDailyTokens: Int64? {
@@ -935,6 +978,30 @@ public struct CodexProfileStats: Codable, Equatable, Sendable {
 
     public var recentDailyTokens: Int64 {
         dailyUsageBuckets.reduce(Int64(0)) { $0 + $1.tokens }
+    }
+
+    /// 返回附带最新分析数据的副本，并保留 Profile 接口已有字段。
+    public func withAnalytics(_ analytics: CodexAnalyticsSnapshot?) -> CodexProfileStats {
+        CodexProfileStats(
+            lifetimeTokens: lifetimeTokens,
+            peakDailyTokens: peakDailyTokens,
+            longestRunningTurnSeconds: longestRunningTurnSeconds,
+            currentStreakDays: currentStreakDays,
+            longestStreakDays: longestStreakDays,
+            fastModeUsagePercentage: fastModeUsagePercentage,
+            mostUsedReasoningEffort: mostUsedReasoningEffort,
+            mostUsedReasoningEffortPercentage: mostUsedReasoningEffortPercentage,
+            totalThreads: totalThreads,
+            totalSkillsUsed: totalSkillsUsed,
+            uniqueSkillsUsed: uniqueSkillsUsed,
+            workspaceRank: workspaceRank,
+            workspaceTotalUserCount: workspaceTotalUserCount,
+            dailyUsageBuckets: dailyUsageBuckets,
+            weeklyUsageBuckets: weeklyUsageBuckets,
+            cumulativeDailyUsageBuckets: cumulativeDailyUsageBuckets,
+            topInvocations: topInvocations,
+            analytics: analytics
+        )
     }
 }
 
