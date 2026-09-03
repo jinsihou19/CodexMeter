@@ -887,8 +887,12 @@ public enum AppLocalization {
         "更多选项": "More Options",
         "启动时打开设置": "Open Settings at Launch",
         "应用启动后自动显示设置窗口；关闭后仍可从菜单栏进入。": "Show Settings when the app launches; it remains available from the menu bar.",
-        "卡片不透明度": "Card Opacity",
+        "组件透明度": "Surface Opacity",
         "统一影响菜单栏下拉面板和小组件的卡片背景。": "Controls card backgrounds in the popover and widget.",
+        "统一控制菜单栏下拉面板、主窗口和小组件背景的透明程度。": "Controls background transparency for the popover, main window, and widgets.",
+        "玻璃样式": "Glass Style",
+        "选择原生玻璃的标准或清透样式。": "Choose the standard or clear native glass style.",
+        "清透": "Clear",
         "充足": "Healthy",
         "偏低": "Low",
         "紧张": "Critical",
@@ -1260,10 +1264,12 @@ public struct UsageNotificationSettings: Equatable, Sendable {
 public enum SurfaceAppearancePreferenceKeys {
     public static let appearanceMode = "surface.appearanceMode"
     public static let cardOpacity = "surface.cardOpacity"
+    public static let glassStyle = "surface.glassStyle"
 
     public static let allKeys = [
         appearanceMode,
-        cardOpacity
+        cardOpacity,
+        glassStyle
     ]
 }
 
@@ -1442,6 +1448,26 @@ public enum SurfaceAppearanceMode: String, CaseIterable, Identifiable, Sendable 
 
 public typealias WidgetAppearanceMode = SurfaceAppearanceMode
 
+/// 控制原生玻璃材质的视觉密度；标准强调可读性，清透强化背景透射。
+public enum SurfaceGlassStyle: String, CaseIterable, Identifiable, Sendable {
+    case standard
+    case clear
+
+    public var id: String {
+        rawValue
+    }
+
+    /// 返回设置页展示名称，调用方负责按当前语言本地化。
+    public var title: String {
+        switch self {
+        case .standard:
+            return "标准"
+        case .clear:
+            return "清透"
+        }
+    }
+}
+
 /// 控制弹窗和小组件里的重置时间文案；倒计时适合扫读，具体时间适合规划。
 public enum ResetTimeDisplayStyle: String, CaseIterable, Identifiable, Sendable {
     case countdown
@@ -1485,18 +1511,22 @@ public enum UsageRemainingTone: Equatable, Sendable {
 /// 保存所有可见浮层的外观设置；小组件旧 key 会作为兼容回退，随后由设置页归一化到新 key。
 public struct SurfaceAppearanceSettings: Equatable, Sendable {
     public static let defaultAppearanceMode = SurfaceAppearanceMode.automatic
-    public static let defaultCardOpacity = 0.78
-    public static let cardOpacityRange = 0.2...0.9
+    public static let defaultCardOpacity = 0.5
+    public static let defaultGlassStyle = SurfaceGlassStyle.standard
+    public static let cardOpacityRange = 0.0...1.0
 
     public let appearanceMode: SurfaceAppearanceMode
     public let cardOpacity: Double
+    public let glassStyle: SurfaceGlassStyle
 
     public init(
         appearanceMode: SurfaceAppearanceMode = Self.defaultAppearanceMode,
-        cardOpacity: Double = Self.defaultCardOpacity
+        cardOpacity: Double = Self.defaultCardOpacity,
+        glassStyle: SurfaceGlassStyle = Self.defaultGlassStyle
     ) {
         self.appearanceMode = appearanceMode
         self.cardOpacity = Self.normalizedCardOpacity(cardOpacity)
+        self.glassStyle = glassStyle
     }
 
     public init(defaults: UserDefaults) {
@@ -1506,9 +1536,11 @@ public struct SurfaceAppearanceSettings: Equatable, Sendable {
         let opacity = defaults.object(forKey: SurfaceAppearancePreferenceKeys.cardOpacity) as? Double
             ?? defaults.object(forKey: WidgetDisplayPreferenceKeys.cardOpacity) as? Double
             ?? Self.defaultCardOpacity
+        let rawGlassStyle = defaults.string(forKey: SurfaceAppearancePreferenceKeys.glassStyle) ?? ""
         self.init(
             appearanceMode: SurfaceAppearanceMode(rawValue: rawAppearance) ?? Self.defaultAppearanceMode,
-            cardOpacity: opacity
+            cardOpacity: opacity,
+            glassStyle: SurfaceGlassStyle(rawValue: rawGlassStyle) ?? Self.defaultGlassStyle
         )
     }
 
@@ -1516,7 +1548,7 @@ public struct SurfaceAppearanceSettings: Equatable, Sendable {
         self == SurfaceAppearanceSettings()
     }
 
-    /// 将卡片不透明度限制在可读范围内，避免完全透明或完全不透明破坏桌面层次。
+    /// 将界面不透明度限制在用户可选的 0% 到 100% 范围。
     public static func normalizedCardOpacity(_ value: Double) -> Double {
         min(max(value, cardOpacityRange.lowerBound), cardOpacityRange.upperBound)
     }

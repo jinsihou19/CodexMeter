@@ -654,6 +654,7 @@ final class UsageViewModelTests: XCTestCase {
         defaults.set("secondaryOnly", forKey: WidgetDisplayPreferenceKeys.contentMode)
         defaults.set("bad-appearance", forKey: SurfaceAppearancePreferenceKeys.appearanceMode)
         defaults.set(2.0, forKey: SurfaceAppearancePreferenceKeys.cardOpacity)
+        defaults.set("bad-style", forKey: SurfaceAppearancePreferenceKeys.glassStyle)
         defaults.set("bad-appearance", forKey: WidgetDisplayPreferenceKeys.appearanceMode)
         defaults.set(2.0, forKey: WidgetDisplayPreferenceKeys.cardOpacity)
         defaults.set(false, forKey: WidgetDisplayPreferenceKeys.showsResetTime)
@@ -677,12 +678,15 @@ final class UsageViewModelTests: XCTestCase {
         XCTAssertEqual(widgetSettings.cardOpacity, WidgetDisplaySettings.cardOpacityRange.upperBound)
         XCTAssertEqual(surfaceSettings.appearanceMode, .automatic)
         XCTAssertEqual(surfaceSettings.cardOpacity, SurfaceAppearanceSettings.cardOpacityRange.upperBound)
+        XCTAssertEqual(surfaceSettings.glassStyle, .standard)
+        XCTAssertEqual(SurfaceAppearanceSettings(glassStyle: .clear).glassStyle, .clear)
         XCTAssertEqual(
-            SurfaceAppearanceSettings(cardOpacity: 0.01).cardOpacity,
+            SurfaceAppearanceSettings(cardOpacity: -0.01).cardOpacity,
             SurfaceAppearanceSettings.cardOpacityRange.lowerBound
         )
+        XCTAssertEqual(SurfaceAppearanceSettings(cardOpacity: 0.01).cardOpacity, 0.01)
         XCTAssertEqual(
-            WidgetDisplaySettings(cardOpacity: 0.01).cardOpacity,
+            WidgetDisplaySettings(cardOpacity: -0.01).cardOpacity,
             WidgetDisplaySettings.cardOpacityRange.lowerBound
         )
         XCTAssertFalse(widgetSettings.showsResetTime)

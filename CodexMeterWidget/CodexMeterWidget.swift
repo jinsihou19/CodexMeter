@@ -121,6 +121,9 @@ private struct LocalCodexUsageWidgetView: View {
 
     private var language: AppLanguage { AppLanguage(rawValue: selectedLanguage) ?? .system }
     private var formatter: UsageFormatter { UsageFormatter(language: language) }
+    private var appearanceSettings: SurfaceAppearanceSettings {
+        SurfaceAppearanceSettings(defaults: MenuBarDisplaySettings.sharedDefaults)
+    }
 
     var body: some View {
         Group {
@@ -135,7 +138,11 @@ private struct LocalCodexUsageWidgetView: View {
             }
         }
         .containerBackground(for: .widget) {
-            WidgetCardBackground(appearanceMode: .automatic, opacity: 1)
+            WidgetCardBackground(
+                appearanceMode: appearanceSettings.appearanceMode,
+                opacity: appearanceSettings.cardOpacity,
+                glassStyle: appearanceSettings.glassStyle
+            )
         }
     }
 
@@ -642,7 +649,11 @@ struct CodexMeterWidgetView: View {
         let baseContent = content
             .environment(\.locale, language.locale)
             .containerBackground(for: .widget) {
-                WidgetCardBackground(appearanceMode: activeAppearance.appearanceMode, opacity: activeAppearance.cardOpacity)
+                WidgetCardBackground(
+                    appearanceMode: activeAppearance.appearanceMode,
+                    opacity: activeAppearance.cardOpacity,
+                    glassStyle: activeAppearance.glassStyle
+                )
             }
         if let colorScheme = activeAppearance.appearanceMode.colorScheme {
             baseContent.environment(\.colorScheme, colorScheme)
@@ -765,10 +776,18 @@ private struct WidgetCardBackground: View {
     @Environment(\.colorScheme) private var colorScheme
     let appearanceMode: SurfaceAppearanceMode
     let opacity: Double
+    let glassStyle: SurfaceGlassStyle
 
     var body: some View {
-        Rectangle()
-            .fill(backgroundColor.opacity(SurfaceAppearanceSettings.normalizedCardOpacity(opacity)))
+        ZStack {
+            if glassStyle == .clear {
+                Rectangle().fill(.ultraThinMaterial)
+            } else {
+                Rectangle().fill(.regularMaterial)
+            }
+            Rectangle()
+                .fill(backgroundColor.opacity(SurfaceAppearanceSettings.normalizedCardOpacity(opacity)))
+        }
     }
 
     private var backgroundColor: Color {

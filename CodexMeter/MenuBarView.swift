@@ -151,7 +151,8 @@ struct MenuBarView: View {
             .background(
                 PopoverSurfaceBackground(
                     appearanceMode: activeColorScheme == .dark ? .dark : .light,
-                    opacity: activeAppearance.cardOpacity
+                    opacity: activeAppearance.cardOpacity,
+                    glassStyle: activeAppearance.glassStyle
                 )
             )
             .onReceive(NotificationCenter.default.publisher(for: .surfaceAppearanceSettingsDidChange)) { _ in
@@ -503,20 +504,23 @@ private struct PopoverSurfaceBackground: View {
     @Environment(\.colorScheme) private var colorScheme
     let appearanceMode: SurfaceAppearanceMode
     let opacity: Double
+    let glassStyle: SurfaceGlassStyle
 
     /// 新系统由 AppKit 原生玻璃宿主绘制；旧系统保留中性材质回退。
     @ViewBuilder var body: some View {
-        if #available(macOS 26.0, *) {
-            Color.clear
-        } else {
-            ZStack {
+        ZStack {
+            if #available(macOS 26.0, *) {
+                PopoverGlassBackground(style: glassStyle)
+            } else if glassStyle == .clear {
                 Rectangle().fill(.ultraThinMaterial)
-                Rectangle().fill(
-                    effectiveColorScheme == .light
-                        ? .white.opacity(normalizedOpacity * 0.10)
-                        : .black.opacity(normalizedOpacity * 0.12)
-                )
+            } else {
+                Rectangle().fill(.regularMaterial)
             }
+            Rectangle().fill(
+                effectiveColorScheme == .light
+                    ? .white.opacity(normalizedOpacity)
+                    : .black.opacity(normalizedOpacity)
+            )
         }
     }
 
@@ -526,6 +530,30 @@ private struct PopoverSurfaceBackground: View {
 
     private var effectiveColorScheme: ColorScheme {
         appearanceMode.colorScheme ?? colorScheme
+    }
+}
+
+/// 为下拉面板提供可切换样式的原生玻璃底层，不参与内容布局。
+@available(macOS 26.0, *)
+private struct PopoverGlassBackground: NSViewRepresentable {
+    let style: SurfaceGlassStyle
+
+    /// 创建铺满弹窗背景的原生玻璃视图。
+    func makeNSView(context: Context) -> NSGlassEffectView {
+        let view = NSGlassEffectView()
+        view.cornerRadius = 26
+        configure(view)
+        return view
+    }
+
+    /// 用户切换样式后复用现有视图即时更新。
+    func updateNSView(_ nsView: NSGlassEffectView, context: Context) {
+        configure(nsView)
+    }
+
+    /// 将共享样式映射到 AppKit 原生玻璃枚举。
+    private func configure(_ view: NSGlassEffectView) {
+        view.style = style == .clear ? .clear : .regular
     }
 }
 

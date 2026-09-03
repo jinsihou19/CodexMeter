@@ -177,6 +177,7 @@ struct SettingsView: View {
     @AppStorage(GeminiModelsPreferenceKeys.showsInMenuBar, store: MenuBarDisplaySettings.sharedDefaults) private var geminiShowsInMenuBar = GeminiModelsSettings.defaultShowsInMenuBar
     @AppStorage(SurfaceAppearancePreferenceKeys.appearanceMode, store: MenuBarDisplaySettings.sharedDefaults) private var surfaceAppearanceMode = SurfaceAppearanceSettings.defaultAppearanceMode.rawValue
     @AppStorage(SurfaceAppearancePreferenceKeys.cardOpacity, store: MenuBarDisplaySettings.sharedDefaults) private var surfaceCardOpacity = SurfaceAppearanceSettings.defaultCardOpacity
+    @AppStorage(SurfaceAppearancePreferenceKeys.glassStyle, store: MenuBarDisplaySettings.sharedDefaults) private var surfaceGlassStyle = SurfaceAppearanceSettings.defaultGlassStyle.rawValue
 
     @AppStorage(MenuBarPreferenceKeys.layoutDensity, store: MenuBarDisplaySettings.sharedDefaults) private var layoutDensity = MenuBarDisplaySettings.defaultLayoutDensity.rawValue
     @AppStorage(MenuBarPreferenceKeys.itemSpacing, store: MenuBarDisplaySettings.sharedDefaults) private var itemSpacing = MenuBarDisplaySettings.defaultItemSpacing
@@ -251,20 +252,27 @@ struct SettingsView: View {
         AppLocalization.string(key, language: activeLanguage)
     }
 
-    /// 使用原生分栏结构承载设置页，让新系统自动为侧栏和窗口顶部提供 Liquid Glass。
+    /// 使用明确的侧栏和正文层级承载设置页，避免 SwiftUI 分栏额外覆盖 AppKit 材质。
     private var content: some View {
-        NavigationSplitView {
+        HStack(spacing: 0) {
             sidebar
-                .navigationSplitViewColumnWidth(
-                    min: SettingsPanelLayout.sidebarWidth,
-                    ideal: SettingsPanelLayout.sidebarWidth,
-                    max: SettingsPanelLayout.sidebarWidth
-                )
-        } detail: {
+                .frame(width: SettingsPanelLayout.sidebarWidth)
+                .background {
+                    Color.primary.opacity(0.055)
+                        .ignoresSafeArea()
+                }
+
             contentPane
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         }
-        .navigationSplitViewStyle(.balanced)
+        .background {
+            ZStack {
+                SettingsWindowGlassBackground(style: currentSurfaceAppearanceSettings.glassStyle)
+                (systemColorScheme == .dark ? Color.black : Color.white)
+                    .opacity(SurfaceAppearanceSettings.normalizedCardOpacity(surfaceCardOpacity))
+            }
+            .ignoresSafeArea()
+        }
         .frame(
             minWidth: 800,
             idealWidth: SettingsPanelLayout.windowWidth,
@@ -448,17 +456,18 @@ struct SettingsView: View {
                     )
 
                     SettingsPreferenceRow(
-                        title: "卡片不透明度",
-                        subtitle: "统一影响菜单栏下拉面板和小组件的卡片背景。"
+                        title: "组件透明度",
+                        subtitle: "统一控制菜单栏下拉面板、主窗口和小组件背景的透明程度。"
                     ) {
                         HStack(spacing: 10) {
                             Slider(
-                                value: surfaceAppearanceBinding(
-                                    $surfaceCardOpacity,
-                                    key: SurfaceAppearancePreferenceKeys.cardOpacity
-                                ),
+                                value: $surfaceCardOpacity,
                                 in: SurfaceAppearanceSettings.cardOpacityRange,
-                                step: 0.05
+                                onEditingChanged: { isEditing in
+                                    if !isEditing {
+                                        notifySurfaceAppearanceChanged()
+                                    }
+                                }
                             )
                             Text("\(Int((surfaceCardOpacity * 100).rounded()))%")
                                 .font(.callout.monospacedDigit())
@@ -467,6 +476,16 @@ struct SettingsView: View {
                         }
                         .frame(width: 180)
                     }
+
+                    SettingsPickerRow(
+                        title: "玻璃样式",
+                        subtitle: "选择原生玻璃的标准或清透样式。",
+                        selection: surfaceAppearanceBinding(
+                            $surfaceGlassStyle,
+                            key: SurfaceAppearancePreferenceKeys.glassStyle
+                        ),
+                        options: SurfaceGlassStyle.allCases.map { ($0.rawValue, $0.title) }
+                    )
 
                 }
             }
@@ -1091,7 +1110,9 @@ struct SettingsView: View {
         SurfaceAppearanceSettings(
             appearanceMode: SurfaceAppearanceMode(rawValue: surfaceAppearanceMode)
                 ?? SurfaceAppearanceSettings.defaultAppearanceMode,
-            cardOpacity: surfaceCardOpacity
+            cardOpacity: surfaceCardOpacity,
+            glassStyle: SurfaceGlassStyle(rawValue: surfaceGlassStyle)
+                ?? SurfaceAppearanceSettings.defaultGlassStyle
         )
     }
 
@@ -1260,10 +1281,15 @@ struct SettingsView: View {
     /// 全局外观会同时影响菜单栏、下拉面板和小组件。
     private func surfaceAppearanceBinding<Value>(_ binding: Binding<Value>, key: String) -> Binding<Value> {
         storedBinding(binding, key: key) { _ in
-            SurfaceAppearanceSettings.notifyDidChange()
-            SettingsWindowPresenter.shared.applyCurrentAppearance()
-            reloadWidgetTimelinesInBackground()
+            notifySurfaceAppearanceChanged()
         }
+    }
+
+    /// 在外观调整完成后统一刷新其他组件，避免滑块拖动期间反复重建界面。
+    private func notifySurfaceAppearanceChanged() {
+        SurfaceAppearanceSettings.notifyDidChange()
+        SettingsWindowPresenter.shared.applyCurrentAppearance()
+        reloadWidgetTimelinesInBackground()
     }
 
     /// 菜单栏设置被小组件的“跟随菜单栏”模式复用，因此也刷新 WidgetKit 时间线。
@@ -1411,6 +1437,7 @@ struct SettingsView: View {
         let surfaceAppearance = SurfaceAppearanceSettings(defaults: MenuBarDisplaySettings.sharedDefaults)
         surfaceAppearanceMode = surfaceAppearance.appearanceMode.rawValue
         surfaceCardOpacity = surfaceAppearance.cardOpacity
+        surfaceGlassStyle = surfaceAppearance.glassStyle.rawValue
 
         let settings = currentSettings
         layoutDensity = settings.layoutDensity.rawValue
@@ -1494,5 +1521,39 @@ struct SettingsView: View {
     private func openDirectory(_ url: URL) {
         try? FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
         NSWorkspace.shared.open(url)
+    }
+}
+
+/// 为整个设置窗口提供系统原生玻璃底层，旧系统退化为标准窗口材质。
+private struct SettingsWindowGlassBackground: NSViewRepresentable {
+    let style: SurfaceGlassStyle
+
+    /// 优先创建 macOS 26 的原生玻璃视图。
+    func makeNSView(context: Context) -> NSView {
+        if #available(macOS 26.0, *) {
+            let view = NSGlassEffectView()
+            view.cornerRadius = 18
+            configure(view)
+            return view
+        }
+
+        let view = NSVisualEffectView()
+        view.material = .windowBackground
+        view.blendingMode = .behindWindow
+        view.state = .followsWindowActiveState
+        return view
+    }
+
+    /// 设置变化时原地切换原生玻璃样式，避免重建窗口和改变布局。
+    func updateNSView(_ nsView: NSView, context: Context) {
+        if #available(macOS 26.0, *), let view = nsView as? NSGlassEffectView {
+            configure(view)
+        }
+    }
+
+    /// 将共享样式映射到 AppKit 原生玻璃枚举。
+    @available(macOS 26.0, *)
+    private func configure(_ view: NSGlassEffectView) {
+        view.style = style == .clear ? .clear : .regular
     }
 }

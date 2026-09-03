@@ -373,9 +373,6 @@ final class StatusBarController: NSObject {
     private func configurePopover() {
         popover.behavior = .transient
         popover.appearance = configuredPopoverAppearance
-        if #available(macOS 26.0, *) {
-            popover.hasFullSizeContent = true
-        }
         popover.contentSize = preferredPopoverSize
         popover.contentViewController = makePopoverContentController()
     }
@@ -520,20 +517,6 @@ final class StatusBarController: NSObject {
             )
         )
         hostingController.preferredContentSize = preferredPopoverSize
-
-        if #available(macOS 26.0, *) {
-            let glassView = NSGlassEffectView()
-            glassView.style = .regular
-            glassView.cornerRadius = 26
-            glassView.contentView = hostingController.view
-
-            let glassController = NSViewController()
-            glassController.addChild(hostingController)
-            glassController.view = glassView
-            glassController.preferredContentSize = preferredPopoverSize
-            return glassController
-        }
-
         return hostingController
     }
 
@@ -657,10 +640,6 @@ final class StatusBarController: NSObject {
             NSApp.activate(ignoringOtherApps: true)
             refreshPopoverSizeFromFittingContent(realign: false)
             popover.show(relativeTo: sender.bounds, of: sender, preferredEdge: .minY)
-            if #available(macOS 26.0, *), popover.contentViewController?.view is NSGlassEffectView {
-                popover.contentViewController?.view.window?.isOpaque = false
-                popover.contentViewController?.view.window?.backgroundColor = .clear
-            }
             alignPopoverWindow(to: sender)
             activatePopoverWindow()
             Task { await viewModel.refreshLocalCodexUsage() }

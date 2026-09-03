@@ -3,13 +3,13 @@ import CodexMeterShared
 import SwiftUI
 
 extension SurfaceAppearanceMode {
-    /// 把共享外观偏好转换为 AppKit 窗口外观；浅色使用振动外观以保留玻璃透射。
+    /// 把共享外观偏好转换为 AppKit 标准窗口外观。
     var appKitAppearance: NSAppearance? {
         switch self {
         case .automatic:
             return nil
         case .light:
-            return NSAppearance(named: .vibrantLight)
+            return NSAppearance(named: .aqua)
         case .dark:
             return NSAppearance(named: .darkAqua)
         }
@@ -35,23 +35,10 @@ final class SettingsWindowPresenter {
     private let prepareApplicationForWindow: @MainActor () -> Void
     private let activateApplication: @MainActor () -> Void
 
-    /// 注入窗口内容与激活行为；默认在新系统上用原生玻璃容器承载整个设置页。
+    /// 注入窗口内容与激活行为；默认保留标准窗口宿主，由内容分层选择系统材质。
     init(
         makeContentViewController: @escaping @MainActor () -> NSViewController = {
-            let hostingController = NSHostingController(rootView: SettingsView())
-            guard #available(macOS 26.0, *) else {
-                return hostingController
-            }
-
-            let glassView = NSGlassEffectView()
-            glassView.style = .regular
-            glassView.cornerRadius = 18
-            glassView.contentView = hostingController.view
-
-            let glassController = NSViewController()
-            glassController.addChild(hostingController)
-            glassController.view = glassView
-            return glassController
+            NSHostingController(rootView: SettingsView())
         },
         prepareApplicationForWindow: @escaping @MainActor () -> Void = {
             NSApp.setActivationPolicy(.accessory)
@@ -84,24 +71,21 @@ final class SettingsWindowPresenter {
     func applyCurrentAppearance() {
         let mode = SurfaceAppearanceSettings(defaults: MenuBarDisplaySettings.sharedDefaults).appearanceMode
         window?.appearance = mode.appKitAppearance
-        window?.backgroundColor = .windowBackgroundColor
         window?.title = AppLocalization.string("CodexMeter 设置")
     }
 
-    /// 创建可复用的全尺寸窗口；原生玻璃内容存在时透出整块材质，否则保留系统窗口底板。
+    /// 创建可复用的全尺寸标准窗口，透明标题栏与内容分层材质协作。
     private func makeWindow() -> NSWindow {
         let contentViewController = makeContentViewController()
         let settingsWindow = NSWindow(contentViewController: contentViewController)
         settingsWindow.title = AppLocalization.string("CodexMeter 设置")
         settingsWindow.styleMask = [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView]
         settingsWindow.titlebarAppearsTransparent = true
+        settingsWindow.titleVisibility = .hidden
         settingsWindow.titlebarSeparatorStyle = .none
-        settingsWindow.toolbarStyle = .unified
         settingsWindow.isMovableByWindowBackground = true
-        if #available(macOS 26.0, *), contentViewController.view is NSGlassEffectView {
-            settingsWindow.isOpaque = false
-            settingsWindow.backgroundColor = .clear
-        }
+        settingsWindow.isOpaque = false
+        settingsWindow.backgroundColor = .clear
         settingsWindow.isReleasedWhenClosed = false
         settingsWindow.setContentSize(NSSize(
             width: SettingsPanelLayout.windowWidth,
