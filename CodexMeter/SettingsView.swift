@@ -264,6 +264,10 @@ struct SettingsView: View {
 
             contentPane
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                .background {
+                    SettingsDetailMaterialBackground()
+                        .ignoresSafeArea()
+                }
         }
         .background {
             ZStack {
@@ -1522,6 +1526,21 @@ struct SettingsView: View {
         try? FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
         NSWorkspace.shared.open(url)
     }
+}
+
+/// 为设置详情栏提供稳定的窗口材质，避免清透模式下背景文字穿透正文。
+private struct SettingsDetailMaterialBackground: NSViewRepresentable {
+    /// 创建跟随窗口激活状态的原生详情材质。
+    func makeNSView(context: Context) -> NSVisualEffectView {
+        let view = NSVisualEffectView()
+        view.material = .windowBackground
+        view.blendingMode = .behindWindow
+        view.state = .followsWindowActiveState
+        return view
+    }
+
+    /// 详情材质没有运行时参数，复用系统自动更新即可。
+    func updateNSView(_ nsView: NSVisualEffectView, context: Context) {}
 }
 
 /// 为整个设置窗口提供系统原生玻璃底层，旧系统退化为标准窗口材质。
