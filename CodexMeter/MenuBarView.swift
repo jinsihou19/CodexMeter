@@ -1877,6 +1877,7 @@ private struct CodexAnalyticsChart: View {
                             }
                             .opacity(activeBucket.id == bucket.id ? 1 : 0.72)
                             .frame(maxWidth: .infinity, alignment: .bottom)
+                            .clipShape(RoundedRectangle(cornerRadius: 2, style: .continuous))
                             .overlay {
                                 if activeBucket.id == bucket.id {
                                     RoundedRectangle(cornerRadius: 2)
