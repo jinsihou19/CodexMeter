@@ -223,9 +223,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             name: .playUsageResetConfettiPreview,
             object: nil
         )
-        let viewModel = UsageViewModel(processUsageNotifications: { [usageNotificationController] snapshot in
-            usageNotificationController.process(snapshot)
-        })
+        let viewModel = UsageViewModel(
+            processUsageNotifications: { [usageNotificationController] snapshot in
+                usageNotificationController.process(snapshot)
+            },
+            onGeminiDisabled: { [usageNotificationController] in
+                usageNotificationController.disableAntigravity()
+            }
+        )
         usageNotificationController.seed(with: viewModel.snapshot)
         let radarStore = CodexRadarStore()
         self.viewModel = viewModel

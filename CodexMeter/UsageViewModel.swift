@@ -24,6 +24,18 @@ enum UsageNotificationEvent: Equatable, Sendable {
     case depleted(provider: UsageNotificationProvider, windowTitle: String)
     case lowRemaining(provider: UsageNotificationProvider, windowTitle: String, remainingText: String)
     case reset(provider: UsageNotificationProvider, windowTitle: String)
+
+    /// 返回事件所属厂商，供投递前按厂商总开关做最终复核。
+    var provider: UsageNotificationProvider {
+        switch self {
+        case let .depleted(provider, _):
+            provider
+        case let .lowRemaining(provider, _, _):
+            provider
+        case let .reset(provider, _):
+            provider
+        }
+    }
 }
 
 /// 只在额度向下跨过边界时生成事件，避免每次轮询重复通知。
@@ -166,6 +178,13 @@ struct UsageResetCelebrationDetector {
     mutating func seed(with geminiSnapshot: GeminiModelsSnapshot?) {
         guard let geminiSnapshot else { return }
         seed(observations: observations(in: geminiSnapshot))
+    }
+
+    /// 清除当前厂商的持久化检测基线；重新启用后首份快照只用于建立新基线。
+    mutating func reset() {
+        guard !states.isEmpty || defaults.object(forKey: defaultsKey) != nil else { return }
+        states.removeAll()
+        defaults.removeObject(forKey: defaultsKey)
     }
 
     /// 只为尚未记录的额度窗口写入检测基线，避免启动时覆盖可靠的跨进程状态。
@@ -386,19 +405,31 @@ final class UsageNotificationController {
     /// 用已有缓存建立比较基线，避免应用启动后的第一次刷新被误判为额度下降。
     func seed(with snapshot: UsageSnapshot?) {
         previousRateLimits = snapshot?.rateLimits
-        previousGeminiModels = snapshot?.geminiModels
         resetCelebrationDetector.seed(with: snapshot?.rateLimits)
-        geminiResetCelebrationDetector.seed(with: snapshot?.geminiModels)
+        if GeminiModelsSettings(defaults: defaults).isEnabled {
+            previousGeminiModels = snapshot?.geminiModels
+            geminiResetCelebrationDetector.seed(with: snapshot?.geminiModels)
+        } else {
+            disableAntigravity()
+        }
     }
 
-    /// 处理新快照并异步投递 Codex 与 Antigravity 的系统通知；无跨界事件时不访问通知中心。
-    func process(_ snapshot: UsageSnapshot) {
+    /// 停用 Antigravity 的通知生命周期，并删除跨刷新保存的比较基线。
+    func disableAntigravity() {
+        previousGeminiModels = nil
+        geminiResetCelebrationDetector.reset()
+    }
+
+    /// 处理新快照并返回本轮生成的通知事件；Antigravity 总开关同时决定其通知和彩带是否生效。
+    @discardableResult
+    func process(_ snapshot: UsageSnapshot) -> [UsageNotificationEvent] {
         let current = snapshot.rateLimits
         let previousCodex = previousRateLimits
         let previousGemini = previousGeminiModels
+        let geminiEnabled = GeminiModelsSettings(defaults: defaults).isEnabled
         defer {
             previousRateLimits = current
-            previousGeminiModels = snapshot.geminiModels
+            previousGeminiModels = geminiEnabled ? snapshot.geminiModels : nil
         }
         let celebrationOption = UsageResetCelebrationOption(
             rawValue: defaults.string(
@@ -406,19 +437,16 @@ final class UsageNotificationController {
             ) ?? ""
         ) ?? .off
         let settings = UsageNotificationSettings(defaults: defaults)
+        if !geminiEnabled {
+            disableAntigravity()
+        }
         let codexResetEvents = resetCelebrationDetector.processEvents(current)
         if CodexSessionStarter.shouldStart(after: codexResetEvents, defaults: defaults) {
             CodexSessionStarter.start()
         }
         let geminiResetEvents: [UsageResetEvent]
-        if let geminiSnapshot = snapshot.geminiModels {
-            let geminiEnabled = GeminiModelsSettings(defaults: defaults).isEnabled
-            if geminiEnabled {
-                geminiResetEvents = geminiResetCelebrationDetector.processEvents(geminiSnapshot)
-            } else {
-                _ = geminiResetCelebrationDetector.processKind(geminiSnapshot, option: .off)
-                geminiResetEvents = []
-            }
+        if geminiEnabled, let geminiSnapshot = snapshot.geminiModels {
+            geminiResetEvents = geminiResetCelebrationDetector.processEvents(geminiSnapshot)
         } else {
             geminiResetEvents = []
         }
@@ -447,7 +475,7 @@ final class UsageNotificationController {
                 settings: settings
             )
         }
-        if GeminiModelsSettings(defaults: defaults).isEnabled,
+        if geminiEnabled,
            let previousGemini,
            let currentGemini = snapshot.geminiModels
         {
@@ -458,13 +486,14 @@ final class UsageNotificationController {
             )
         }
         guard !events.isEmpty else {
-            return
+            return []
         }
 
         Self.enqueueNotifications(events)
+        return events
     }
 
-    /// 在系统通知回调队列查询权限并投递提醒，避免从主 actor 继承错误的执行器约束。
+    /// 在系统通知回调队列复核权限和厂商开关，关闭后不投递已经进入异步队列的 Antigravity 事件。
     private nonisolated static func enqueueNotifications(_ events: [UsageNotificationEvent]) {
         let center = UNUserNotificationCenter.current()
         center.getNotificationSettings { settings in
@@ -472,7 +501,8 @@ final class UsageNotificationController {
             guard authorization == .authorized || authorization == .provisional else {
                 return
             }
-            for event in events {
+            let geminiEnabled = GeminiModelsSettings(defaults: MenuBarDisplaySettings.sharedDefaults).isEnabled
+            for event in events where event.provider != .antigravity || geminiEnabled {
                 let content = UNMutableNotificationContent()
                 switch event {
                 case let .depleted(provider, windowTitle):
@@ -530,9 +560,12 @@ final class UsageViewModel: ObservableObject {
     private let resetCreditsVisibilityProvider: @MainActor @Sendable () -> Bool
     private let geminiSettingsProvider: @MainActor @Sendable () -> GeminiModelsSettings
     private let processUsageNotifications: @MainActor @Sendable (UsageSnapshot) -> Void
+    private let onGeminiDisabled: @MainActor @Sendable () -> Void
     private let localCodexUsageLoader: @Sendable () async -> LocalCodexUsageSnapshot?
     private let logger = Logger(subsystem: "com.jinsihou.CodexMeter", category: "Usage")
     private var refreshTask: Task<Void, Never>?
+    private var geminiRefreshTask: Task<GeminiModelsSnapshot, Error>?
+    private var geminiRefreshGeneration = 0
     private var hasStartedRefreshLoop = false
     private var isRefreshingLocalUsage = false
     private var appBehaviorObserver: NSObjectProtocol?
@@ -560,6 +593,7 @@ final class UsageViewModel: ObservableObject {
             GeminiModelsSettings(defaults: MenuBarDisplaySettings.sharedDefaults)
         },
         processUsageNotifications: @escaping @MainActor @Sendable (UsageSnapshot) -> Void = { _ in },
+        onGeminiDisabled: @escaping @MainActor @Sendable () -> Void = {},
         localCodexUsageLoader: @escaping @Sendable () async -> LocalCodexUsageSnapshot? = {
             await LocalCodexUsageReader().load()
         }
@@ -572,6 +606,7 @@ final class UsageViewModel: ObservableObject {
         self.resetCreditsVisibilityProvider = resetCreditsVisibilityProvider
         self.geminiSettingsProvider = geminiSettingsProvider
         self.processUsageNotifications = processUsageNotifications
+        self.onGeminiDisabled = onGeminiDisabled
         self.localCodexUsageLoader = localCodexUsageLoader
         self.lastShowsResetCredits = resetCreditsVisibilityProvider()
         if let cachedSnapshot = try? store.load() {
@@ -592,6 +627,7 @@ final class UsageViewModel: ObservableObject {
 
     deinit {
         refreshTask?.cancel()
+        geminiRefreshTask?.cancel()
     }
 
     var menuBarTitle: String {
@@ -683,6 +719,9 @@ final class UsageViewModel: ObservableObject {
         observeAppBehaviorSettings()
         observePopoverDisplaySettings()
         observeGeminiSettings()
+        if !geminiSettingsProvider().isEnabled {
+            disableGeminiModels()
+        }
         applyRefreshCadence()
         Task { [weak self] in
             await self?.refreshLocalCodexUsage()
@@ -772,18 +811,49 @@ final class UsageViewModel: ObservableObject {
         }
     }
 
-    /// 独立刷新 Gemini 配额；读取失败时保留上一次快照，不让 Codex 刷新链路失败。
+    /// 独立刷新 Gemini 配额；关闭时取消并丢弃在途结果，开启时读取失败仍保留上一次快照。
     private func refreshGeminiSnapshotIfEnabled() async -> GeminiModelsSnapshot? {
         guard geminiSettingsProvider().isEnabled else {
-            geminiErrorMessage = nil
-            return geminiSnapshot ?? snapshot?.geminiModels
+            disableGeminiModels()
+            return nil
+        }
+        geminiRefreshTask?.cancel()
+        geminiRefreshGeneration += 1
+        let generation = geminiRefreshGeneration
+        let client = geminiClient
+        let task = Task {
+            try await client.fetchGeminiModels()
+        }
+        geminiRefreshTask = task
+        defer {
+            if generation == geminiRefreshGeneration {
+                geminiRefreshTask = nil
+            }
         }
         do {
-            let fetchedSnapshot = try await geminiClient.fetchGeminiModels()
+            let fetchedSnapshot = try await task.value
+            guard generation == geminiRefreshGeneration else {
+                return geminiSettingsProvider().isEnabled
+                    ? geminiSnapshot ?? snapshot?.geminiModels
+                    : nil
+            }
+            guard geminiSettingsProvider().isEnabled else {
+                disableGeminiModels()
+                return nil
+            }
             geminiSnapshot = fetchedSnapshot
             geminiErrorMessage = nil
             return fetchedSnapshot
         } catch {
+            guard generation == geminiRefreshGeneration else {
+                return geminiSettingsProvider().isEnabled
+                    ? geminiSnapshot ?? snapshot?.geminiModels
+                    : nil
+            }
+            guard geminiSettingsProvider().isEnabled else {
+                disableGeminiModels()
+                return nil
+            }
             geminiErrorMessage = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
             let cachedSnapshot = geminiSnapshot ?? snapshot?.geminiModels
             geminiSnapshot = cachedSnapshot
@@ -794,7 +864,7 @@ final class UsageViewModel: ObservableObject {
     /// 设置页启用 Gemini 后立即把独立快照合并进现有缓存；没有 Codex 快照时仍先发布到卡片。
     private func refreshGeminiModels() async {
         guard geminiSettingsProvider().isEnabled else {
-            geminiErrorMessage = nil
+            disableGeminiModels()
             return
         }
         let refreshedSnapshot = await refreshGeminiSnapshotIfEnabled()
@@ -811,6 +881,24 @@ final class UsageViewModel: ObservableObject {
         try? store.save(updatedSnapshot)
         snapshot = updatedSnapshot
         processUsageNotifications(updatedSnapshot)
+        NotificationCenter.default.post(name: .usageSnapshotDidChange, object: updatedSnapshot)
+        reloadWidgetTimelines()
+    }
+
+    /// 关闭 Antigravity 后取消读取、清空运行状态，并只从共享快照中移除该厂商数据。
+    private func disableGeminiModels() {
+        geminiRefreshGeneration += 1
+        geminiRefreshTask?.cancel()
+        geminiRefreshTask = nil
+        geminiSnapshot = nil
+        geminiErrorMessage = nil
+        onGeminiDisabled()
+
+        guard let currentSnapshot = snapshot else { return }
+        let updatedSnapshot = currentSnapshot.withGeminiModels(nil)
+        guard updatedSnapshot != currentSnapshot else { return }
+        try? store.save(updatedSnapshot)
+        snapshot = updatedSnapshot
         NotificationCenter.default.post(name: .usageSnapshotDidChange, object: updatedSnapshot)
         reloadWidgetTimelines()
     }

@@ -366,6 +366,150 @@ final class UsageViewModelTests: XCTestCase {
         XCTAssertFalse(detector.process(reset, option: .weekly))
     }
 
+    /// 验证 Antigravity 总开关关闭时即使收到旧快照，也不生成通知或彩带事件。
+    func testDisabledAntigravityProducesNoNotificationsOrConfetti() {
+        let suiteName = "UsageViewModelTests.DisabledAntigravity.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        defaults.set(false, forKey: GeminiModelsPreferenceKeys.isEnabled)
+        defaults.set(true, forKey: UsageNotificationPreferenceKeys.notifiesWhenReset)
+        defaults.set(UsageResetCelebrationOption.both.rawValue, forKey: UsageCelebrationPreferenceKeys.resetOption)
+        let previous = GeminiModelsSnapshot(
+            fetchedAt: Date(timeIntervalSince1970: 1_000),
+            source: .antigravityLocal,
+            groups: [
+                GeminiQuotaGroup(
+                    id: "gemini-models",
+                    title: "Gemini Models",
+                    windows: [
+                        GeminiQuotaWindow(
+                            bucketId: "weekly",
+                            title: "7d",
+                            remainingFraction: 0.20,
+                            resetsAt: Date(timeIntervalSince1970: 3_000)
+                        )
+                    ]
+                )
+            ]
+        )
+        let reset = GeminiModelsSnapshot(
+            fetchedAt: Date(timeIntervalSince1970: 2_000),
+            source: .antigravityLocal,
+            groups: [
+                GeminiQuotaGroup(
+                    id: "gemini-models",
+                    title: "Gemini Models",
+                    windows: [
+                        GeminiQuotaWindow(
+                            bucketId: "weekly",
+                            title: "7d",
+                            remainingFraction: 1,
+                            resetsAt: Date(timeIntervalSince1970: 4_000)
+                        )
+                    ]
+                )
+            ]
+        )
+        var playedConfetti: [UsageResetCelebrationOption] = []
+        let controller = UsageNotificationController(defaults: defaults) { playedConfetti.append($0) }
+        controller.seed(with: UsageSnapshot(
+            fetchedAt: previous.fetchedAt,
+            rateLimits: Self.emptyRateLimits(),
+            geminiModels: previous
+        ))
+
+        let notificationEvents = controller.process(UsageSnapshot(
+            fetchedAt: reset.fetchedAt,
+            rateLimits: Self.emptyRateLimits(),
+            geminiModels: reset
+        ))
+
+        XCTAssertTrue(notificationEvents.isEmpty)
+        XCTAssertTrue(playedConfetti.isEmpty)
+
+        defaults.set(true, forKey: GeminiModelsPreferenceKeys.isEnabled)
+        let reenabledEvents = controller.process(UsageSnapshot(
+            fetchedAt: reset.fetchedAt,
+            rateLimits: Self.emptyRateLimits(),
+            geminiModels: reset
+        ))
+        XCTAssertTrue(reenabledEvents.isEmpty)
+        XCTAssertTrue(playedConfetti.isEmpty)
+    }
+
+    /// 验证关闭状态启动时只清除 Antigravity 缓存，并且不会调用该厂商客户端。
+    func testDisabledAntigravityStartupClearsProviderCacheWithoutFetching() async throws {
+        let geminiSnapshot = GeminiModelsSnapshot(
+            fetchedAt: Date(timeIntervalSince1970: 2_000),
+            source: .antigravityLocal,
+            groups: []
+        )
+        let cacheDirectory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: cacheDirectory) }
+        let store = UsageSnapshotStore(appGroupIdentifier: "", fallbackDirectory: cacheDirectory)
+        let codexRateLimits = Self.emptyRateLimits()
+        try store.save(UsageSnapshot(
+            fetchedAt: geminiSnapshot.fetchedAt,
+            rateLimits: codexRateLimits,
+            geminiModels: geminiSnapshot
+        ))
+        let fetchCounter = CallCounter()
+        let viewModel = UsageViewModel(
+            client: StubRateLimitClient(snapshot: codexRateLimits),
+            store: store,
+            reloadWidgetTimelines: {},
+            refreshCadenceProvider: { .manual },
+            geminiClient: CountingGeminiClient(snapshot: geminiSnapshot, counter: fetchCounter),
+            geminiSettingsProvider: { GeminiModelsSettings(isEnabled: false) },
+            localCodexUsageLoader: { nil }
+        )
+
+        viewModel.start()
+
+        XCTAssertNil(viewModel.geminiSnapshot)
+        XCTAssertNil(viewModel.snapshot?.geminiModels)
+        XCTAssertEqual(viewModel.snapshot?.rateLimits, codexRateLimits)
+        XCTAssertNil(try XCTUnwrap(store.load()).geminiModels)
+        let fetchCount = await fetchCounter.value
+        XCTAssertEqual(fetchCount, 0)
+    }
+
+    /// 验证 Antigravity 请求期间关闭总开关后，即使客户端返回成功也会丢弃结果。
+    func testAntigravityFetchResultIsDiscardedWhenSwitchTurnsOff() async throws {
+        let enabledState = GeminiEnabledState()
+        let geminiSnapshot = GeminiModelsSnapshot(
+            fetchedAt: Date(timeIntervalSince1970: 2_000),
+            source: .antigravityLocal,
+            groups: []
+        )
+        let cacheDirectory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: cacheDirectory) }
+        let store = UsageSnapshotStore(appGroupIdentifier: "", fallbackDirectory: cacheDirectory)
+        let codexRateLimits = Self.emptyRateLimits()
+        try store.save(UsageSnapshot(
+            fetchedAt: Date(timeIntervalSince1970: 1_000),
+            rateLimits: codexRateLimits
+        ))
+        let viewModel = UsageViewModel(
+            client: StubRateLimitClient(snapshot: codexRateLimits),
+            store: store,
+            reloadWidgetTimelines: {},
+            refreshCadenceProvider: { .manual },
+            geminiClient: DisablingGeminiClient(enabledState: enabledState, snapshot: geminiSnapshot),
+            geminiSettingsProvider: { GeminiModelsSettings(isEnabled: enabledState.isEnabled) },
+            localCodexUsageLoader: { nil }
+        )
+
+        await viewModel.refresh()
+
+        XCTAssertFalse(enabledState.isEnabled)
+        XCTAssertNil(viewModel.geminiSnapshot)
+        XCTAssertNil(viewModel.snapshot?.geminiModels)
+        XCTAssertNil(try XCTUnwrap(store.load()).geminiModels)
+    }
+
     /// 验证语言偏好能覆盖下一次启动使用的 AppleLanguages，并能恢复跟随系统。
     func testAppLanguageAppliesAndClearsLaunchOverride() {
         let suiteName = "UsageViewModelTests.AppLanguage.\(UUID().uuidString)"
@@ -3501,6 +3645,41 @@ private struct StubGeminiClient: GeminiModelsUsageFetching {
     /// 返回预置 Gemini 快照，避免测试依赖本机 Antigravity 或 OAuth 状态。
     func fetchGeminiModels() async throws -> GeminiModelsSnapshot {
         snapshot
+    }
+}
+
+/// 记录 Antigravity 拉取次数，验证关闭状态不会触发厂商客户端。
+private struct CountingGeminiClient: GeminiModelsUsageFetching {
+    let snapshot: GeminiModelsSnapshot
+    let counter: CallCounter
+
+    /// 记录调用后返回预置快照。
+    func fetchGeminiModels() async throws -> GeminiModelsSnapshot {
+        await counter.increment()
+        return snapshot
+    }
+}
+
+/// 模拟请求完成前关闭 Antigravity，用于验证在途结果不会重新写回缓存。
+private struct DisablingGeminiClient: GeminiModelsUsageFetching {
+    let enabledState: GeminiEnabledState
+    let snapshot: GeminiModelsSnapshot
+
+    /// 在返回预置快照前关闭总开关，模拟网络请求期间发生设置切换。
+    func fetchGeminiModels() async throws -> GeminiModelsSnapshot {
+        await enabledState.disable()
+        return snapshot
+    }
+}
+
+/// 保存测试中的 Antigravity 总开关，允许异步客户端安全模拟关闭动作。
+@MainActor
+private final class GeminiEnabledState {
+    private(set) var isEnabled = true
+
+    /// 将厂商状态切换为关闭。
+    func disable() {
+        isEnabled = false
     }
 }
 
