@@ -640,11 +640,19 @@ final class StatusBarController: NSObject {
             NSApp.activate(ignoringOtherApps: true)
             refreshPopoverSizeFromFittingContent(realign: false)
             popover.show(relativeTo: sender.bounds, of: sender, preferredEdge: .minY)
+            makePopoverWindowTransparent()
             alignPopoverWindow(to: sender)
             activatePopoverWindow()
             Task { await viewModel.refreshLocalCodexUsage() }
             Task { await viewModel.refreshResetCreditsIfNeeded() }
         }
+    }
+
+    /// 清除 NSPopover 自带的不透明窗口底色，避免它与内容中的玻璃层重复叠加。
+    private func makePopoverWindowTransparent() {
+        guard let popoverWindow = popover.contentViewController?.view.window else { return }
+        popoverWindow.isOpaque = false
+        popoverWindow.backgroundColor = .clear
     }
 
     private func alignPopoverWindow(to sender: NSStatusBarButton) {
