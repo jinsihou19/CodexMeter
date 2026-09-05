@@ -1095,7 +1095,7 @@ private struct LocalCodexUsageSection: View {
     @State private var heatmapMode = LocalUsageHeatmapMode.daily
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 5) {
+        VStack(alignment: .leading, spacing: 8) {
             HStack {
                 Label(AppLocalization.string("消耗与成本"), systemImage: "dollarsign.circle")
                     .font(.caption.weight(.semibold))
@@ -1119,21 +1119,23 @@ private struct LocalCodexUsageSection: View {
             }
 
             if let cost = snapshot.summary.monthCost {
-                HStack(spacing: 4) {
-                    Text(AppLocalization.string("本月估算"))
-                        .foregroundStyle(.secondary)
-                    Text(Self.currency(cost.estimatedCostUSD))
-                        .fontWeight(.semibold)
-                        .monospacedDigit()
+                HStack(alignment: .lastTextBaseline) {
+                    VStack(alignment: .leading, spacing: 0) {
+                        Text(AppLocalization.string("本月估算"))
+                            .font(.caption2)
+                            .foregroundStyle(.tertiary)
+                        Text(Self.currency(cost.estimatedCostUSD))
+                            .font(.title2.weight(.semibold))
+                            .monospacedDigit()
+                    }
                     Spacer()
                     Text(AppLocalization.string("API 等效估算"))
+                        .font(.caption2)
                         .foregroundStyle(.tertiary)
                 }
-                .font(.caption2)
             }
 
             if settings.showsLocalOverview {
-                subsectionTitle("概览")
                 overview
             }
             if settings.showsLocalOverview && (settings.showsLocalTrend || settings.showsLocalProjects) {
@@ -1150,7 +1152,7 @@ private struct LocalCodexUsageSection: View {
                 projects
             }
         }
-        .menuSectionCard(padding: 6)
+        .menuSectionCard(padding: 8)
     }
 
     /// 返回需要展示的缓存状态；实时数据不额外占用菜单空间。
@@ -1172,31 +1174,46 @@ private struct LocalCodexUsageSection: View {
     /// 展示最常用的 Token、费用构成和项目消耗排行。
     private var overview: some View {
         let maximum = max(1, snapshot.summary.projects.map(\.tokens).max() ?? 1)
-        return VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 8) {
+        return VStack(alignment: .leading, spacing: 11) {
+            HStack(spacing: 0) {
                 metric("今日", snapshot.summary.todayTokens)
+                Divider().frame(height: 30).padding(.horizontal, 8)
                 metric("近 7 天", snapshot.summary.sevenDayTokens)
+                Divider().frame(height: 30).padding(.horizontal, 8)
                 metric("累计", snapshot.summary.lifetimeTokens)
+                Divider().frame(height: 30).padding(.horizontal, 8)
                 metric("线程", Int64(snapshot.summary.threadCount))
             }
 
             if let cost = snapshot.summary.monthCost {
-                VStack(alignment: .leading, spacing: 5) {
-                    tokenComposition(cost)
-                    HStack(spacing: 10) {
-                        costMetric("未缓存", max(0, cost.inputTokens - cost.cachedInputTokens), color: CodexMeterChartPalette.tokenInput)
-                        costMetric("缓存输入", cost.cachedInputTokens, color: CodexMeterChartPalette.tokenCachedInput)
-                        costMetric("输出", cost.outputTokens, color: CodexMeterChartPalette.tokenOutput)
-                        Spacer(minLength: 0)
+                VStack(alignment: .leading, spacing: 7) {
+                    HStack(alignment: .firstTextBaseline) {
+                        subsectionTitle("Token 构成")
+                        Spacer()
                         Text("\(AppLocalization.string("缓存率")) \(percent(cost.cachedInputTokens, of: cost.inputTokens))")
                             .font(.caption2.weight(.semibold))
                             .monospacedDigit()
                     }
+                    tokenComposition(cost)
+                    HStack(spacing: 12) {
+                        costMetric("未缓存", max(0, cost.inputTokens - cost.cachedInputTokens), color: CodexMeterChartPalette.tokenInput)
+                        costMetric("缓存输入", cost.cachedInputTokens, color: CodexMeterChartPalette.tokenCachedInput)
+                        costMetric("输出", cost.outputTokens, color: CodexMeterChartPalette.tokenOutput)
+                    }
                 }
             }
 
-            Divider()
-            projectRanking(maximum: maximum)
+            if !snapshot.summary.projects.isEmpty {
+                Divider()
+                HStack(alignment: .firstTextBaseline) {
+                    subsectionTitle("项目排行")
+                    Spacer()
+                    Text(AppLocalization.string("近 7 天"))
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                }
+                projectRanking(maximum: maximum)
+            }
         }
     }
 
@@ -1215,7 +1232,9 @@ private struct LocalCodexUsageSection: View {
                 }
                 .labelsHidden()
                 .pickerStyle(.segmented)
-                .frame(width: 150)
+                .controlSize(.small)
+                .tint(CodexMeterChartPalette.primary)
+                .frame(width: 132)
             }
 
             LocalMenuUsageHeatmap(
@@ -1248,7 +1267,7 @@ private struct LocalCodexUsageSection: View {
                     if let detail = item.detail {
                         Text(detail)
                             .lineLimit(1)
-                            .foregroundStyle(.tertiary)
+                            .foregroundStyle(.secondary)
                     }
                 }
                 .font(.caption)
@@ -1258,30 +1277,33 @@ private struct LocalCodexUsageSection: View {
 
     /// 绘制项目排行条，供概览页快速比较近七天项目消耗。
     private func projectRanking(maximum: Int64) -> some View {
-        VStack(alignment: .leading, spacing: 7) {
+        VStack(alignment: .leading, spacing: 8) {
             ForEach(Array(snapshot.summary.projects.enumerated()), id: \.element.id) { index, project in
-                VStack(spacing: 3) {
-                    HStack(spacing: 6) {
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack(alignment: .firstTextBaseline, spacing: 6) {
                         Text("\(index + 1)")
+                            .font(.caption2.monospacedDigit())
                             .foregroundStyle(.tertiary)
-                            .frame(width: 12, alignment: .trailing)
-                        Text(project.name).lineLimit(1)
+                            .frame(width: 14, alignment: .trailing)
+                        Text(project.name)
+                            .font(.caption.weight(.medium))
+                            .lineLimit(1)
                         Spacer(minLength: 4)
                         Text("\(project.threadCount) \(AppLocalization.string("线程"))")
+                            .font(.caption2)
                             .foregroundStyle(.tertiary)
                         Text(formatter.tokenCount(project.tokens))
+                            .font(.caption.weight(.semibold))
                             .monospacedDigit()
                             .foregroundStyle(.secondary)
                     }
-                    .font(.caption)
                     GeometryReader { geometry in
-                        ZStack(alignment: .leading) {
-                            Capsule().fill(Color.primary.opacity(0.08))
-                            Capsule().fill(CodexMeterChartPalette.primary.opacity(0.72))
-                                .frame(width: max(3, geometry.size.width * CGFloat(project.tokens) / CGFloat(maximum)))
-                        }
+                        Capsule()
+                            .fill(CodexMeterChartPalette.primary.opacity(index == 0 ? 0.9 : 0.64))
+                            .frame(width: max(4, geometry.size.width * CGFloat(project.tokens) / CGFloat(maximum)))
                     }
-                    .frame(height: 4)
+                    .frame(height: 2)
+                    .padding(.leading, 20)
                 }
             }
         }
@@ -1292,18 +1314,21 @@ private struct LocalCodexUsageSection: View {
         let uncached = max(0, cost.inputTokens - cost.cachedInputTokens)
         let total = max(1, uncached + cost.cachedInputTokens + cost.outputTokens)
         return GeometryReader { geometry in
-            HStack(spacing: 0) {
-                Rectangle().fill(CodexMeterChartPalette.tokenInput)
-                    .frame(width: geometry.size.width * CGFloat(uncached) / CGFloat(total))
-                Rectangle().fill(CodexMeterChartPalette.tokenCachedInput)
-                    .frame(width: geometry.size.width * CGFloat(cost.cachedInputTokens) / CGFloat(total))
-                Rectangle().fill(CodexMeterChartPalette.tokenOutput)
-                    .frame(width: geometry.size.width * CGFloat(cost.outputTokens) / CGFloat(total))
+            let availableWidth = max(0, geometry.size.width - 4)
+            HStack(spacing: 2) {
+                RoundedRectangle(cornerRadius: 2, style: .continuous)
+                    .fill(CodexMeterChartPalette.tokenInput.opacity(0.9))
+                    .frame(width: availableWidth * CGFloat(uncached) / CGFloat(total))
+                RoundedRectangle(cornerRadius: 2, style: .continuous)
+                    .fill(CodexMeterChartPalette.tokenCachedInput.opacity(0.82))
+                    .frame(width: availableWidth * CGFloat(cost.cachedInputTokens) / CGFloat(total))
+                RoundedRectangle(cornerRadius: 2, style: .continuous)
+                    .fill(CodexMeterChartPalette.tokenOutput.opacity(0.82))
+                    .frame(width: availableWidth * CGFloat(cost.outputTokens) / CGFloat(total))
             }
-            .clipShape(RoundedRectangle(cornerRadius: 3))
-            .help("\(AppLocalization.string("未缓存")) \(formatter.tokenCount(uncached)) · \(AppLocalization.string("缓存输入")) \(formatter.tokenCount(cost.cachedInputTokens)) · \(AppLocalization.string("输出")) \(formatter.tokenCount(cost.outputTokens))")
+            .help("\(AppLocalization.string("未缓存")) \(formatter.tokenCount(uncached))，\(AppLocalization.string("缓存输入")) \(formatter.tokenCount(cost.cachedInputTokens))，\(AppLocalization.string("输出")) \(formatter.tokenCount(cost.outputTokens))")
         }
-        .frame(height: 7)
+        .frame(height: 8)
     }
 
     /// 计算紧凑百分比，分母为零时保持稳定零值。
@@ -1314,12 +1339,19 @@ private struct LocalCodexUsageSection: View {
 
     /// 生成费用拆分的紧凑 token 指标，颜色与上方构成条保持对应。
     private func costMetric(_ title: String, _ value: Int64, color: Color) -> some View {
-        HStack(spacing: 4) {
-            Circle().fill(color).frame(width: 5, height: 5)
-            Text(AppLocalization.string(title)).foregroundStyle(.secondary)
-            Text(formatter.tokenCount(value)).monospacedDigit()
+        VStack(alignment: .leading, spacing: 2) {
+            Capsule()
+                .fill(color.opacity(0.88))
+                .frame(width: 18, height: 2)
+            Text(AppLocalization.string(title))
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+            Text(formatter.tokenCount(value))
+                .fontWeight(.semibold)
+                .monospacedDigit()
         }
         .font(.caption2)
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     /// 把美元估算格式化为看板短文本。
@@ -1332,9 +1364,9 @@ private struct LocalCodexUsageSection: View {
         VStack(alignment: .leading, spacing: 1) {
             Text(AppLocalization.string(title))
                 .font(.caption2)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(.tertiary)
             Text(formatter.tokenCount(value))
-                .font(.caption.weight(.semibold))
+                .font(.callout.weight(.semibold))
                 .monospacedDigit()
                 .lineLimit(1)
                 .minimumScaleFactor(0.72)
@@ -1782,7 +1814,9 @@ private struct CodexAnalyticsSection: View {
                 }
                 .labelsHidden()
                 .pickerStyle(.segmented)
-                .frame(width: 156)
+                .controlSize(.small)
+                .tint(CodexMeterChartPalette.primary)
+                .frame(width: 132)
             }
 
             if mode != .packageUsage {
@@ -1806,7 +1840,7 @@ private struct CodexAnalyticsSection: View {
 
             Label(AppLocalization.string("分析数据最多延迟 6 小时"), systemImage: "info.circle")
                 .font(.caption2)
-                .foregroundStyle(.tertiary)
+                .foregroundStyle(.secondary)
         }
         .menuSectionCard(padding: 8)
     }
@@ -2056,6 +2090,8 @@ private struct TokenActivitySection: View {
                 }
                 .labelsHidden()
                 .pickerStyle(.segmented)
+                .controlSize(.small)
+                .tint(CodexMeterChartPalette.primary)
                 .frame(width: 132)
             }
 
@@ -2067,7 +2103,7 @@ private struct TokenActivitySection: View {
 
             TokenActivityChart(buckets: activityMode.buckets(from: stats), formatter: formatter)
         }
-        .padding(5)
+        .padding(8)
         .popoverCardSurface(opacity: 0.52)
     }
 }
