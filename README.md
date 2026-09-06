@@ -94,7 +94,7 @@ CodexMeter 以只读方式读取当前 `CODEX_HOME` 下的 Codex 状态库、会
 CODEX_PUBLISH_RELEASE=0 CODEX_INSTALL_LOCAL=1 bash script/package_release.sh
 ```
 
-系统要求：macOS 14.0 或更新版本。
+系统要求：macOS 15.0 或更新版本。
 
 ### 首次使用
 

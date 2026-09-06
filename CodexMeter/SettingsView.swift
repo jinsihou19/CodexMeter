@@ -1549,12 +1549,14 @@ private struct SettingsWindowGlassBackground: NSViewRepresentable {
 
     /// 优先创建 macOS 26 的原生玻璃视图。
     func makeNSView(context: Context) -> NSView {
+#if compiler(>=6.2)
         if #available(macOS 26.0, *) {
             let view = NSGlassEffectView()
             view.cornerRadius = 18
             configure(view)
             return view
         }
+#endif
 
         let view = NSVisualEffectView()
         view.material = .windowBackground
@@ -1565,14 +1567,18 @@ private struct SettingsWindowGlassBackground: NSViewRepresentable {
 
     /// 设置变化时原地切换原生玻璃样式，避免重建窗口和改变布局。
     func updateNSView(_ nsView: NSView, context: Context) {
+#if compiler(>=6.2)
         if #available(macOS 26.0, *), let view = nsView as? NSGlassEffectView {
             configure(view)
         }
+#endif
     }
 
+#if compiler(>=6.2)
     /// 将共享样式映射到 AppKit 原生玻璃枚举。
     @available(macOS 26.0, *)
     private func configure(_ view: NSGlassEffectView) {
         view.style = style == .clear ? .clear : .regular
     }
+#endif
 }
