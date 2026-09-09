@@ -488,3 +488,207 @@ final class LocalCodexUsageReaderTests: XCTestCase {
         try? JSONSerialization.data(withJSONObject: rows)
     }
 }
+
+/// 验证远程价格生命周期与真实日志聚合；所有价格请求和文件均使用隔离夹具。
+final class LocalCodexPricingTests: XCTestCase {
+    /// 验证上海凌晨发现的新价不会追溯到本地前一天。
+    func testPricingUsesLocalDayAtUTCBoundary() throws {
+        var catalog = LocalCodexPricingCatalog()
+        try catalog.merge(Self.catalog(input: 12), now: Self.date("2026-09-08T17:00:00Z"),
+                          timeZone: try XCTUnwrap(TimeZone(identifier: "Asia/Shanghai")))
+        XCTAssertEqual(catalog.price(for: "gpt-5.5", on: "2026-09-08")?.inputPerMillion, 5)
+        XCTAssertEqual(catalog.price(for: "gpt-5.5", on: "2026-09-09")?.inputPerMillion, 12)
+    }
+
+    /// 验证所有支持的响应容器均读取档位，并通过带换行的真实扫描入口计价。
+    func testNestedResponseServiceTier() async throws {
+        let root = Self.temporaryRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let database = root.appendingPathComponent("state.sqlite")
+        try Data().write(to: database)
+        for key in ["response", "result", "data"] {
+            for tier in ["priority", "default", "unrecognized"] {
+                let session = root.appendingPathComponent("\(key)-\(tier).jsonl")
+                let envelope: [String: Any] = ["model": "gpt-6-astra", "service_tier": tier,
+                    "usage": ["input_tokens": 1000, "output_tokens": 100]]
+                try Self.jsonl([["timestamp": "2026-09-07T12:00:00Z", key: envelope]]).write(to: session)
+                let reader = Self.reader(root: root, session: session, database: database,
+                                         now: Self.date("2026-09-07T12:00:00Z"))
+                let snapshot = await reader.load()
+                if tier == "unrecognized" {
+                    XCTAssertNil(snapshot?.summary.monthCost)
+                    XCTAssertEqual(snapshot?.summary.pricingStatus?.unpricedModels, ["gpt-6-astra"])
+                } else {
+                    XCTAssertEqual(try XCTUnwrap(snapshot?.summary.monthCost?.estimatedCostUSD),
+                                   tier == "priority" ? 0.03 : 0.015, accuracy: 1e-10)
+                }
+            }
+        }
+    }
+
+    /// 验证历史价、未来变价、缺价补算及供应商隔离，不让外部新价追溯覆盖已知历史。
+    func testCatalogPreservesHistoryAndRejectsInvalidRates() throws {
+        var catalog = LocalCodexPricingCatalog()
+        let first = Self.date("2026-09-07T00:00:00Z")
+        try catalog.merge(Self.catalog(input: 9), now: first)
+        XCTAssertEqual(catalog.price(for: "gpt-5.5", on: "2026-09-06")?.inputPerMillion, 5)
+        XCTAssertEqual(catalog.price(for: "openai/gpt-5.5", on: "2026-09-07")?.inputPerMillion, 9)
+        XCTAssertEqual(catalog.price(for: "test-model", on: "2026-09-01")?.inputPerMillion, 9)
+        XCTAssertNil(catalog.price(for: "other/gpt-5.5", on: "2026-09-07"))
+        XCTAssertNil(catalog.price(for: "gpt-6", on: "2026-09-07"))
+        XCTAssertNil(catalog.price(for: "gpt-6-astra-pro", on: "2026-09-07"))
+        XCTAssertEqual(catalog.price(for: "gpt-6-astra-2099-01-01", on: "2026-09-07")?.inputPerMillion, 10)
+        try catalog.merge(Self.catalog(input: 12), now: first.addingTimeInterval(86_400))
+        XCTAssertEqual(catalog.price(for: "gpt-5.5", on: "2026-09-07")?.inputPerMillion, 9)
+        XCTAssertEqual(catalog.price(for: "gpt-5.5", on: "2026-09-08")?.inputPerMillion, 12)
+        let before = catalog
+        XCTAssertThrowsError(try catalog.merge(Data(#"{"openai":{"models":{"gpt-5.5":{"cost":{"input":-1,"output":1}}}}}"#.utf8), now: first))
+        XCTAssertEqual(catalog, before)
+        XCTAssertThrowsError(try catalog.merge(Data(#"{"openai":{"models":{"gpt-5.5":{"cost":{"input":true,"output":1}}}}}"#.utf8), now: first))
+        try catalog.merge(Self.catalog(input: 0), now: first.addingTimeInterval(172_800))
+        XCTAssertEqual(catalog.price(for: "test-model", on: "2026-09-09")?.inputPerMillion, 0)
+        XCTAssertEqual(LocalCodexPricing.price(for: "gpt-5.6-sol", on: "2026-08-20")?.outputPerMillion, 30)
+        XCTAssertEqual(LocalCodexPricing.price(for: "gpt-5.6-sol", on: "2026-08-21")?.outputPerMillion, 20)
+        let tiered = Data(#"{"openai":{"models":{"test-tiered":{"cost":{"input":1,"output":2,"cache_read":0.1,"tiers":[{"input":3,"output":4,"cache_read":0.2,"tier":{"type":"context","size":300000}}]}}}}}"#.utf8)
+        try catalog.merge(tiered, now: first)
+        XCTAssertEqual(catalog.price(for: "test-tiered", on: "2026-09-07")?.thresholdTokens, 300_000)
+        XCTAssertEqual(catalog.price(for: "test-tiered", on: "2026-09-07")?.inputAboveThreshold, 3)
+    }
+
+    /// 验证并发合并、24 小时有效期、15 分钟退避、原子替换和重启后使用旧缓存。
+    func testRefreshCoalescesAndRetainsLastValidCache() async throws {
+        let root = Self.temporaryRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let counter = PricingFetchCounter()
+        let url = root.appendingPathComponent("prices.json")
+        let store = LocalCodexPricingStore(cacheURL: url) {
+            let attempt = await counter.next()
+            if attempt == 2 { throw URLError(.notConnectedToInternet) }
+            return Self.catalog(input: Double(attempt))
+        }
+        let now = Self.date("2026-09-07T00:00:00Z")
+        await withTaskGroup(of: Void.self) { group in
+            for _ in 0..<8 { group.addTask { _ = await store.snapshot(now: now) } }
+        }
+        let attempts = await counter.value
+        XCTAssertEqual(attempts, 1)
+        let initial = await store.snapshot(now: now.addingTimeInterval(800), retryUnknown: true)
+        let failed = await store.snapshot(now: now.addingTimeInterval(86_400))
+        XCTAssertEqual(failed, initial)
+        _ = await store.snapshot(now: now.addingTimeInterval(86_401), retryUnknown: true)
+        let afterFailure = await counter.value
+        XCTAssertEqual(afterFailure, 2)
+        let updated = await store.snapshot(now: now.addingTimeInterval(87_300))
+        XCTAssertEqual(updated.price(for: "test-model", on: "2026-09-08")?.inputPerMillion, 3)
+        let restored = LocalCodexPricingStore(cacheURL: url) { throw URLError(.notConnectedToInternet) }
+        let disk = await restored.snapshot(now: now.addingTimeInterval(87_301))
+        XCTAssertEqual(disk, updated)
+        let earlyCounter = PricingFetchCounter()
+        let early = LocalCodexPricingStore(cacheURL: root.appendingPathComponent("early.json")) {
+            _ = await earlyCounter.next()
+            return Self.catalog(input: 2)
+        }
+        _ = await early.snapshot(now: now)
+        _ = await early.snapshot(now: now.addingTimeInterval(901), retryUnknown: true)
+        let earlyAttempts = await earlyCounter.value
+        XCTAssertEqual(earlyAttempts, 2)
+    }
+
+    /// 验证 Astra 标准与 Fast 的 272K 边界、缓存写入及未知模型补价后复用原事件缓存。
+    func testAstraRequestPricingAndCachedRepricing() async throws {
+        let root = Self.temporaryRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let now = Self.date("2026-09-07T12:00:00Z")
+        let database = root.appendingPathComponent("state_5.sqlite")
+        try Data().write(to: database)
+        for input in [272_000, 272_001] {
+            for tier in ["default", "priority", "unrecognized"] {
+                let session = root.appendingPathComponent("\(input)-\(tier).jsonl")
+                let usage: [String: Any] = ["input_tokens": input, "cached_input_tokens": 100_000,
+                    "cache_creation_input_tokens": 100_000, "output_tokens": 1000]
+                let lines: [[String: Any]] = [
+                    ["type": "turn_context", "payload": ["model": "gpt-6-astra", "service_tier": tier]],
+                    ["timestamp": "2026-09-07T12:00:00Z", "type": "event_msg",
+                     "payload": ["type": "token_count", "info": ["total_token_usage": usage, "last_token_usage": usage]]]
+                ]
+                try Self.jsonl(lines).write(to: session)
+                let reader = Self.reader(root: root, session: session, database: database, now: now)
+                let first = await reader.load()
+                if tier == "unrecognized" {
+                    XCTAssertNil(first?.summary.monthCost)
+                    XCTAssertEqual(first?.summary.pricingStatus?.unpricedModels, ["gpt-6-astra"])
+                    continue
+                }
+                let cost = try XCTUnwrap(first?.summary.monthCost?.estimatedCostUSD)
+                let expected = (Double(input - 200_000) * 10 + 100_000 * 1 + 100_000 * 12.5)
+                    / 1_000_000 * (input > 272_000 ? 2 : 1)
+                    + 1000.0 * 50 / 1_000_000 * (input > 272_000 ? 1.5 : 1)
+                XCTAssertEqual(cost, expected * (tier == "priority" ? 2 : 1), accuracy: 1e-10)
+                let second = await reader.load()
+                XCTAssertEqual(second?.summary.monthCost, first?.summary.monthCost)
+            }
+        }
+        let session = root.appendingPathComponent("new-model.jsonl")
+        try Self.jsonl([
+            ["type": "turn_context", "payload": ["model": "test-model"]],
+            ["timestamp": "2026-09-07T12:00:00Z", "type": "event_msg", "payload": ["type": "token_count",
+                "info": ["total_token_usage": ["input_tokens": 100, "output_tokens": 20]]]]
+        ]).write(to: session)
+        let unpriced = await Self.reader(root: root, session: session, database: database, now: now).load()
+        XCTAssertNil(unpriced?.summary.monthCost)
+        XCTAssertEqual(unpriced?.summary.pricingStatus?.unpricedModels, ["test-model"])
+        let cacheURL = root.appendingPathComponent("usage.json")
+        let saved = try Data(contentsOf: cacheURL)
+        let store = LocalCodexPricingStore(cacheURL: root.appendingPathComponent("pricing.json")) { Self.catalog(input: 9) }
+        let priced = await Self.reader(root: root, session: session, database: database, now: now, pricing: store).load()
+        XCTAssertEqual(try XCTUnwrap(priced?.summary.monthCost?.estimatedCostUSD), 0.0013, accuracy: 1e-10)
+        XCTAssertEqual(priced?.summary.pricingStatus?.sources, ["models.dev"])
+        // 原始解析进度和事件保持一致；价格不写入 token 缓存。
+        let oldJSON = try JSONSerialization.jsonObject(with: saved) as? NSDictionary
+        let newJSON = try JSONSerialization.jsonObject(with: Data(contentsOf: cacheURL)) as? NSDictionary
+        XCTAssertEqual(oldJSON, newJSON)
+    }
+
+    /// 构造仅返回固定 SQLite 行的读取器，禁止测试访问真实会话或账户。
+    private static func reader(root: URL, session: URL, database: URL, now: Date,
+                               pricing: LocalCodexPricingStore? = nil) -> LocalCodexUsageReader {
+        LocalCodexUsageReader(now: { now }, databaseURL: database, automationFiles: [],
+            diagnostics: AppDiagnosticLog(fileURL: root.appendingPathComponent("test.log")),
+            usageCacheURL: root.appendingPathComponent("usage.json"), pricingStore: pricing,
+            query: { _, sql in
+                if sql.contains("AS threadCount") { return Data(#"[{"threadCount":1,"lastUpdatedAt":0}]"#.utf8) }
+                if sql.contains("AS rolloutPath") {
+                    return try? JSONSerialization.data(withJSONObject: [["threadID": "test", "rolloutPath": session.path,
+                        "cwd": "/test", "model": "gpt-6-astra", "tokensUsed": 1]])
+                }
+                return Data("[]".utf8)
+            })
+    }
+
+    /// 提供两个模型的最小公开目录，其中虚构模型用于缺价补算验证。
+    private static func catalog(input: Double) -> Data {
+        Data("{\"openai\":{\"models\":{\"gpt-5.5\":{\"cost\":{\"input\":\(input),\"output\":20}},\"test-model\":{\"cost\":{\"input\":\(input),\"output\":20}}}}}".utf8)
+    }
+
+    /// 固定 UTC 时间，避免测试依赖系统日期。
+    private static func date(_ text: String) -> Date { ISO8601DateFormatter().date(from: text)! }
+
+    /// 为每个检查分配独立临时目录。
+    private static func temporaryRoot() -> URL { FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString) }
+
+    /// 编码包含完整换行的日志，保持与真实扫描入口一致。
+    private static func jsonl(_ rows: [[String: Any]]) throws -> Data {
+        var data = Data()
+        for row in rows { data.append(try JSONSerialization.data(withJSONObject: row)); data.append(10) }
+        return data
+    }
+}
+
+/// 为并发刷新测试记录请求次数，不引入共享可变全局状态。
+private actor PricingFetchCounter {
+    var value = 0
+    /// 原子递增并返回本次尝试序号。
+    func next() -> Int { value += 1; return value }
+}

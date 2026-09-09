@@ -153,8 +153,10 @@ struct LocalCodexUsageReader: Sendable {
     private let automationFiles: [URL]
     private let diagnostics: AppDiagnosticLog
     private let usageCacheURL: URL
+    private let pricingStore: LocalCodexPricingStore?
     private let query: Query
 
+    /// 注入只读数据源；显式数据库默认不联网，调用方可传入价格仓库启用刷新。
     init(
         now: @escaping @Sendable () -> Date = Date.init,
         databaseURL: URL? = nil,
@@ -162,6 +164,7 @@ struct LocalCodexUsageReader: Sendable {
         automationFiles: [URL]? = nil,
         diagnostics: AppDiagnosticLog = .shared,
         usageCacheURL: URL? = nil,
+        pricingStore: LocalCodexPricingStore? = nil,
         query: @escaping Query = LocalCodexUsageReader.runQuery
     ) {
         self.now = now
@@ -173,6 +176,7 @@ struct LocalCodexUsageReader: Sendable {
         self.diagnostics = diagnostics
         self.usageCacheURL = usageCacheURL
             ?? diagnostics.directoryURL.appendingPathComponent("LocalUsageCache.json")
+        self.pricingStore = pricingStore ?? (databaseURL == nil ? .shared : nil)
         self.query = query
     }
 
@@ -182,17 +186,26 @@ struct LocalCodexUsageReader: Sendable {
             "开始读取本机统计；应用版本=\(Self.applicationVersionDescription())",
             category: Self.diagnosticCategory
         )
-        let snapshot = await Task.detached(priority: .utility) {
-            loadSynchronously()
+        let pricing = await pricingStore?.snapshot(now: now()) ?? LocalCodexPricingCatalog()
+        var snapshot = await Task.detached(priority: .utility) {
+            loadSynchronously(pricing: pricing)
         }.value
+        if let pricingStore, snapshot?.summary.pricingStatus?.unpricedModels.isEmpty == false {
+            let refreshed = await pricingStore.snapshot(now: now(), retryUnknown: true)
+            if refreshed != pricing {
+                snapshot = await Task.detached(priority: .utility) {
+                    loadSynchronously(pricing: refreshed)
+                }.value
+            }
+        }
         if snapshot == nil {
             diagnostics.error("本机统计读取结束：未生成可用快照", category: Self.diagnosticCategory)
         }
         return snapshot
     }
 
-    /// 执行聚合查询并组装内存快照；价格仅使用带生效日的内置官方口径。
-    private func loadSynchronously() -> LocalCodexUsageSnapshot? {
+    /// 执行聚合查询并组装内存快照；价格使用本次冻结的目录，避免一次聚合混入不同版本。
+    private func loadSynchronously(pricing: LocalCodexPricingCatalog) -> LocalCodexUsageSnapshot? {
         guard let databaseURL else {
             let candidates = Self.databaseCandidates().map(\.path).joined(separator: "；")
             diagnostics.error("未找到 Codex 状态库；已检查=\(candidates)", category: Self.diagnosticCategory)
@@ -236,6 +249,7 @@ struct LocalCodexUsageReader: Sendable {
             sevenDayStart: sevenDayStart,
             todayStart: todayStart,
             monthStart: monthStart,
+            pricing: pricing,
             calendar: calendar
         )
         guard let openRows: [TaskRow] = rows(
@@ -284,7 +298,8 @@ struct LocalCodexUsageReader: Sendable {
                 calendar: calendar
             ),
             monthCost: usage.monthCost,
-            hasIncompleteUsage: usage.hasIncompleteUsage ? true : nil
+            hasIncompleteUsage: usage.hasIncompleteUsage ? true : nil,
+            pricingStatus: usage.pricingStatus
         )
         diagnostics.info(
             "本机统计读取成功；线程=\(total.threadCount)；项目=\(projects.count)；日聚合=\(usage.dailyRows.count)；事件会话=\(usageSources.count)",
@@ -331,6 +346,7 @@ struct LocalCodexUsageReader: Sendable {
         sevenDayStart: Date,
         todayStart: Date,
         monthStart: Date,
+        pricing: LocalCodexPricingCatalog,
         calendar: Calendar
     ) -> LocalUsageAggregation {
         let dayFormatter = Self.dayFormatter(calendar: calendar)
@@ -409,6 +425,8 @@ struct LocalCodexUsageReader: Sendable {
         var daily: [String: SessionTokenUsage] = [:]
         var dailyCosts: [String: Double] = [:]
         var unpricedDays = Set<String>()
+        var unpricedModels = Set<String>()
+        var priceSources = Set<String>()
         var projects: [String: ProjectAccumulator] = [:]
         var pricedMonthUsage = SessionTokenUsage.zero
         var monthCost = 0.0
@@ -439,9 +457,9 @@ struct LocalCodexUsageReader: Sendable {
                 guard let day = event.day, day >= historyDay, day <= today else { continue }
                 daily[day, default: .zero].add(event.usage)
                 let model = event.model ?? source.model
-                let price = LocalCodexPricing.price(for: model, on: day)
-                if let price {
-                    let cost = Self.estimatedCost(for: event.usage, price: price)
+                let price = pricing.price(for: model, on: day)
+                if let price, let cost = Self.estimatedCost(for: event.usage, price: price, serviceTier: event.serviceTier, model: model) {
+                    priceSources.insert(price.source)
                     dailyCosts[day, default: 0] += cost
                     if day >= monthDay {
                         sourceMonthCost += cost
@@ -449,6 +467,7 @@ struct LocalCodexUsageReader: Sendable {
                     }
                 } else if event.usage.total > 0 {
                     unpricedDays.insert(day)
+                    unpricedModels.insert(model)
                     if day >= monthDay { sourceMonthFullyPriced = false }
                 }
                 if day >= sevenDay { sourceSevenDayUsage.add(event.usage) }
@@ -502,7 +521,13 @@ struct LocalCodexUsageReader: Sendable {
             dailyRows: dailyRows,
             monthCost: trustedMonthCost,
             hasIncompleteUsage: !incompletePaths.isEmpty
-                || (monthSessionCount > 0 && pricedMonthSessionCount < monthSessionCount)
+                || (monthSessionCount > 0 && pricedMonthSessionCount < monthSessionCount),
+            pricingStatus: LocalCodexPricingStatus(
+                sources: priceSources.sorted(),
+                updatedAt: pricing.fetchedAt,
+                isStale: pricing.fetchedAt.map { now().timeIntervalSince($0) > 86_400 } ?? true,
+                unpricedModels: unpricedModels.sorted()
+            )
         )
     }
 
@@ -567,7 +592,8 @@ struct LocalCodexUsageReader: Sendable {
                 if newline > lineStart {
                     let line = pending[lineStart..<newline]
                     let prefix = String(decoding: line.prefix(512), as: UTF8.self)
-                    if prefix.contains("\"token_count\"") || prefix.contains("\"turn_context\"") {
+                    if prefix.contains("\"token_count\"") || prefix.contains("\"turn_context\"")
+                        || String(decoding: line, as: UTF8.self).contains("\"usage\"") {
                         parseUsageLine(
                             Data(line),
                             entry: &entry,
@@ -612,12 +638,14 @@ struct LocalCodexUsageReader: Sendable {
         let payload = object["payload"] as? [String: Any]
         if object["type"] as? String == "turn_context" {
             entry.activeModel = (payload?["model"] as? String).flatMap(normalizedModelName)
+            entry.activeServiceTier = payload?["service_tier"] as? String
             return
         }
         let timestamp: String?
         let cumulative: SessionTokenSample?
         let lastUsage: SessionTokenSample?
         let eventModel: String?
+        let responseTier: String?
         if object["type"] as? String == "event_msg",
            payload?["type"] as? String == "token_count",
            let info = payload?["info"] as? [String: Any],
@@ -627,11 +655,13 @@ struct LocalCodexUsageReader: Sendable {
             cumulative = (info["total_token_usage"] as? [String: Any]).map(SessionTokenSample.init(json:))
             lastUsage = (info["last_token_usage"] as? [String: Any]).map(SessionTokenSample.init(json:))
             eventModel = entry.activeModel
+            responseTier = nil
         } else if object["type"] == nil, let bareUsage = bareUsage(in: object) {
             timestamp = object["timestamp"] as? String
             cumulative = nil
             lastUsage = bareUsage.sample
             eventModel = bareUsage.model ?? entry.activeModel
+            responseTier = bareUsage.serviceTier
         } else {
             return
         }
@@ -651,7 +681,9 @@ struct LocalCodexUsageReader: Sendable {
             day: day,
             model: eventModel,
             usage: delta,
-            sequence: entry.nextEventSequence
+            sequence: entry.nextEventSequence,
+            serviceTier: responseTier ?? (payload?["service_tier"] as? String)
+                ?? (object["service_tier"] as? String) ?? entry.activeServiceTier
         )
         entry.nextEventSequence += 1
         if entry.collectsEvents {
@@ -661,21 +693,22 @@ struct LocalCodexUsageReader: Sendable {
     }
 
     /// 从命令行一次性输出的四种规范容器中提取 usage，避免把 prompt 中的任意字段误认为用量。
-    private static func bareUsage(in object: [String: Any]) -> (sample: SessionTokenSample, model: String?)? {
+    private static func bareUsage(in object: [String: Any]) -> (sample: SessionTokenSample, model: String?, serviceTier: String?)? {
         let envelopes = [
             object,
             object["data"] as? [String: Any],
             object["result"] as? [String: Any],
             object["response"] as? [String: Any]
         ].compactMap { $0 }
-        guard let usage = envelopes.lazy.compactMap({ $0["usage"] as? [String: Any] }).first,
+        guard let envelope = envelopes.first(where: { $0["usage"] is [String: Any] }),
+              let usage = envelope["usage"] as? [String: Any],
               let sample = SessionTokenSample(bareJSON: usage)
         else { return nil }
         let model = envelopes.lazy.compactMap {
             ($0["model"] as? String).flatMap(normalizedModelName)
                 ?? ($0["model_name"] as? String).flatMap(normalizedModelName)
         }.first
-        return (sample, model)
+        return (sample, model, envelope["service_tier"] as? String)
     }
 
     /// 清理日志模型名中的空白；空值保留为 nil，后续才能明确回退到 SQLite 线程模型。
@@ -799,22 +832,38 @@ struct LocalCodexUsageReader: Sendable {
         return formatter
     }
 
-    /// 按事件级单价计算 API 等效金额；输入超阈值时整个请求使用长上下文价格。
+    /// 按请求输入阈值和明确的服务层级计价；缺少实际使用桶的单价或未知层级时返回 nil。
     private static func estimatedCost(
         for tokens: SessionTokenUsage,
-        price: LocalCodexPricing.Price
-    ) -> Double {
-        let billableCached = min(tokens.cachedInput, tokens.input)
-        let uncached = max(0, tokens.input - billableCached)
-        let usesLongContextPrice = price.thresholdTokens.map { tokens.input > $0 } == true
-        let inputPrice = usesLongContextPrice ? price.inputAboveThreshold ?? price.inputPerMillion : price.inputPerMillion
-        let cachedPrice = usesLongContextPrice
-            ? price.cachedInputAboveThreshold ?? price.cachedInputPerMillion
-            : price.cachedInputPerMillion
-        let outputPrice = usesLongContextPrice ? price.outputAboveThreshold ?? price.outputPerMillion : price.outputPerMillion
-        return Double(uncached) / 1_000_000 * inputPrice
-            + Double(billableCached) / 1_000_000 * cachedPrice
-            + Double(tokens.output) / 1_000_000 * outputPrice
+        price: LocalCodexPricing.Price,
+        serviceTier: String?,
+        model: String
+    ) -> Double? {
+        let cached = min(tokens.cachedInput, tokens.input)
+        let writes = min(tokens.cacheWriteInput, tokens.input - cached)
+        let uncached = tokens.input - cached - writes
+        let long = price.thresholdTokens.map { tokens.input > $0 } == true
+        let inputRate = long ? price.inputAboveThreshold ?? price.inputPerMillion : price.inputPerMillion
+        let cachedRate = long ? price.cachedInputAboveThreshold : price.cachedInputPerMillion
+        let writeRate = long ? price.cacheWriteAboveThreshold : price.cacheWritePerMillion
+        let outputRate = long ? price.outputAboveThreshold ?? price.outputPerMillion : price.outputPerMillion
+        guard cached == 0 || cachedRate != nil, writes == 0 || writeRate != nil else { return nil }
+        let multiplier: Double
+        switch serviceTier?.lowercased() {
+        case nil, "", "default", "standard", "auto": multiplier = 1
+        case "priority", "fast":
+            let normalized = LocalCodexPricingCatalog.key(model)
+            guard ["gpt-6-astra", "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"].contains(normalized),
+                  !long || normalized == "gpt-6-astra" else { return nil }
+            multiplier = 2
+        case "flex", "batch":
+            guard LocalCodexPricingCatalog.key(model) == "gpt-6-astra" else { return nil }
+            multiplier = 0.5
+        default: return nil
+        }
+        let cost = (Double(uncached) * inputRate + Double(cached) * (cachedRate ?? 0)
+            + Double(writes) * (writeRate ?? 0) + Double(tokens.output) * outputRate) / 1_000_000 * multiplier
+        return cost.isFinite ? cost : nil
     }
 
     /// 将 JSON 数字安全转换为非负 Int64。
@@ -1161,12 +1210,13 @@ private struct DailyUsageRow {
 private struct SessionTokenSample: Codable, Equatable, Sendable {
     let input: Int64?
     let cachedInput: Int64?
+    let cacheWriteInput: Int64?
     let output: Int64?
     let reasoningOutput: Int64?
     let totalTokens: Int64?
 
     var hasNegativeValue: Bool {
-        [input, cachedInput, output, reasoningOutput, totalTokens]
+        [input, cachedInput, cacheWriteInput, output, reasoningOutput, totalTokens]
             .compactMap { $0 }
             .contains { $0 < 0 }
     }
@@ -1177,6 +1227,8 @@ private struct SessionTokenSample: Codable, Equatable, Sendable {
         cachedInput = [json["cached_input_tokens"], json["cache_read_input_tokens"]]
             .compactMap { ($0 as? NSNumber)?.int64Value }
             .max()
+        cacheWriteInput = (json["cache_creation_input_tokens"] as? NSNumber)?.int64Value
+            ?? (json["cache_write_input_tokens"] as? NSNumber)?.int64Value
         output = (json["output_tokens"] as? NSNumber)?.int64Value
         reasoningOutput = (json["reasoning_output_tokens"] as? NSNumber)?.int64Value
         totalTokens = (json["total_tokens"] as? NSNumber)?.int64Value
@@ -1195,6 +1247,8 @@ private struct SessionTokenSample: Codable, Equatable, Sendable {
         cachedInput = [json["cached_input_tokens"], json["cache_read_input_tokens"], json["cached_tokens"]]
             .compactMap { ($0 as? NSNumber)?.int64Value }
             .max()
+        cacheWriteInput = (json["cache_creation_input_tokens"] as? NSNumber)?.int64Value
+            ?? (json["cache_write_input_tokens"] as? NSNumber)?.int64Value
         self.output = output.int64Value
         reasoningOutput = (json["reasoning_output_tokens"] as? NSNumber)?.int64Value
         totalTokens = (json["total_tokens"] as? NSNumber)?.int64Value
@@ -1205,6 +1259,7 @@ private struct SessionTokenSample: Codable, Equatable, Sendable {
         SessionTokenUsage(
             input: input ?? previous.input,
             cachedInput: cachedInput ?? previous.cachedInput,
+            cacheWriteInput: cacheWriteInput ?? previous.cacheWriteInput,
             output: output ?? previous.output,
             reasoningOutput: reasoningOutput ?? previous.reasoningOutput,
             reportedTotal: totalTokens ?? previous.reportedTotal
@@ -1254,12 +1309,14 @@ private struct SessionUsageEvent: Codable, Sendable {
     let model: String?
     let usage: SessionTokenUsage
     let sequence: Int
+    let serviceTier: String?
 }
 
 /// 描述单个事件或时间段的 token 拆分；总量优先采用事件规范字段，旧日志缺失时回退为输入加输出。
 private struct SessionTokenUsage: Codable, Sendable {
     let input: Int64
     let cachedInput: Int64
+    let cacheWriteInput: Int64
     let output: Int64
     let reasoningOutput: Int64
     let reportedTotal: Int64
@@ -1276,6 +1333,7 @@ private struct SessionTokenUsage: Codable, Sendable {
     var isZero: Bool {
         input == 0
             && cachedInput == 0
+            && cacheWriteInput == 0
             && output == 0
             && reasoningOutput == 0
             && reportedTotal == 0
@@ -1285,12 +1343,14 @@ private struct SessionTokenUsage: Codable, Sendable {
     init(
         input: Int64,
         cachedInput: Int64,
+        cacheWriteInput: Int64 = 0,
         output: Int64,
         reasoningOutput: Int64 = 0,
         reportedTotal: Int64? = nil
     ) {
         self.input = max(0, input)
         self.cachedInput = max(0, cachedInput)
+        self.cacheWriteInput = max(0, cacheWriteInput)
         self.output = max(0, output)
         self.reasoningOutput = max(0, reasoningOutput)
         self.reportedTotal = max(0, reportedTotal ?? input + output)
@@ -1301,6 +1361,7 @@ private struct SessionTokenUsage: Codable, Sendable {
         self = SessionTokenUsage(
             input: input + other.input,
             cachedInput: cachedInput + other.cachedInput,
+            cacheWriteInput: cacheWriteInput + other.cacheWriteInput,
             output: output + other.output,
             reasoningOutput: reasoningOutput + other.reasoningOutput,
             reportedTotal: reportedTotal + other.reportedTotal
@@ -1312,6 +1373,7 @@ private struct SessionTokenUsage: Codable, Sendable {
         SessionTokenUsage(
             input: max(input, other.input),
             cachedInput: max(cachedInput, other.cachedInput),
+            cacheWriteInput: max(cacheWriteInput, other.cacheWriteInput),
             output: max(output, other.output),
             reasoningOutput: max(reasoningOutput, other.reasoningOutput),
             reportedTotal: max(reportedTotal, other.reportedTotal)
@@ -1323,6 +1385,7 @@ private struct SessionTokenUsage: Codable, Sendable {
         SessionTokenUsage(
             input: max(0, input - other.input),
             cachedInput: max(0, cachedInput - other.cachedInput),
+            cacheWriteInput: max(0, cacheWriteInput - other.cacheWriteInput),
             output: max(0, output - other.output),
             reasoningOutput: max(0, reasoningOutput - other.reasoningOutput),
             reportedTotal: max(0, reportedTotal - other.reportedTotal)
@@ -1335,6 +1398,7 @@ private struct SessionTokenUsage: Codable, Sendable {
         return SessionTokenUsage(
             input: max(0, input - previous.input),
             cachedInput: max(0, cachedInput - previous.cachedInput),
+            cacheWriteInput: max(0, cacheWriteInput - previous.cacheWriteInput),
             output: max(0, output - previous.output),
             reasoningOutput: max(0, reasoningOutput - previous.reasoningOutput),
             reportedTotal: max(0, reportedTotal - previous.reportedTotal)
@@ -1348,6 +1412,7 @@ private struct SessionUsageCache: Codable, Sendable {
     var latestTotal: SessionTokenUsage?
     var lifetimeUsage = SessionTokenUsage.zero
     var activeModel: String?
+    var activeServiceTier: String?
     var nextEventSequence = 0
     var recentEvents: [SessionUsageEvent] = []
     var collectsEvents: Bool
@@ -1361,7 +1426,8 @@ private struct SessionUsageCache: Codable, Sendable {
 
 /// 所有 rollout 的持久化增量缓存；时区改变时必须整体重建日期键。
 private struct LocalUsageCache: Codable, Sendable {
-    static let currentVersion = 6
+    // 服务档位解析修正后重读旧事件，避免继续沿用标准价。
+    static let currentVersion = 8
 
     var version = currentVersion
     let timeZoneIdentifier: String
@@ -1397,80 +1463,5 @@ private struct LocalUsageAggregation {
     let dailyRows: [DailyUsageRow]
     let monthCost: LocalCodexCostSummary?
     let hasIncompleteUsage: Bool
-}
-
-/// 保存已核对的 OpenAI 模型历史价格；未知模型拒绝猜价。
-private enum LocalCodexPricing {
-    /// 描述每百万 token 的美元单价，可选保存长上下文价格。
-    struct Price: Sendable {
-        let inputPerMillion: Double
-        let cachedInputPerMillion: Double
-        let outputPerMillion: Double
-        let thresholdTokens: Int?
-        let inputAboveThreshold: Double?
-        let cachedInputAboveThreshold: Double?
-        let outputAboveThreshold: Double?
-    }
-
-    /// 为已知模型提供按生效日区分的 OpenAI 官方价；未知模型不猜测费用。
-    static func price(for model: String, on day: String? = nil) -> Price? {
-        let normalized = normalizedModel(model)
-        let usesReducedGPT56Price = (day ?? "9999-12-31") >= "2026-07-30"
-        if normalized == "gpt-5.6" || normalized.hasPrefix("gpt-5.6-sol") {
-            return price(input: 5, cachedInput: 0.5, output: 30, longContextMultiplier: (2, 2, 1.5))
-        }
-        if normalized == "gpt-5.6-terra" || normalized.hasPrefix("gpt-5.6-terra-") {
-            return usesReducedGPT56Price
-                ? price(input: 2, cachedInput: 0.2, output: 12, longContextMultiplier: (2, 2, 1.5))
-                : price(input: 2.5, cachedInput: 0.25, output: 15, longContextMultiplier: (2, 2, 1.5))
-        }
-        if normalized == "gpt-5.6-luna" || normalized.hasPrefix("gpt-5.6-luna-") {
-            return usesReducedGPT56Price
-                ? price(input: 0.2, cachedInput: 0.02, output: 1.2, longContextMultiplier: (2, 2, 1.5))
-                : price(input: 1, cachedInput: 0.1, output: 6, longContextMultiplier: (2, 2, 1.5))
-        }
-        let table: [(String, Double, Double, Double)] = [
-            ("gpt-5.5-pro", 30, 30, 180),
-            ("gpt-5.5", 5, 0.5, 30),
-            ("gpt-5.4-mini", 0.75, 0.075, 4.5),
-            ("gpt-5.4-nano", 0.2, 0.02, 1.25),
-            ("gpt-5.4-pro", 30, 30, 180),
-            ("gpt-5.4", 2.5, 0.25, 15),
-            ("gpt-5.3-codex", 1.75, 0.175, 14),
-            ("gpt-5.2-codex", 1.75, 0.175, 14),
-            ("gpt-5.2", 1.75, 0.175, 14),
-            ("gpt-5.1", 1.25, 0.125, 10),
-            ("gpt-5-codex", 1.25, 0.125, 10),
-            ("gpt-5", 1.25, 0.125, 10)
-        ]
-        guard let match = table.first(where: { normalized == $0.0 || normalized.hasPrefix($0.0 + "-") }) else {
-            return nil
-        }
-        return price(input: match.1, cachedInput: match.2, output: match.3)
-    }
-
-    /// 构建标准或长上下文价格；GPT-5.6 的阈值为单次输入 272K token。
-    private static func price(
-        input: Double,
-        cachedInput: Double,
-        output: Double,
-        longContextMultiplier: (input: Double, cachedInput: Double, output: Double)? = nil
-    ) -> Price {
-        Price(
-            inputPerMillion: input,
-            cachedInputPerMillion: cachedInput,
-            outputPerMillion: output,
-            thresholdTokens: longContextMultiplier == nil ? nil : 272_000,
-            inputAboveThreshold: longContextMultiplier.map { input * $0.input },
-            cachedInputAboveThreshold: longContextMultiplier.map { cachedInput * $0.cachedInput },
-            outputAboveThreshold: longContextMultiplier.map { output * $0.output }
-        )
-    }
-
-    /// 去除 provider 前缀并统一大小写，保留模型版本信息供稳定匹配。
-    private static func normalizedModel(_ raw: String) -> String {
-        let lowered = raw.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        return lowered.hasPrefix("openai/") ? String(lowered.dropFirst("openai/".count)) : lowered
-    }
-
+    let pricingStatus: LocalCodexPricingStatus
 }

@@ -610,6 +610,8 @@ public struct LocalCodexUsageSummary: Codable, Equatable, Sendable {
     public let taskCounts: LocalCodexTaskCounts
     public let dailyBuckets: [LocalCodexDailyUsageBucket]?
     public let monthCost: LocalCodexCostSummary?
+    /// 价格来源与缺价状态独立保存，全部模型未计价时也能说明原因。
+    public let pricingStatus: LocalCodexPricingStatus?
     /// 为 true 时至少一个统计维度只包含可解析数据，界面必须明确提示。
     public let hasIncompleteUsage: Bool?
 
@@ -623,7 +625,8 @@ public struct LocalCodexUsageSummary: Codable, Equatable, Sendable {
         taskCounts: LocalCodexTaskCounts,
         dailyBuckets: [LocalCodexDailyUsageBucket]? = nil,
         monthCost: LocalCodexCostSummary? = nil,
-        hasIncompleteUsage: Bool? = nil
+        hasIncompleteUsage: Bool? = nil,
+        pricingStatus: LocalCodexPricingStatus? = nil
     ) {
         self.fetchedAt = fetchedAt
         self.todayTokens = max(0, todayTokens)
@@ -635,6 +638,7 @@ public struct LocalCodexUsageSummary: Codable, Equatable, Sendable {
         self.dailyBuckets = dailyBuckets
         self.monthCost = monthCost
         self.hasIncompleteUsage = hasIncompleteUsage
+        self.pricingStatus = pricingStatus
     }
 }
 
@@ -1049,5 +1053,21 @@ public struct CodexTopInvocation: Codable, Equatable, Identifiable, Sendable {
 
     public var displayName: String {
         pluginName ?? skillName ?? pluginId ?? skillId ?? type
+    }
+}
+
+/// 描述本次费用使用的价格来源及未能计价的模型，不包含会话内容或账户信息。
+public struct LocalCodexPricingStatus: Codable, Equatable, Sendable {
+    public let sources: [String]
+    public let updatedAt: Date?
+    public let isStale: Bool
+    public let unpricedModels: [String]
+
+    /// 由聚合层传入去重后的来源和模型；缺少更新时间代表尚未取得外部目录。
+    public init(sources: [String], updatedAt: Date?, isStale: Bool, unpricedModels: [String]) {
+        self.sources = sources
+        self.updatedAt = updatedAt
+        self.isStale = isStale
+        self.unpricedModels = unpricedModels
     }
 }

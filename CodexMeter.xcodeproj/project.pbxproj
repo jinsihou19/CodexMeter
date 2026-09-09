@@ -7,6 +7,10 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		920000000000000000000002 /* LocalCodexPricingStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 920000000000000000000001 /* LocalCodexPricingStore.swift */; };
+		920000000000000000000003 /* LocalCodexPricingStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 920000000000000000000001 /* LocalCodexPricingStore.swift */; };
+		910000000000000000000002 /* LocalCodexPricing.swift in Sources */ = {isa = PBXBuildFile; fileRef = 910000000000000000000001 /* LocalCodexPricing.swift */; };
+		910000000000000000000003 /* LocalCodexPricing.swift in Sources */ = {isa = PBXBuildFile; fileRef = 910000000000000000000001 /* LocalCodexPricing.swift */; };
 		100000000000000000000001 /* Empty.swift in Sources */ = {isa = PBXBuildFile; fileRef = 100000000000000000000011 /* Empty.swift */; };
 		100000000000000000000002 /* UsageModelsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 100000000000000000000012 /* UsageModelsTests.swift */; };
 		100000000000000000000003 /* CodexMeterShared.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 100000000000000000000021 /* CodexMeterShared.framework */; };
@@ -133,6 +137,8 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
+		920000000000000000000001 /* LocalCodexPricingStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalCodexPricingStore.swift; sourceTree = "<group>"; };
+		910000000000000000000001 /* LocalCodexPricing.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalCodexPricing.swift; sourceTree = "<group>"; };
 		100000000000000000000011 /* Empty.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Empty.swift; sourceTree = "<group>"; };
 		100000000000000000000012 /* UsageModelsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UsageModelsTests.swift; sourceTree = "<group>"; };
 		100000000000000000000013 /* UsageFormatterTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UsageFormatterTests.swift; sourceTree = "<group>"; };
@@ -277,6 +283,8 @@
 				100000000000000000000F04 /* CodexHookActivityStore.swift */,
 				10000000000000000000001B /* UsageViewModel.swift */,
 				300000000000000000000004 /* LocalCodexUsageReader.swift */,
+				920000000000000000000001 /* LocalCodexPricingStore.swift */,
+				910000000000000000000001 /* LocalCodexPricing.swift */,
 				100000000000000000001004 /* CodexRadarStore.swift */,
 				100000000000000000001020 /* MenuBarPopoverLayout.swift */,
 				10000000000000000000001C /* MenuBarView.swift */,
@@ -530,6 +538,8 @@
 				100000000000000000001023 /* CodexRadarStore.swift in Sources */,
 				300000000000000000000001 /* LocalCodexUsageReaderTests.swift in Sources */,
 				300000000000000000000002 /* LocalCodexUsageReader.swift in Sources */,
+				920000000000000000000002 /* LocalCodexPricingStore.swift in Sources */,
+				910000000000000000000002 /* LocalCodexPricing.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -540,6 +550,8 @@
 				10000000000000000000000B /* CodexMeterApp.swift in Sources */,
 				10000000000000000000000C /* UsageViewModel.swift in Sources */,
 				300000000000000000000005 /* LocalCodexUsageReader.swift in Sources */,
+				920000000000000000000003 /* LocalCodexPricingStore.swift in Sources */,
+				910000000000000000000003 /* LocalCodexPricing.swift in Sources */,
 				100000000000000000001014 /* CodexRadarStore.swift in Sources */,
 				100000000000000000001021 /* MenuBarPopoverLayout.swift in Sources */,
 				10000000000000000000000D /* MenuBarView.swift in Sources */,
@@ -803,7 +815,7 @@
 				CODE_SIGN_ENTITLEMENTS = CodexMeter/CodexMeter.entitlements;
 				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 26;
+				CURRENT_PROJECT_VERSION = 27;
 				DEVELOPMENT_TEAM = Q53B3XSA9F;
 				ENABLE_HARDENED_RUNTIME = YES;
 				GENERATE_INFOPLIST_FILE = NO;
@@ -812,7 +824,7 @@
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
-				MARKETING_VERSION = 1.2.2;
+				MARKETING_VERSION = 1.3.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.jinsihou.CodexMeter;
 				PRODUCT_MODULE_NAME = CodexMeter;
 				PRODUCT_NAME = CodexMeter;
@@ -829,7 +841,7 @@
 					CODE_SIGN_ENTITLEMENTS = "";
 					"CODE_SIGN_IDENTITY[sdk=macosx*]" = "-";
 					CODE_SIGN_STYLE = Manual;
-				CURRENT_PROJECT_VERSION = 26;
+				CURRENT_PROJECT_VERSION = 27;
 					DEVELOPMENT_TEAM = "";
 					ENABLE_HARDENED_RUNTIME = NO;
 				GENERATE_INFOPLIST_FILE = NO;
@@ -838,7 +850,7 @@
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
-				MARKETING_VERSION = 1.2.2;
+				MARKETING_VERSION = 1.3.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.jinsihou.CodexMeter;
 				PRODUCT_MODULE_NAME = CodexMeter;
 				PRODUCT_NAME = CodexMeter;
@@ -854,7 +866,7 @@
 				CODE_SIGN_ENTITLEMENTS = CodexMeterWidget/CodexMeterWidget.entitlements;
 				"CODE_SIGN_IDENTITY[sdk=*]" = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 26;
+				CURRENT_PROJECT_VERSION = 27;
 				DEVELOPMENT_TEAM = Q53B3XSA9F;
 				ENABLE_APP_SANDBOX = YES;
 				GENERATE_INFOPLIST_FILE = NO;
@@ -864,7 +876,7 @@
 					"@executable_path/../Frameworks",
 					"@executable_path/../../../../Frameworks",
 				);
-				MARKETING_VERSION = 1.2.2;
+				MARKETING_VERSION = 1.3.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.jinsihou.CodexMeter.WidgetExtension;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SKIP_INSTALL = YES;
@@ -880,7 +892,7 @@
 				CODE_SIGN_IDENTITY = "-";
 				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "-";
 				CODE_SIGN_STYLE = Manual;
-				CURRENT_PROJECT_VERSION = 26;
+				CURRENT_PROJECT_VERSION = 27;
 				DEVELOPMENT_TEAM = "";
 				ENABLE_APP_SANDBOX = YES;
 				GENERATE_INFOPLIST_FILE = NO;
@@ -890,7 +902,7 @@
 					"@executable_path/../Frameworks",
 					"@executable_path/../../../../Frameworks",
 				);
-				MARKETING_VERSION = 1.2.2;
+				MARKETING_VERSION = 1.3.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.jinsihou.CodexMeter.WidgetExtension;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SKIP_INSTALL = YES;

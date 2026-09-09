@@ -1130,6 +1130,7 @@ private struct LocalCodexUsageSection: View {
                     }
                     Spacer()
                     Text(AppLocalization.string("API 等效估算"))
+                        .help("未记录服务层级的日志按标准价估算；仅在日志明确记录时计算 Fast 等倍数。")
                         .font(.caption2)
                         .foregroundStyle(.tertiary)
                 }
@@ -1260,7 +1261,7 @@ private struct LocalCodexUsageSection: View {
                 HStack(spacing: 6) {
                     Image(systemName: symbol(for: item.kind))
                         .frame(width: 12)
-                        .foregroundStyle(color(for: item.kind))
+                        .foregroundStyle(color(for: item.kind).opacity(0.72))
                     Text(item.title)
                         .lineLimit(1)
                     Spacer(minLength: 6)
@@ -1841,6 +1842,7 @@ private struct CodexAnalyticsSection: View {
             Label(AppLocalization.string("分析数据最多延迟 6 小时"), systemImage: "info.circle")
                 .font(.caption2)
                 .foregroundStyle(.secondary)
+                .padding(.top, 2)
         }
         .menuSectionCard(padding: 8)
     }
@@ -1875,6 +1877,15 @@ private struct CodexAnalyticsChart: View {
                     .foregroundStyle(.tertiary)
                     .frame(maxWidth: .infinity, minHeight: 52)
             } else {
+                HStack {
+                    Text(activeBucket.date)
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                    Text(formattedValue(normalizedTotal(activeBucket, keys: keys)))
+                        .fontWeight(.semibold)
+                }
+                .font(.caption2.monospacedDigit())
+
                 GeometryReader { geometry in
                     HStack(alignment: .bottom, spacing: buckets.count > 10 ? 2 : 5) {
                         ForEach(buckets) { bucket in
@@ -1911,30 +1922,19 @@ private struct CodexAnalyticsChart: View {
         .animation(.easeOut(duration: 0.12), value: selectedDate)
     }
 
-    /// 展示选中日期的合计与各系列数值，同时承担图例职责。
+    /// 展示选中日期的各系列数值，同时承担图例职责。
     private func selectedDetails(keys: [String]) -> some View {
-        VStack(alignment: .leading, spacing: 3) {
-            HStack {
-                Text(activeBucket.date)
-                    .foregroundStyle(.secondary)
-                Spacer()
-                Text(formattedValue(normalizedTotal(activeBucket, keys: keys)))
-                    .fontWeight(.semibold)
-            }
-            .font(.caption2.monospacedDigit())
-
-            LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], alignment: .leading, spacing: 3) {
-                ForEach(Array(keys.enumerated()), id: \.element) { index, key in
-                    HStack(spacing: 4) {
-                        Circle().fill(colors[index % colors.count]).frame(width: 5, height: 5)
-                        Text(displayName(key)).lineLimit(1)
-                        Spacer(minLength: 2)
-                        Text(formattedValue(value(for: key, in: activeBucket)))
-                            .monospacedDigit()
-                    }
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
+        LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], alignment: .leading, spacing: 3) {
+            ForEach(Array(keys.enumerated()), id: \.element) { index, key in
+                HStack(spacing: 4) {
+                    Circle().fill(colors[index % colors.count]).frame(width: 5, height: 5)
+                    Text(displayName(key)).lineLimit(1)
+                    Spacer(minLength: 2)
+                    Text(formattedValue(value(for: key, in: activeBucket)))
+                        .monospacedDigit()
                 }
+                .font(.caption2)
+                .foregroundStyle(.secondary)
             }
         }
     }
