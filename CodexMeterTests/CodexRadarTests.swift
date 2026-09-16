@@ -15,6 +15,9 @@ final class CodexRadarTests: XCTestCase {
         let source = try String(contentsOf: sourceURL, encoding: .utf8)
 
         XCTAssertTrue(source.contains("CodexRadarModelSelection.latestGPTSeriesByFamily("))
+        XCTAssertTrue(source.contains("case .radarInsights:\n            return nil"))
+        XCTAssertTrue(source.contains("https://www.aiiq.org/charts/iq-bell-curve/"))
+        XCTAssertTrue(source.contains("if let radarPageURL"))
         XCTAssertTrue(source.contains("from: displaySeries.filter { $0.model?.hasPrefix(\"gpt-\") == true }"))
         XCTAssertTrue(source.contains("let otherSeries = displaySeries.filter { $0.model?.hasPrefix(\"gpt-\") != true }"))
         XCTAssertTrue(source.contains("@State private var selectedModelFamilies: Set<String> = [\"Astra\"]"))

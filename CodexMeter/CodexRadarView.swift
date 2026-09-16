@@ -13,12 +13,14 @@ struct CodexRadarSection: View {
     @State private var didCustomizeOtherModels = false
 
     /// 返回当前数据源的详情页，避免切换到 AI IQ 后仍打开 Codex Radar。
-    private var radarPageURL: URL {
+    private var radarPageURL: URL? {
         switch settings.source {
-        case .codexRadar, .radarInsights:
-            return URL(string: "https://codexradar.com/")!
+        case .codexRadar:
+            return URL(string: "https://codexradar.com/")
+        case .radarInsights:
+            return nil
         case .aiIQ:
-            return URL(string: "https://www.aiiq.org/")!
+            return URL(string: "https://www.aiiq.org/charts/iq-bell-curve/")
         }
     }
 
@@ -223,12 +225,18 @@ struct CodexRadarSection: View {
                 ProgressView()
                     .controlSize(.mini)
             }
-            Link(destination: radarPageURL) {
-                Image(systemName: "arrow.up.right")
+            if let radarPageURL {
+                Link(destination: radarPageURL) {
+                    Image(systemName: "arrow.up.right")
+                }
+                .buttonStyle(.plain)
+                .imageScale(.small)
+                .help(
+                    AppLocalization.usesEnglish()
+                        ? "Open \(settings.source.title)"
+                        : "打开 \(settings.source.title)"
+                )
             }
-            .buttonStyle(.plain)
-            .imageScale(.small)
-            .help(AppLocalization.string("打开 Codex Radar"))
             Button {
                 Task { await store.refresh() }
             } label: {
