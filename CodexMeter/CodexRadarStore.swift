@@ -20,6 +20,7 @@ final class CodexRadarStore: ObservableObject {
     private var refreshTask: Task<Void, Never>?
     private var hasStartedRefreshLoop = false
     private var settingsObserver: NSObjectProtocol?
+    private var activeSource: CodexRadarSource
 
     init(
         client: any CodexRadarFetching = DirectCodexRadarClient(),
@@ -33,7 +34,10 @@ final class CodexRadarStore: ObservableObject {
         self.store = store
         self.settingsProvider = settingsProvider
         self.nowProvider = nowProvider
-        self.snapshot = try? store.load()
+        let settings = settingsProvider()
+        self.activeSource = settings.source
+        let cachedSnapshot = try? store.load()
+        self.snapshot = cachedSnapshot?.source == settings.source ? cachedSnapshot : nil
     }
 
     deinit {
@@ -57,9 +61,14 @@ final class CodexRadarStore: ObservableObject {
         defer { isRefreshing = false }
 
         do {
-            let updatedSnapshot = try await client.fetchRadarSnapshot()
+            let source = settingsProvider().source
+            let updatedSnapshot = try await client.fetchRadarSnapshot(source: source)
+            guard settingsProvider().source == source else {
+                return
+            }
             try store.save(updatedSnapshot)
             snapshot = updatedSnapshot
+            activeSource = source
             errorMessage = nil
             logger.info("Codex radar snapshot saved")
         } catch {
@@ -92,7 +101,14 @@ final class CodexRadarStore: ObservableObject {
         refreshTask?.cancel()
         refreshTask = nil
 
-        guard settingsProvider().isEnabled else {
+        let settings = settingsProvider()
+        if activeSource != settings.source {
+            activeSource = settings.source
+            snapshot = nil
+            errorMessage = nil
+        }
+
+        guard settings.isEnabled else {
             return
         }
 

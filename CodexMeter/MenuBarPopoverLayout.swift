@@ -1,4 +1,5 @@
 import AppKit
+import CodexMeterShared
 
 /// 下拉弹窗的布局约束集合；只存放跨 AppKit 宿主和 SwiftUI 内容共享的尺寸规则。
 enum MenuBarPopoverLayout {
@@ -87,14 +88,99 @@ enum CodexRadarScoreAxis {
     }
 }
 
+/// 雷达模型筛选规则；负责 GPT 家族版本去重和其他模型的默认选择。
+enum CodexRadarModelSelection {
+    /// 每个 GPT 家族只保留版本号最高的模型，同时保留该版本的全部推理档位。
+    static func latestGPTSeriesByFamily(from series: [CodexRadarModelSeries]) -> [CodexRadarModelSeries] {
+        var latestModels: [String: (model: String, version: [Int])] = [:]
+        for item in series {
+            guard let model = item.model else { continue }
+            let family = CodexRadarScoreCardText.familyLabel(model: model)
+            let version = gptVersionComponents(model)
+            if let current = latestModels[family],
+               compare(version, to: current.version) != .orderedDescending {
+                continue
+            }
+            latestModels[family] = (model, version)
+        }
+        return series.filter { item in
+            guard let model = item.model else { return false }
+            let family = CodexRadarScoreCardText.familyLabel(model: model)
+            return latestModels[family]?.model == model
+        }
+    }
+
+    /// 返回分值最高的若干模型 ID；同分时按 ID 排序，保证结果稳定。
+    static func topModelIDs(from series: [CodexRadarModelSeries], limit: Int = 2) -> Set<String> {
+        var highestScores: [String: Double] = [:]
+        for item in series {
+            guard let model = item.model, let score = item.latest?.score else { continue }
+            highestScores[model] = max(highestScores[model] ?? -.infinity, score)
+        }
+        return Set(highestScores
+            .sorted { left, right in
+                left.value == right.value ? left.key < right.key : left.value > right.value
+            }
+            .prefix(max(limit, 0))
+            .map(\.key))
+    }
+
+    /// 从 `gpt-5.6-sol` 形式中提取 `[5, 6]`，未知片段按零处理。
+    private static func gptVersionComponents(_ model: String) -> [Int] {
+        let components = model.lowercased().split(separator: "-")
+        guard components.count >= 3, components.first == "gpt" else { return [] }
+        return components[1].split(separator: ".").map { Int($0) ?? 0 }
+    }
+
+    /// 比较长度不一的版本号，缺失的小版本按零补齐。
+    private static func compare(_ left: [Int], to right: [Int]) -> ComparisonResult {
+        for index in 0..<max(left.count, right.count) {
+            let leftPart = index < left.count ? left[index] : 0
+            let rightPart = index < right.count ? right[index] : 0
+            if leftPart != rightPart {
+                return leftPart > rightPart ? .orderedDescending : .orderedAscending
+            }
+        }
+        return .orderedSame
+    }
+}
+
 /// 降智雷达模型矩阵文案规则；统一卡片标签和悬停全称的模型格式。
 enum CodexRadarScoreCardText {
     /// 提取模型家族名，供矩阵每行只展示一次。
     static func familyLabel(model: String?) -> String {
-        normalizedModel(model, includesGPTPrefix: false)
+        let raw = model ?? "gpt"
+        let components = raw.split(separator: "-").map(String.init)
+        if raw.lowercased().hasPrefix("gpt-") {
+            return normalizedModel(model, includesGPTPrefix: false)
+                .split(separator: "-")
+                .last
+                .map(String.init) ?? "GPT"
+        }
+        let familyIndex = components.first?.lowercased() == "dsh" ? 1 : 0
+        guard components.indices.contains(familyIndex) else {
+            return raw
+        }
+        return components[familyIndex].capitalized
+    }
+
+    /// 将非 GPT 的远端模型标识转为适合下拉框和卡片展示的可读名称。
+    static func modelLabel(model: String?) -> String {
+        let components = (model ?? "Model")
             .split(separator: "-")
-            .last
-            .map(String.init) ?? "GPT"
+            .map(String.init)
+        let isDSH = components.first?.lowercased() == "dsh"
+        let visibleComponents = isDSH
+            ? components.dropFirst()
+            : components[...]
+        let name = visibleComponents.map { component in
+            switch component.lowercased() {
+            case "deepseek": return "DeepSeek"
+            case "glm", "hy4", "k3", "v4": return component.uppercased()
+            default: return component.prefix(1).uppercased() + component.dropFirst()
+            }
+        }.joined(separator: " ")
+        return isDSH ? "\(name) · DSH" : name
     }
 
     /// 返回矩阵单元格的完整档位名；ultra 和 max 是独立档位。

@@ -7,55 +7,210 @@ import SwiftUI
 struct CodexRadarSection: View {
     @ObservedObject var store: CodexRadarStore
     let settings: CodexRadarSettings
-    @State private var selectedModelFamilies: Set<String> = ["Sol"]
+    @State private var selectedModelFamilies: Set<String> = ["Astra"]
+    @State private var selectedOtherModelIDs: Set<String> = []
+    @State private var selectedOtherModelSource: CodexRadarSource?
+    @State private var didCustomizeOtherModels = false
 
-    /// 降智雷达详情页入口；弹窗里只放外链图标，完整说明交给网页承载。
-    private static let radarPageURL = URL(string: "https://codexradar.com/")!
+    /// 返回当前数据源的详情页，避免切换到 AI IQ 后仍打开 Codex Radar。
+    private var radarPageURL: URL {
+        switch settings.source {
+        case .codexRadar, .radarInsights:
+            return URL(string: "https://codexradar.com/")!
+        case .aiIQ:
+            return URL(string: "https://www.aiiq.org/")!
+        }
+    }
 
     var body: some View {
         if settings.isEnabled {
-            VStack(alignment: .leading, spacing: 4) {
-                header
+            if let snapshot = store.snapshot, let modelIQ = snapshot.modelIQ {
+                let displaySeries = modelIQ.displaySeries(limit: modelIQ.allSeries.count)
+                let gptSeries = CodexRadarModelSelection.latestGPTSeriesByFamily(
+                    from: displaySeries.filter { $0.model?.hasPrefix("gpt-") == true }
+                )
+                let otherSeries = displaySeries.filter { $0.model?.hasPrefix("gpt-") != true }
+                let otherModelIDs = Array(Set(otherSeries.compactMap(\.model))).sorted()
+                let otherModelSelectionSignature = otherSeries.map {
+                    "\($0.model ?? ""):\($0.latest?.score ?? 0)"
+                }.joined(separator: "|")
+                let selectedOtherSeries = otherSeries.filter {
+                    guard let model = $0.model else { return false }
+                    return selectedOtherModelIDs.contains(model)
+                }
+                let chartSeries = gptSeries.filter {
+                    selectedModelFamilies.contains(CodexRadarScoreCardText.familyLabel(model: $0.model))
+                }
 
-                if let snapshot = store.snapshot, let modelIQ = snapshot.modelIQ {
-                    let displaySeries = modelIQ.displaySeries(limit: modelIQ.allSeries.count)
-                    let chartSeries = displaySeries.filter {
-                        selectedModelFamilies.contains(CodexRadarScoreCardText.familyLabel(model: $0.model))
+                VStack(alignment: .leading, spacing: 6) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        header
+                        CodexRadarScoreGrid(
+                            runs: gptSeries.compactMap(\.latest),
+                            grouping: .family,
+                            selectedGroups: selectedModelFamilies,
+                            onToggleGroup: toggleChartFamily
+                        )
+                        if settings.showsScoreChart,
+                           settings.source.supportsScoreHistory,
+                           chartSeries.contains(where: { !$0.recentDays.isEmpty }) {
+                            CodexRadarLineChart(series: chartSeries)
+                        }
+                        footer(snapshot: snapshot)
+                        errorMessageLabel
                     }
-                    CodexRadarScoreGrid(
-                        runs: displaySeries.compactMap(\.latest),
-                        selectedFamilies: selectedModelFamilies,
-                        onToggleFamily: { family in
-                            if selectedModelFamilies.contains(family) {
-                                selectedModelFamilies.remove(family)
+                    .padding(7)
+                    .popoverCardSurface(opacity: 0.46)
+
+                    if settings.showsOtherModels, !otherSeries.isEmpty {
+                        VStack(alignment: .leading, spacing: 5) {
+                            otherModelsHeader(availableModelIDs: otherModelIDs)
+                            if selectedOtherSeries.isEmpty {
+                                Text(AppLocalization.string("请从右上角选择要显示的模型"))
+                                    .font(.caption2)
+                                    .foregroundStyle(.secondary)
+                                    .frame(maxWidth: .infinity, minHeight: 34, alignment: .center)
                             } else {
-                                selectedModelFamilies.insert(family)
+                                CodexRadarScoreGrid(
+                                    runs: selectedOtherSeries.compactMap(\.latest),
+                                    grouping: .model,
+                                    selectedGroups: [],
+                                    onToggleGroup: nil
+                                )
                             }
                         }
-                    )
-                    if settings.showsScoreChart {
-                        CodexRadarLineChart(series: chartSeries)
+                        .padding(7)
+                        .popoverCardSurface(opacity: 0.46)
                     }
-                    footer(snapshot: snapshot)
-                } else if store.isRefreshing {
-                    ProgressView()
-                        .controlSize(.small)
-                        .frame(maxWidth: .infinity, minHeight: 72)
-                } else {
-                    ContentUnavailableView(AppLocalization.string("暂无雷达数据"), systemImage: "waveform.path.ecg")
-                        .frame(maxWidth: .infinity, minHeight: 92)
                 }
-
-                if let errorMessage = store.errorMessage {
-                    Label(errorMessage, systemImage: "exclamationmark.triangle")
-                        .font(.caption2)
-                        .foregroundStyle(.orange)
-                        .fixedSize(horizontal: false, vertical: true)
+                .onChange(of: otherModelSelectionSignature, initial: true) { _, _ in
+                    syncOtherModelSelection(otherSeries: otherSeries)
                 }
+            } else {
+                radarPlaceholder
             }
-            .padding(5)
-            .popoverCardSurface(opacity: 0.46)
         }
+    }
+
+    /// 加载中、空数据和错误状态共用主卡片外观。
+    private var radarPlaceholder: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            header
+            if store.isRefreshing {
+                ProgressView()
+                    .controlSize(.small)
+                    .frame(maxWidth: .infinity, minHeight: 72)
+            } else {
+                ContentUnavailableView(AppLocalization.string("暂无雷达数据"), systemImage: "waveform.path.ecg")
+                    .frame(maxWidth: .infinity, minHeight: 92)
+            }
+            errorMessageLabel
+        }
+        .padding(7)
+        .popoverCardSurface(opacity: 0.46)
+    }
+
+    /// 在缓存仍可展示时保留刷新错误，避免错误状态被新布局吞掉。
+    @ViewBuilder
+    private var errorMessageLabel: some View {
+        if let errorMessage = store.errorMessage {
+            Label(errorMessage, systemImage: "exclamationmark.triangle")
+                .font(.caption2)
+                .foregroundStyle(.orange)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    /// 切换主模型家族的历史曲线显示状态。
+    private func toggleChartFamily(_ family: String) {
+        if selectedModelFamilies.contains(family) {
+            selectedModelFamilies.remove(family)
+        } else {
+            selectedModelFamilies.insert(family)
+        }
+    }
+
+    /// 生成其他模型卡片标题和多选菜单，避免全部模型同时挤进一行。
+    private func otherModelsHeader(availableModelIDs: [String]) -> some View {
+        HStack(spacing: 8) {
+            Label(AppLocalization.string("其他模型"), systemImage: "square.grid.2x2")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.secondary)
+            Spacer()
+            Menu {
+                Button(AppLocalization.string("全选")) {
+                    selectedOtherModelIDs = Set(availableModelIDs)
+                    didCustomizeOtherModels = true
+                    persistOtherModelSelection()
+                }
+                Button(AppLocalization.string("清空")) {
+                    selectedOtherModelIDs.removeAll()
+                    didCustomizeOtherModels = true
+                    persistOtherModelSelection()
+                }
+                Divider()
+                ForEach(availableModelIDs, id: \.self) { modelID in
+                    Button {
+                        toggleOtherModel(modelID)
+                    } label: {
+                        Label(
+                            CodexRadarScoreCardText.modelLabel(model: modelID),
+                            systemImage: selectedOtherModelIDs.contains(modelID) ? "checkmark.circle.fill" : "circle"
+                        )
+                    }
+                }
+            } label: {
+                HStack(spacing: 4) {
+                    Text("\(selectedOtherModelIDs.count)/\(availableModelIDs.count)")
+                    Image(systemName: "chevron.down")
+                }
+                .font(.caption2.weight(.medium))
+            }
+            .menuStyle(.borderlessButton)
+            .menuIndicator(.hidden)
+            .fixedSize()
+            .help(AppLocalization.string("选择要显示的其他模型"))
+        }
+    }
+
+    /// 切换单个非 GPT 模型；选择状态在当前弹窗生命周期内保留。
+    private func toggleOtherModel(_ modelID: String) {
+        didCustomizeOtherModels = true
+        if selectedOtherModelIDs.contains(modelID) {
+            selectedOtherModelIDs.remove(modelID)
+        } else {
+            selectedOtherModelIDs.insert(modelID)
+        }
+        persistOtherModelSelection()
+    }
+
+    /// 数据源切换时恢复该来源的选择；首次使用默认选中当前最高分的两个模型。
+    private func syncOtherModelSelection(otherSeries: [CodexRadarModelSeries]) {
+        let available = Set(otherSeries.compactMap(\.model))
+        let defaultSelection = CodexRadarModelSelection.topModelIDs(from: otherSeries)
+        if selectedOtherModelSource != settings.source {
+            selectedOtherModelSource = settings.source
+            let stored = MenuBarDisplaySettings.sharedDefaults.stringArray(forKey: otherModelSelectionKey)
+            selectedOtherModelIDs = stored.map { Set($0).intersection(available) } ?? defaultSelection
+            didCustomizeOtherModels = stored != nil
+        } else if didCustomizeOtherModels {
+            selectedOtherModelIDs.formIntersection(available)
+        } else {
+            selectedOtherModelIDs = defaultSelection
+        }
+    }
+
+    /// 按数据源保存模型选择，避免关闭弹窗或重启应用后丢失。
+    private func persistOtherModelSelection() {
+        MenuBarDisplaySettings.sharedDefaults.set(
+            selectedOtherModelIDs.sorted(),
+            forKey: otherModelSelectionKey
+        )
+    }
+
+    /// 每个数据源使用独立选择键，避免同名模型互相污染。
+    private var otherModelSelectionKey: String {
+        "codexRadar.selectedOtherModels.\(settings.source.rawValue)"
     }
 
     private var header: some View {
@@ -68,7 +223,7 @@ struct CodexRadarSection: View {
                 ProgressView()
                     .controlSize(.mini)
             }
-            Link(destination: Self.radarPageURL) {
+            Link(destination: radarPageURL) {
                 Image(systemName: "arrow.up.right")
             }
             .buttonStyle(.plain)
@@ -113,53 +268,124 @@ struct CodexRadarSection: View {
 /// 最新模型矩阵，用最多两行的紧凑卡片展示模型和 IQ。
 private struct CodexRadarScoreGrid: View {
     let runs: [CodexRadarIQRun]
-    let selectedFamilies: Set<String>
-    let onToggleFamily: (String) -> Void
+    let grouping: Grouping
+    let selectedGroups: Set<String>
+    let onToggleGroup: ((String) -> Void)?
 
-    /// 矩阵中的单个模型家族，runs 保留上游的档位排序。
-    private struct ModelFamily: Identifiable {
+    /// 控制 GPT 按家族聚合、其他供应商按具体模型聚合。
+    enum Grouping {
+        case family
+        case model
+    }
+
+    /// 矩阵中的单个模型分组，runs 保留上游的档位排序。
+    private struct ModelGroup: Identifiable {
         let id: String
+        let label: String
         let runs: [CodexRadarIQRun]
     }
 
     var body: some View {
-        VStack(spacing: 0) {
-            ForEach(modelFamilies) { family in
-                HStack(spacing: 4) {
-                    Button {
-                        onToggleFamily(family.id)
-                    } label: {
-                        Text(family.id)
-                    }
-                    .buttonStyle(.plain)
-                    .font(.caption2.weight(.medium))
-                    .foregroundStyle(selectedFamilies.contains(family.id) ? Color.primary : Color.secondary.opacity(0.55))
-                    .frame(width: 30, alignment: .leading)
-                    .accessibilityLabel("\(family.id) 模型曲线")
-                    .accessibilityValue(selectedFamilies.contains(family.id) ? "已显示" : "已隐藏")
-                    .help(selectedFamilies.contains(family.id) ? "点击隐藏 \(family.id) 曲线" : "点击显示 \(family.id) 曲线")
-
-                    ForEach(family.runs) { run in
-                        scoreCell(for: run)
+        VStack(alignment: .leading, spacing: 3) {
+            ForEach(multiScoreGroups) { group in
+                scoreRow(for: group)
+            }
+            if !singleScoreGroups.isEmpty {
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: 118), spacing: 8)], spacing: 3) {
+                    ForEach(singleScoreGroups) { group in
+                        singleScoreCell(for: group)
                     }
                 }
-                .frame(maxWidth: .infinity, minHeight: 19, alignment: .leading)
             }
         }
     }
 
-    /// 按首次出现顺序聚合模型家族，避免矩阵重复显示家族名。
-    private var modelFamilies: [ModelFamily] {
-        var familyOrder: [String] = []
+    /// 按首次出现顺序聚合模型，GPT 使用家族名，其他来源使用完整模型名。
+    private var modelGroups: [ModelGroup] {
+        var groupOrder: [String] = []
+        var groupLabels: [String: String] = [:]
         var groupedRuns: [String: [CodexRadarIQRun]] = [:]
         for run in runs {
-            let family = CodexRadarScoreCardText.familyLabel(model: run.model)
-            if groupedRuns[family] == nil {
-                familyOrder.append(family)
+            let groupID: String
+            let groupLabel: String
+            switch grouping {
+            case .family:
+                groupID = CodexRadarScoreCardText.familyLabel(model: run.model)
+                groupLabel = groupID
+            case .model:
+                groupID = run.model ?? "model"
+                groupLabel = CodexRadarScoreCardText.modelLabel(model: run.model)
             }
-            groupedRuns[family, default: []].append(run)
+            if groupedRuns[groupID] == nil {
+                groupOrder.append(groupID)
+                groupLabels[groupID] = groupLabel
+            }
+            groupedRuns[groupID, default: []].append(run)
         }
-        return familyOrder.map { ModelFamily(id: $0, runs: groupedRuns[$0] ?? []) }
+        return groupOrder.map {
+            ModelGroup(id: $0, label: groupLabels[$0] ?? $0, runs: groupedRuns[$0] ?? [])
+        }
+    }
+
+    private var multiScoreGroups: [ModelGroup] {
+        modelGroups.filter { $0.runs.count > 1 }
+    }
+
+    private var singleScoreGroups: [ModelGroup] {
+        modelGroups.filter { $0.runs.count == 1 }
+    }
+
+    /// 多档位模型使用完整横排，避免档位标签被压缩成省略号。
+    private func scoreRow(for group: ModelGroup) -> some View {
+        HStack(spacing: 6) {
+            groupLabel(group)
+                .frame(width: grouping == .family ? 42 : 104, alignment: .leading)
+            ForEach(group.runs) { run in
+                scoreCell(for: run)
+            }
+        }
+        .frame(maxWidth: .infinity, minHeight: 20, alignment: .leading)
+    }
+
+    /// 单分值模型使用自适应双列网格，减少纵向空行。
+    private func singleScoreCell(for group: ModelGroup) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 6) {
+            groupLabel(group)
+            Spacer(minLength: 4)
+            if let run = group.runs.first {
+                Text(CodexRadarNumberFormatter.compactScore(run.score))
+                    .font(.caption.weight(.bold))
+                    .monospacedDigit()
+                    .foregroundStyle(color(for: run))
+                    .instantHelp(cardHelpText(for: run))
+            }
+        }
+        .frame(maxWidth: .infinity, minHeight: 20, alignment: .leading)
+    }
+
+    /// 模型标题在 GPT 卡片可点击切换曲线，其他模型只承担标签职责。
+    @ViewBuilder
+    private func groupLabel(_ group: ModelGroup) -> some View {
+        Group {
+            if let onToggleGroup {
+                Button {
+                    onToggleGroup(group.id)
+                } label: {
+                    Text(group.label)
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(selectedGroups.contains(group.id) ? Color.primary : Color.secondary.opacity(0.55))
+                .accessibilityLabel("\(group.label) 模型曲线")
+                .accessibilityValue(selectedGroups.contains(group.id) ? "已显示" : "已隐藏")
+                .help(selectedGroups.contains(group.id) ? "点击隐藏 \(group.label) 曲线" : "点击显示 \(group.label) 曲线")
+            } else {
+                Text(group.label)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .font(.caption2.weight(.medium))
+        .lineLimit(1)
+        .minimumScaleFactor(0.72)
     }
 
     /// 构造档位单元格；通过数等次要信息只在悬停详情中展示。

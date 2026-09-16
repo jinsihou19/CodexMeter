@@ -170,6 +170,8 @@ struct SettingsView: View {
     @AppStorage(UsageCelebrationPreferenceKeys.resetOption, store: MenuBarDisplaySettings.sharedDefaults) private var resetCelebrationOption = UsageResetCelebrationOption.off.rawValue
     @AppStorage(UsageAutomationPreferenceKeys.startsSessionAfterReset, store: MenuBarDisplaySettings.sharedDefaults) private var startsSessionAfterReset = false
     @AppStorage(CodexRadarPreferenceKeys.isEnabled, store: MenuBarDisplaySettings.sharedDefaults) private var codexRadarEnabled = CodexRadarSettings.defaultIsEnabled
+    @AppStorage(CodexRadarPreferenceKeys.source, store: MenuBarDisplaySettings.sharedDefaults) private var codexRadarSource = CodexRadarSettings.defaultSource.rawValue
+    @AppStorage(CodexRadarPreferenceKeys.showsOtherModels, store: MenuBarDisplaySettings.sharedDefaults) private var codexRadarShowsOtherModels = CodexRadarSettings.defaultShowsOtherModels
     @AppStorage(CodexRadarPreferenceKeys.showsScoreChart, store: MenuBarDisplaySettings.sharedDefaults) private var codexRadarShowsScoreChart = CodexRadarSettings.defaultShowsScoreChart
     @AppStorage(GeminiModelsPreferenceKeys.isEnabled, store: MenuBarDisplaySettings.sharedDefaults) private var geminiModelsEnabled = GeminiModelsSettings.defaultIsEnabled
     @AppStorage(GeminiModelsPreferenceKeys.model, store: MenuBarDisplaySettings.sharedDefaults) private var geminiModel = GeminiModelsSettings.defaultModel.rawValue
@@ -901,15 +903,33 @@ struct SettingsView: View {
             Section(AppLocalization.string("降智雷达")) {
                 SettingsToggleRow(
                     title: "开启降智雷达",
-                    subtitle: "读取 codexradar.com/current.json 并展示模型 IQ。",
+                    subtitle: "读取所选公开数据源并展示模型 IQ。",
                     isOn: codexRadarBinding($codexRadarEnabled, key: CodexRadarPreferenceKeys.isEnabled)
                 )
                 if codexRadarEnabled {
-                    SettingsToggleRow(
-                        title: "显示分值折线图",
-                        subtitle: "只绘制当前纵轴范围内的历史分值。",
-                        isOn: codexRadarScoreChartBinding
+                    SettingsPickerRow(
+                        title: "数据源",
+                        subtitle: "不同来源的评分口径独立，不应直接横向比较。",
+                        selection: codexRadarBinding($codexRadarSource, key: CodexRadarPreferenceKeys.source),
+                        options: CodexRadarSource.allCases.map { ($0.rawValue, $0.title) }
                     )
+                    if currentCodexRadarSettings.source.supportsOtherModels {
+                        SettingsToggleRow(
+                            title: "显示其他模型智商",
+                            subtitle: "默认关闭；开启后显示该来源排名靠前的非 GPT 模型。",
+                            isOn: codexRadarBinding(
+                                $codexRadarShowsOtherModels,
+                                key: CodexRadarPreferenceKeys.showsOtherModels
+                            )
+                        )
+                    }
+                    if currentCodexRadarSettings.source.supportsScoreHistory {
+                        SettingsToggleRow(
+                            title: "显示分值折线图",
+                            subtitle: "默认关闭；开启后绘制该来源提供的历史分值。",
+                            isOn: codexRadarScoreChartBinding
+                        )
+                    }
                 }
             }
 
@@ -1114,6 +1134,8 @@ struct SettingsView: View {
     private var currentCodexRadarSettings: CodexRadarSettings {
         CodexRadarSettings(
             isEnabled: codexRadarEnabled,
+            source: CodexRadarSource(rawValue: codexRadarSource) ?? CodexRadarSettings.defaultSource,
+            showsOtherModels: codexRadarShowsOtherModels,
             showsScoreChart: codexRadarShowsScoreChart
         )
     }
@@ -1419,6 +1441,8 @@ struct SettingsView: View {
         lowRemainingThreshold = notificationSettings.lowRemainingThreshold
         let codexRadarSettings = CodexRadarSettings(defaults: MenuBarDisplaySettings.sharedDefaults)
         codexRadarEnabled = codexRadarSettings.isEnabled
+        codexRadarSource = codexRadarSettings.source.rawValue
+        codexRadarShowsOtherModels = codexRadarSettings.showsOtherModels
         codexRadarShowsScoreChart = codexRadarSettings.showsScoreChart
 
         let geminiSettings = GeminiModelsSettings(defaults: MenuBarDisplaySettings.sharedDefaults)

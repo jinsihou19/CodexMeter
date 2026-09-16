@@ -5,27 +5,67 @@ import Foundation
 /// 降智雷达偏好键，集中定义 UserDefaults 名称，避免设置页和后台任务写散字符串。
 public enum CodexRadarPreferenceKeys {
     public static let isEnabled = "codexRadar.isEnabled"
+    public static let source = "codexRadar.source"
+    public static let showsOtherModels = "codexRadar.showsOtherModels"
     public static let showsScoreChart = "codexRadar.showsScoreChart"
 
     public static let allKeys = [
         isEnabled,
+        source,
+        showsOtherModels,
         showsScoreChart
     ]
+}
+
+/// 降智雷达数据源；统一描述设置页名称和是否具备完整历史曲线。
+public enum CodexRadarSource: String, Codable, CaseIterable, Identifiable, Sendable {
+    case codexRadar
+    case radarInsights
+    case aiIQ
+
+    public var id: String { rawValue }
+
+    /// 返回设置页展示名称，避免网络客户端和界面各自维护一套文案。
+    public var title: String {
+        switch self {
+        case .codexRadar: return "Codex Radar"
+        case .radarInsights: return "Radar Insights"
+        case .aiIQ: return "AI IQ"
+        }
+    }
+
+    /// 只有完整提供各模型时序数据的来源才允许显示分值曲线。
+    public var supportsScoreHistory: Bool {
+        self == .codexRadar
+    }
+
+    /// Codex Radar 和 AI IQ 包含非 GPT 模型，Radar Insights 当前只有 GPT 系列。
+    public var supportsOtherModels: Bool {
+        self == .codexRadar || self == .aiIQ
+    }
 }
 
 /// 降智雷达开关设置；只控制外部雷达接口读取，不影响本机 Codex 用量同步。
 public struct CodexRadarSettings: Equatable, Sendable {
     public static let defaultIsEnabled = true
+    public static let defaultSource = CodexRadarSource.codexRadar
+    public static let defaultShowsOtherModels = false
     public static let defaultShowsScoreChart = false
 
     public let isEnabled: Bool
+    public let source: CodexRadarSource
+    public let showsOtherModels: Bool
     public let showsScoreChart: Bool
 
     public init(
         isEnabled: Bool = Self.defaultIsEnabled,
+        source: CodexRadarSource = Self.defaultSource,
+        showsOtherModels: Bool = Self.defaultShowsOtherModels,
         showsScoreChart: Bool = Self.defaultShowsScoreChart
     ) {
         self.isEnabled = isEnabled
+        self.source = source
+        self.showsOtherModels = showsOtherModels
         self.showsScoreChart = showsScoreChart
     }
 
@@ -33,6 +73,10 @@ public struct CodexRadarSettings: Equatable, Sendable {
         self.init(
             isEnabled: defaults.object(forKey: CodexRadarPreferenceKeys.isEnabled) as? Bool
                 ?? Self.defaultIsEnabled,
+            source: defaults.string(forKey: CodexRadarPreferenceKeys.source)
+                .flatMap(CodexRadarSource.init(rawValue:)) ?? Self.defaultSource,
+            showsOtherModels: defaults.object(forKey: CodexRadarPreferenceKeys.showsOtherModels) as? Bool
+                ?? Self.defaultShowsOtherModels,
             showsScoreChart: defaults.object(forKey: CodexRadarPreferenceKeys.showsScoreChart) as? Bool
                 ?? Self.defaultShowsScoreChart
         )
@@ -76,19 +120,22 @@ public struct CodexRadarSnapshot: Codable, Equatable, Sendable {
     public let timezone: String?
     public let prediction: CodexRadarPrediction?
     public let modelIQ: CodexRadarModelIQ?
+    public let source: CodexRadarSource?
 
     public init(
         fetchedAt: Date,
         monitoredAt: String?,
         timezone: String?,
         prediction: CodexRadarPrediction?,
-        modelIQ: CodexRadarModelIQ?
+        modelIQ: CodexRadarModelIQ?,
+        source: CodexRadarSource? = nil
     ) {
         self.fetchedAt = fetchedAt
         self.monitoredAt = monitoredAt
         self.timezone = timezone
         self.prediction = prediction
         self.modelIQ = modelIQ
+        self.source = source
     }
 }
 
@@ -172,10 +219,11 @@ public struct CodexRadarModelIQ: Codable, Equatable, Sendable {
             .map(String.init)
         let modelRank: Int
         switch family {
-        case "sol": modelRank = 0
-        case "terra": modelRank = 1
-        case "luna": modelRank = 2
-        default: modelRank = 3
+        case "astra": modelRank = 0
+        case "sol": modelRank = 1
+        case "terra": modelRank = 2
+        case "luna": modelRank = 3
+        default: modelRank = 4
         }
 
         let effortRank: Int
