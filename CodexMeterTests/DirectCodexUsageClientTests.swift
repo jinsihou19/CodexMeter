@@ -43,24 +43,6 @@ final class DirectCodexUsageClientTests: XCTestCase {
               "reset_at": 1780392047
             }
           },
-          "additional_rate_limits": [{
-            "limit_name": "GPT-5.3-Codex-Spark",
-            "metered_feature": "codex_bengalfox",
-            "rate_limit": {
-              "primary_window": {
-                "used_percent": 0,
-                "limit_window_seconds": 18000,
-                "reset_after_seconds": 18000,
-                "reset_at": 1779969999
-              },
-              "secondary_window": {
-                "used_percent": 2,
-                "limit_window_seconds": 604800,
-                "reset_after_seconds": 604800,
-                "reset_at": 1780399999
-              }
-            }
-          }],
           "credits": {
             "has_credits": false,
             "unlimited": false,
@@ -86,9 +68,6 @@ final class DirectCodexUsageClientTests: XCTestCase {
         XCTAssertEqual(snapshot.secondary?.remainingPercent, 85)
         XCTAssertEqual(snapshot.secondary?.windowDurationMins, 10_080)
         XCTAssertEqual(snapshot.secondary?.resetsAt, 1_780_392_047)
-        XCTAssertEqual(snapshot.additionalLimits.first?.displayName, "GPT-5.3-Codex-Spark")
-        XCTAssertEqual(snapshot.additionalLimits.first?.primary?.remainingPercent, 100)
-        XCTAssertEqual(snapshot.additionalLimits.first?.secondary?.remainingPercent, 98)
         XCTAssertEqual(snapshot.credits?.hasCredits, false)
         XCTAssertEqual(snapshot.credits?.unlimited, false)
         XCTAssertEqual(snapshot.credits?.balance, "0")
@@ -289,24 +268,6 @@ final class DirectCodexUsageClientTests: XCTestCase {
                   "reset_at": 1783473450
                 }
               },
-              "additional_rate_limits": [{
-                "limit_name": "GPT-5.3-Codex-Spark",
-                "metered_feature": "codex_bengalfox",
-                "rate_limit": {
-                  "primary_window": {
-                    "used_percent": 0,
-                    "limit_window_seconds": 18000,
-                    "reset_after_seconds": 18000,
-                    "reset_at": 1783348357
-                  },
-                  "secondary_window": {
-                    "used_percent": 0,
-                    "limit_window_seconds": 604800,
-                    "reset_after_seconds": 604800,
-                    "reset_at": 1783935157
-                  }
-                }
-              }],
               "credits": {
                 "has_credits": false,
                 "unlimited": false,

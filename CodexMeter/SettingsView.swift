@@ -205,7 +205,6 @@ struct SettingsView: View {
     @AppStorage(PopoverPreferenceKeys.showsTopInvocations, store: MenuBarDisplaySettings.sharedDefaults) private var popoverShowsTopInvocations = PopoverDisplaySettings.defaultShowsTopInvocations
     @AppStorage(PopoverPreferenceKeys.showsAnalytics, store: MenuBarDisplaySettings.sharedDefaults) private var popoverShowsAnalytics = PopoverDisplaySettings.defaultShowsAnalytics
     @AppStorage(PopoverPreferenceKeys.showsSyncDetails, store: MenuBarDisplaySettings.sharedDefaults) private var popoverShowsSyncDetails = PopoverDisplaySettings.defaultShowsSyncDetails
-    @AppStorage(PopoverPreferenceKeys.showsAdditionalLimits, store: MenuBarDisplaySettings.sharedDefaults) private var popoverShowsAdditionalLimits = PopoverDisplaySettings.defaultShowsAdditionalLimits
     @AppStorage(PopoverPreferenceKeys.showsResetCredits, store: MenuBarDisplaySettings.sharedDefaults) private var popoverShowsResetCredits = PopoverDisplaySettings.defaultShowsResetCredits
     @AppStorage(PopoverPreferenceKeys.showsLocalOverview, store: MenuBarDisplaySettings.sharedDefaults) private var popoverShowsLocalOverview = PopoverDisplaySettings.defaultShowsLocalOverview
     @AppStorage(PopoverPreferenceKeys.showsLocalTrend, store: MenuBarDisplaySettings.sharedDefaults) private var popoverShowsLocalTrend = PopoverDisplaySettings.defaultShowsLocalTrend
@@ -822,14 +821,6 @@ struct SettingsView: View {
                     .pickerStyle(.menu)
                 }
                 SettingsToggleRow(
-                    title: "显示额外额度",
-                    subtitle: "显示 Codex Spark 等接口返回的额外 rate limit。",
-                    isOn: popoverBinding(
-                        $popoverShowsAdditionalLimits,
-                        key: PopoverPreferenceKeys.showsAdditionalLimits
-                    )
-                )
-                SettingsToggleRow(
                     title: "显示额度重置卡",
                     subtitle: "在额度与用量中显示可用重置卡数量和到期时间。",
                     isOn: popoverResetCreditsBinding
@@ -1138,7 +1129,6 @@ struct SettingsView: View {
             warningColorHex: warningColorHex,
             dangerColorHex: dangerColorHex,
             showsPercentSymbol: showsPercentSymbol,
-            showsAdditionalLimits: MenuBarDisplaySettings.defaultShowsAdditionalLimits,
             showsHookActivityLight: showsHookActivityLight,
             hookActivityIndicatorStyle: HookActivityIndicatorStyle(rawValue: hookActivityIndicatorStyle)
                 ?? MenuBarDisplaySettings.defaultHookActivityIndicatorStyle,
@@ -1165,7 +1155,6 @@ struct SettingsView: View {
             showsTopInvocations: popoverShowsTopInvocations,
             showsAnalytics: popoverShowsAnalytics,
             showsSyncDetails: popoverShowsSyncDetails,
-            showsAdditionalLimits: popoverShowsAdditionalLimits,
             showsResetCredits: popoverShowsResetCredits,
             showsLocalOverview: popoverShowsLocalOverview,
             showsLocalTrend: popoverShowsLocalTrend,
@@ -1472,7 +1461,6 @@ struct SettingsView: View {
         popoverShowsTopInvocations = popoverSettings.showsTopInvocations
         popoverShowsAnalytics = popoverSettings.showsAnalytics
         popoverShowsSyncDetails = popoverSettings.showsSyncDetails
-        popoverShowsAdditionalLimits = popoverSettings.showsAdditionalLimits
         popoverShowsResetCredits = popoverSettings.showsResetCredits
         popoverResetTimeDisplayStyle = popoverSettings.resetTimeDisplayStyle.rawValue
     }

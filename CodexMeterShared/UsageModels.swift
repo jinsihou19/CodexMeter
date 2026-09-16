@@ -14,7 +14,6 @@ public struct RateLimitSnapshot: Codable, Equatable, Sendable {
     public let limitName: String?
     public let primary: RateLimitWindow?
     public let secondary: RateLimitWindow?
-    public let additionalLimits: [AdditionalRateLimitSnapshot]
     public let credits: CreditsSnapshot?
     public let planType: String?
     public let rateLimitReachedType: String?
@@ -24,7 +23,6 @@ public struct RateLimitSnapshot: Codable, Equatable, Sendable {
         limitName: String?,
         primary: RateLimitWindow?,
         secondary: RateLimitWindow?,
-        additionalLimits: [AdditionalRateLimitSnapshot] = [],
         credits: CreditsSnapshot?,
         planType: String?,
         rateLimitReachedType: String?
@@ -33,67 +31,13 @@ public struct RateLimitSnapshot: Codable, Equatable, Sendable {
         self.limitName = limitName
         self.primary = primary
         self.secondary = secondary
-        self.additionalLimits = additionalLimits
         self.credits = credits
         self.planType = planType
         self.rateLimitReachedType = rateLimitReachedType
     }
 
-    enum CodingKeys: String, CodingKey {
-        case limitId
-        case limitName
-        case primary
-        case secondary
-        case additionalLimits
-        case credits
-        case planType
-        case rateLimitReachedType
-    }
-
-    public init(from decoder: Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-        self.limitId = try container.decodeIfPresent(String.self, forKey: .limitId)
-        self.limitName = try container.decodeIfPresent(String.self, forKey: .limitName)
-        self.primary = try container.decodeIfPresent(RateLimitWindow.self, forKey: .primary)
-        self.secondary = try container.decodeIfPresent(RateLimitWindow.self, forKey: .secondary)
-        self.additionalLimits = try container.decodeIfPresent(
-            [AdditionalRateLimitSnapshot].self,
-            forKey: .additionalLimits
-        ) ?? []
-        self.credits = try container.decodeIfPresent(CreditsSnapshot.self, forKey: .credits)
-        self.planType = try container.decodeIfPresent(String.self, forKey: .planType)
-        self.rateLimitReachedType = try container.decodeIfPresent(String.self, forKey: .rateLimitReachedType)
-    }
-
     public var displayName: String {
         limitName ?? limitId ?? "Codex"
-    }
-}
-
-public struct AdditionalRateLimitSnapshot: Codable, Equatable, Identifiable, Sendable {
-    public let limitName: String?
-    public let meteredFeature: String?
-    public let primary: RateLimitWindow?
-    public let secondary: RateLimitWindow?
-
-    public init(
-        limitName: String?,
-        meteredFeature: String?,
-        primary: RateLimitWindow?,
-        secondary: RateLimitWindow?
-    ) {
-        self.limitName = limitName
-        self.meteredFeature = meteredFeature
-        self.primary = primary
-        self.secondary = secondary
-    }
-
-    public var id: String {
-        limitName ?? meteredFeature ?? "additional"
-    }
-
-    public var displayName: String {
-        limitName ?? meteredFeature ?? "额外额度"
     }
 }
 

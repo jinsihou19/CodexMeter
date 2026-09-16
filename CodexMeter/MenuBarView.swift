@@ -396,21 +396,6 @@ struct MenuBarView: View {
                 )
             }
 
-            if activePopoverSettings.showsAdditionalLimits, !snapshot.rateLimits.additionalLimits.isEmpty {
-                VStack(alignment: .leading, spacing: 10) {
-                    SectionTitle("额外额度")
-                    ForEach(snapshot.rateLimits.additionalLimits) { limit in
-                        AdditionalRateLimitView(
-                            limit: limit,
-                            formatter: formatter,
-                            settings: settings,
-                            resetTimeDisplayStyle: activePopoverSettings.resetTimeDisplayStyle,
-                            onPaceMarkerHoverChange: updateActivePaceHelpText
-                        )
-                    }
-                }
-            }
-
             if let profileStats = snapshot.profileStats, activePopoverSettings.showsAnyProfileSection {
                 ProfileStatsSection(
                     stats: profileStats,
@@ -1579,84 +1564,6 @@ private struct PaceComparisonLine: View {
                 .minimumScaleFactor(0.8)
                 .foregroundStyle(.secondary)
         }
-    }
-}
-
-private struct AdditionalRateLimitView: View {
-    let limit: AdditionalRateLimitSnapshot
-    let formatter: UsageFormatter
-    let settings: MenuBarDisplaySettings
-    let resetTimeDisplayStyle: ResetTimeDisplayStyle
-    let onPaceMarkerHoverChange: (String?, Bool) -> Void
-
-    var body: some View {
-        HStack(spacing: 8) {
-            if let primary = limit.primary {
-                quotaCard(window: primary)
-            }
-            if let secondary = limit.secondary {
-                quotaCard(window: secondary)
-            }
-        }
-    }
-
-    /// 按额外额度的实际窗口时长生成卡片，并跳过接口未返回的窗口。
-    private func quotaCard(window: RateLimitWindow) -> some View {
-        let title = "\(displayName) \(window.localizedDurationLabel(language: currentAppLanguage()))"
-        return QuotaSummaryCard(
-            title: title,
-            display: UsageMetricDisplay(title: title, window: window, language: currentAppLanguage()),
-            resetText: resetText(for: window),
-            paceDisplay: nil,
-            tone: UsageRemainingTone(remainingPercent: window.remainingPercent),
-            settings: settings,
-            workdayMarkers: usageProgressSegmentPercents(
-                workDays: settings.weeklyProgressWorkDays,
-                windowDurationMins: window.windowDurationMins
-            ),
-            paceMarker: paceMarker(for: window),
-            onPaceMarkerHoverChange: updateActivePaceHelpText
-        )
-    }
-
-    private var displayName: String {
-        limit.displayName
-            .replacingOccurrences(of: "GPT-5.3-", with: "")
-            .replacingOccurrences(of: "-", with: " ")
-    }
-
-    /// 根据弹窗时间样式格式化额外额度的重置文案。
-    private func resetText(for window: RateLimitWindow?) -> String {
-        switch resetTimeDisplayStyle {
-        case .countdown:
-            return formatter.resetRemainingText(window: window)
-        case .absolute:
-            return formatter.resetTime(epochSeconds: window?.resetsAt)
-        }
-    }
-
-    /// 额外额度也按同一语义展示理论节奏线，避免主额度和额外额度的进度条含义不一致。
-    private func paceMarker(for window: RateLimitWindow?) -> ProgressPaceMarker? {
-        guard let pace = window?.usagePace(weeklyProgressWorkDays: settings.weeklyProgressWorkDays),
-              pace.isDisplayable(),
-              abs(pace.roundedDeltaPercent) > 2
-        else {
-            return nil
-        }
-        return ProgressPaceMarker(
-            percent: 100 - pace.expectedUsedPercent,
-            color: pace.deltaPercent <= 0 ? .green : .red,
-            helpText: AppLocalization.string(
-                pace.deltaPercent <= 0
-                    ? "绿色线：按当前时间进度推算的理论剩余位置；绿色表示实际用得比理论慢，有余量。"
-                    : "红色线：按当前时间进度推算的理论剩余位置；红色表示实际用得比理论快，可能提前耗尽。"
-            )
-        )
-    }
-
-    /// 额外额度同样把节奏线说明放在卡片组下方，避免被后续内容覆盖。
-    private func updateActivePaceHelpText(_ text: String?, _ isHovered: Bool) {
-        onPaceMarkerHoverChange(text, isHovered)
     }
 }
 

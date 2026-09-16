@@ -545,7 +545,6 @@ private struct CodexAuthContext {
 private struct WhamUsageResponse: Decodable {
     let planType: String?
     let rateLimit: WhamRateLimit?
-    let additionalRateLimits: [WhamAdditionalRateLimit]?
     let credits: WhamCredits?
     let rateLimitReachedType: WhamRateLimitReachedType?
     let resetCredits: WhamResetCreditsResponse?
@@ -553,7 +552,6 @@ private struct WhamUsageResponse: Decodable {
     enum CodingKeys: String, CodingKey {
         case planType = "plan_type"
         case rateLimit = "rate_limit"
-        case additionalRateLimits = "additional_rate_limits"
         case credits
         case rateLimitReachedType = "rate_limit_reached_type"
         case resetCredits = "rate_limit_reset_credits"
@@ -565,7 +563,6 @@ private struct WhamUsageResponse: Decodable {
             limitName: nil,
             primary: rateLimit?.primaryWindow?.rateLimitWindow,
             secondary: rateLimit?.secondaryWindow?.rateLimitWindow,
-            additionalLimits: additionalRateLimits?.map(\.additionalRateLimitSnapshot) ?? [],
             credits: credits?.creditsSnapshot,
             planType: planType,
             rateLimitReachedType: rateLimitReachedType?.value
@@ -749,27 +746,6 @@ private extension KeyedDecodingContainer {
             ? [.withInternetDateTime, .withFractionalSeconds]
             : [.withInternetDateTime]
         return formatter
-    }
-}
-
-private struct WhamAdditionalRateLimit: Decodable {
-    let limitName: String?
-    let meteredFeature: String?
-    let rateLimit: WhamRateLimit?
-
-    enum CodingKeys: String, CodingKey {
-        case limitName = "limit_name"
-        case meteredFeature = "metered_feature"
-        case rateLimit = "rate_limit"
-    }
-
-    var additionalRateLimitSnapshot: AdditionalRateLimitSnapshot {
-        AdditionalRateLimitSnapshot(
-            limitName: limitName,
-            meteredFeature: meteredFeature,
-            primary: rateLimit?.primaryWindow?.rateLimitWindow,
-            secondary: rateLimit?.secondaryWindow?.rateLimitWindow
-        )
     }
 }
 

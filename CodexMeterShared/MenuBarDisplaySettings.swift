@@ -16,7 +16,6 @@ public enum MenuBarPreferenceKeys {
     public static let showsSecondaryWindow = "menuBar.showsSecondaryWindow"
     public static let hiddenWindowDurationMins = "menuBar.hiddenWindowDurationMins"
     public static let showsPercentSymbol = "menuBar.showsPercentSymbol"
-    public static let showsAdditionalLimits = "menuBar.showsAdditionalLimits"
     public static let showsMenuBarIcon = "menuBar.showsMenuBarIcon"
     public static let showsHookActivityLight = "menuBar.showsHookActivityLight"
     public static let hookActivityIndicatorStyle = "menuBar.hookActivityIndicatorStyle"
@@ -37,7 +36,6 @@ public enum MenuBarPreferenceKeys {
         showsSecondaryWindow,
         hiddenWindowDurationMins,
         showsPercentSymbol,
-        showsAdditionalLimits,
         showsMenuBarIcon,
         showsHookActivityLight,
         hookActivityIndicatorStyle,
@@ -967,8 +965,6 @@ public enum AppLocalization {
         "分析数据最多延迟 6 小时": "Analytics may be delayed by up to 6 hours",
         "显示用量速度": "Show Usage Pace",
         "展示当前用量相对预期节奏是偏快还是有余量。": "Show whether usage is ahead of or below the expected pace.",
-        "显示额外额度": "Show Additional Limits",
-        "显示 Codex Spark 等接口返回的额外 rate limit。": "Show additional rate limits such as Codex Spark.",
         "活动": "Activity",
         "半年活跃": "6-Month Activity",
         "Token 构成": "Token Mix",
@@ -1088,7 +1084,6 @@ public enum AppLocalization {
         "退出": "Quit",
         "安装 CodexMeter 新版本": "Install the New CodexMeter Version",
         "更新 CodexMeter": "Update CodexMeter",
-        "额外额度": "Additional Limits",
         "暂无用量数据": "No Usage Data",
         "每日": "Daily",
         "每周": "Weekly",
@@ -1301,7 +1296,6 @@ public enum PopoverPreferenceKeys {
     public static let showsTopInvocations = "popover.showsTopInvocations"
     public static let showsAnalytics = "popover.showsAnalytics"
     public static let showsSyncDetails = "popover.showsSyncDetails"
-    public static let showsAdditionalLimits = "popover.showsAdditionalLimits"
     public static let showsResetCredits = "popover.showsResetCredits"
     /// 保留旧总开关键仅用于升级迁移，新版本使用三个栏目开关。
     public static let showsLocalUsage = "popover.showsLocalUsage"
@@ -1318,7 +1312,6 @@ public enum PopoverPreferenceKeys {
         showsTopInvocations,
         showsAnalytics,
         showsSyncDetails,
-        showsAdditionalLimits,
         showsResetCredits,
         showsLocalUsage,
         showsLocalOverview,
@@ -1683,7 +1676,6 @@ public struct PopoverDisplaySettings: Equatable, Sendable {
     public static let defaultShowsTopInvocations = false
     public static let defaultShowsAnalytics = true
     public static let defaultShowsSyncDetails = false
-    public static let defaultShowsAdditionalLimits = false
     public static let defaultShowsResetCredits = true
     public static let defaultShowsLocalOverview = false
     public static let defaultShowsLocalTrend = false
@@ -1697,7 +1689,6 @@ public struct PopoverDisplaySettings: Equatable, Sendable {
     public let showsTopInvocations: Bool
     public let showsAnalytics: Bool
     public let showsSyncDetails: Bool
-    public let showsAdditionalLimits: Bool
     public let showsResetCredits: Bool
     public let showsLocalOverview: Bool
     public let showsLocalTrend: Bool
@@ -1712,7 +1703,6 @@ public struct PopoverDisplaySettings: Equatable, Sendable {
         showsTopInvocations: Bool = Self.defaultShowsTopInvocations,
         showsAnalytics: Bool = Self.defaultShowsAnalytics,
         showsSyncDetails: Bool = Self.defaultShowsSyncDetails,
-        showsAdditionalLimits: Bool = Self.defaultShowsAdditionalLimits,
         showsResetCredits: Bool = Self.defaultShowsResetCredits,
         showsLocalOverview: Bool = Self.defaultShowsLocalOverview,
         showsLocalTrend: Bool = Self.defaultShowsLocalTrend,
@@ -1726,7 +1716,6 @@ public struct PopoverDisplaySettings: Equatable, Sendable {
         self.showsTopInvocations = showsTopInvocations
         self.showsAnalytics = showsAnalytics
         self.showsSyncDetails = showsSyncDetails
-        self.showsAdditionalLimits = showsAdditionalLimits
         self.showsResetCredits = showsResetCredits
         self.showsLocalOverview = showsLocalOverview
         self.showsLocalTrend = showsLocalTrend
@@ -1735,9 +1724,6 @@ public struct PopoverDisplaySettings: Equatable, Sendable {
     }
 
     public init(defaults: UserDefaults) {
-        let additionalLimits = defaults.object(forKey: PopoverPreferenceKeys.showsAdditionalLimits) as? Bool
-            ?? defaults.object(forKey: MenuBarPreferenceKeys.showsAdditionalLimits) as? Bool
-            ?? Self.defaultShowsAdditionalLimits
         self.init(
             showsPaceComparison: defaults.object(forKey: PopoverPreferenceKeys.showsPaceComparison) as? Bool
                 ?? Self.defaultShowsPaceComparison,
@@ -1753,7 +1739,6 @@ public struct PopoverDisplaySettings: Equatable, Sendable {
                 ?? Self.defaultShowsAnalytics,
             showsSyncDetails: defaults.object(forKey: PopoverPreferenceKeys.showsSyncDetails) as? Bool
                 ?? Self.defaultShowsSyncDetails,
-            showsAdditionalLimits: additionalLimits,
             showsResetCredits: defaults.object(forKey: PopoverPreferenceKeys.showsResetCredits) as? Bool
                 ?? Self.defaultShowsResetCredits,
             showsLocalOverview: defaults.object(forKey: PopoverPreferenceKeys.showsLocalOverview) as? Bool
@@ -1890,7 +1875,6 @@ public struct MenuBarDisplaySettings: Equatable, Sendable {
     public static let defaultShowsPrimaryWindow = true
     public static let defaultShowsSecondaryWindow = true
     public static let defaultShowsPercentSymbol = true
-    public static let defaultShowsAdditionalLimits = false
     public static let defaultShowsMenuBarIcon = false
     public static let defaultShowsHookActivityLight = true
     public static let defaultHookActivityIndicatorStyle = HookActivityIndicatorStyle.automatic
@@ -1917,7 +1901,6 @@ public struct MenuBarDisplaySettings: Equatable, Sendable {
     public let showsSecondaryWindow: Bool
     public let hiddenWindowDurationMins: Set<Int>
     public let showsPercentSymbol: Bool
-    public let showsAdditionalLimits: Bool
     public let showsMenuBarIcon: Bool
     public let showsHookActivityLight: Bool
     public let hookActivityIndicatorStyle: HookActivityIndicatorStyle
@@ -1937,7 +1920,6 @@ public struct MenuBarDisplaySettings: Equatable, Sendable {
         showsSecondaryWindow: Bool = Self.defaultShowsSecondaryWindow,
         hiddenWindowDurationMins: Set<Int>? = nil,
         showsPercentSymbol: Bool = Self.defaultShowsPercentSymbol,
-        showsAdditionalLimits: Bool = Self.defaultShowsAdditionalLimits,
         showsMenuBarIcon: Bool = Self.defaultShowsMenuBarIcon,
         showsHookActivityLight: Bool = Self.defaultShowsHookActivityLight,
         hookActivityIndicatorStyle: HookActivityIndicatorStyle = Self.defaultHookActivityIndicatorStyle,
@@ -1959,7 +1941,6 @@ public struct MenuBarDisplaySettings: Equatable, Sendable {
             showsSecondaryWindow: showsSecondaryWindow
         )
         self.showsPercentSymbol = showsPercentSymbol
-        self.showsAdditionalLimits = showsAdditionalLimits
         self.showsMenuBarIcon = showsMenuBarIcon
         self.showsHookActivityLight = showsHookActivityLight
         self.hookActivityIndicatorStyle = hookActivityIndicatorStyle
@@ -1999,8 +1980,6 @@ public struct MenuBarDisplaySettings: Equatable, Sendable {
             hiddenWindowDurationMins: Self.storedHiddenWindowDurationMins(defaults: defaults),
             showsPercentSymbol: defaults.object(forKey: MenuBarPreferenceKeys.showsPercentSymbol) as? Bool
                 ?? Self.defaultShowsPercentSymbol,
-            showsAdditionalLimits: defaults.object(forKey: MenuBarPreferenceKeys.showsAdditionalLimits) as? Bool
-                ?? Self.defaultShowsAdditionalLimits,
             showsMenuBarIcon: defaults.object(forKey: MenuBarPreferenceKeys.showsMenuBarIcon) as? Bool
                 ?? Self.defaultShowsMenuBarIcon,
             showsHookActivityLight: defaults.object(forKey: MenuBarPreferenceKeys.showsHookActivityLight) as? Bool
