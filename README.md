@@ -161,6 +161,8 @@ Sparkle 默认每天检查一次更新，也可以在“设置 → 关于 → �
 - 安装包：GitHub Releases
 - 校验：Sparkle EdDSA 签名
 
+更新弹窗会直接展示本次发布的分类改动，并附完整变更记录链接；内容与 GitHub Release 共用同一份说明，随打包自动生成。
+
 当前 Release 使用 ad-hoc 签名，适合本机和小范围分发；面向公众长期分发时建议增加 Developer ID 签名与 Apple 公证。
 
 ## 开发

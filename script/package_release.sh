@@ -153,11 +153,28 @@ hdiutil create \
   -format UDZO \
   "$DMG_PATH"
 
-# 每次只发布一个完整 Universal 包；历史版本由 GitHub Releases 保存，不生成增量文件。
+# 在生成 appcast 前准备同一份分类说明，让更新弹窗与 GitHub Release 展示一致的改动。
+PREVIOUS_RELEASE_TAG="$(git -C "$ROOT_DIR" describe --tags --abbrev=0 --match 'v*' HEAD 2>/dev/null || true)"
+NOTES_REVISION_RANGE="HEAD"
+if [ -n "$PREVIOUS_RELEASE_TAG" ] && git -C "$ROOT_DIR" rev-parse --verify "$PREVIOUS_RELEASE_TAG^{commit}" >/dev/null 2>&1; then
+  NOTES_REVISION_RANGE="$PREVIOUS_RELEASE_TAG..HEAD"
+fi
+release_write_notes \
+  "$ROOT_DIR" \
+  "$NOTES_REVISION_RANGE" \
+  "$RELEASE_NOTES_PATH" \
+  "$PREVIOUS_RELEASE_TAG" \
+  "$RELEASE_TAG" \
+  "$GITHUB_REPOSITORY"
+
+# Sparkle 按安装包同名文件识别说明；内嵌 Markdown，避免弹窗另行请求外部日志页面。
 mkdir -p "$APPCAST_WORK_DIR"
 cp "$DMG_PATH" "$APPCAST_WORK_DIR/"
+cp "$RELEASE_NOTES_PATH" "$APPCAST_WORK_DIR/$(basename "${DMG_PATH%.dmg}").md"
+# 每次只发布一个完整 Universal 包；历史版本由 GitHub Releases 保存，不生成增量文件。
 APPCAST_ARGUMENTS=(
   --download-url-prefix "$DOWNLOAD_URL_PREFIX"
+  --embed-release-notes
   --maximum-versions 1
   --maximum-deltas 0
   -o "$APPCAST_PATH"
@@ -171,20 +188,6 @@ fi
 
 # 统一频道展示标题，保留已签名 enclosure 的全部属性。
 perl -0pi -e 's{(<channel>\s*<title>)[^<]*(</title>)}{$1CodexMeter$2}' "$APPCAST_PATH"
-
-# 使用上一个 Release 到当前提交的差异生成分类说明，直接提交也不会被遗漏。
-PREVIOUS_RELEASE_TAG="$(git -C "$ROOT_DIR" describe --tags --abbrev=0 --match 'v*' HEAD 2>/dev/null || true)"
-NOTES_REVISION_RANGE="HEAD"
-if [ -n "$PREVIOUS_RELEASE_TAG" ] && git -C "$ROOT_DIR" rev-parse --verify "$PREVIOUS_RELEASE_TAG^{commit}" >/dev/null 2>&1; then
-  NOTES_REVISION_RANGE="$PREVIOUS_RELEASE_TAG..HEAD"
-fi
-release_write_notes \
-  "$ROOT_DIR" \
-  "$NOTES_REVISION_RANGE" \
-  "$RELEASE_NOTES_PATH" \
-  "$PREVIOUS_RELEASE_TAG" \
-  "$RELEASE_TAG" \
-  "$GITHUB_REPOSITORY"
 
 # WidgetKit 会保留 extension 进程；本机安装前一并结束，Actions runner 则跳过该步骤。
 if [ "$INSTALL_LOCAL" = "1" ]; then
