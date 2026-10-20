@@ -21,6 +21,7 @@ final class CodexRadarStore: ObservableObject {
     private var hasStartedRefreshLoop = false
     private var settingsObserver: NSObjectProtocol?
     private var activeSource: CodexRadarSource
+    private var activeRefreshID: UUID?
 
     init(
         client: any CodexRadarFetching = DirectCodexRadarClient(),
@@ -56,14 +57,21 @@ final class CodexRadarStore: ObservableObject {
 
     /// 手动刷新雷达数据；即使后台开关关闭，用户点击区块刷新时也允许读取一次。
     func refresh() async {
+        let source = settingsProvider().source
+        let refreshID = UUID()
+        activeRefreshID = refreshID
         logger.info("Codex radar refresh started")
         isRefreshing = true
-        defer { isRefreshing = false }
+        defer {
+            if activeRefreshID == refreshID {
+                isRefreshing = false
+                activeRefreshID = nil
+            }
+        }
 
         do {
-            let source = settingsProvider().source
             let updatedSnapshot = try await client.fetchRadarSnapshot(source: source)
-            guard settingsProvider().source == source else {
+            guard !Task.isCancelled, activeRefreshID == refreshID, settingsProvider().source == source else {
                 return
             }
             try store.save(updatedSnapshot)
@@ -72,10 +80,12 @@ final class CodexRadarStore: ObservableObject {
             errorMessage = nil
             logger.info("Codex radar snapshot saved")
         } catch {
+            guard !Task.isCancelled, !(error is CancellationError),
+                  activeRefreshID == refreshID, settingsProvider().source == source else { return }
             errorMessage = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
             logger.error("Codex radar refresh failed: \(self.errorMessage ?? "unknown", privacy: .public)")
-            if snapshot == nil {
-                snapshot = try? store.load()
+            if snapshot == nil, let cached = try? store.load(), cached.source == source {
+                snapshot = cached
             }
         }
     }

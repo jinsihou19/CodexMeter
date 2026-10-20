@@ -28,8 +28,94 @@ struct DirectCodexRadarClient: CodexRadarFetching {
 
     /// 拉取指定来源并解码雷达快照；HTTP、网络和 JSON 错误统一转为可展示错误。
     func fetchRadarSnapshot(source: CodexRadarSource) async throws -> CodexRadarSnapshot {
+        do {
+            switch source {
+            case .codexRadar:
+                return try await fetchRadarBench()
+            case .radarInsights:
+                let data = try await fetchData(from: endpointURL ?? source.endpointURL)
+                return try JSONDecoder().decode(CodexRadarInsightsResponse.self, from: data)
+                    .snapshot(fetchedAt: Date())
+            case .aiIQ:
+                let data = try await fetchData(from: endpointURL ?? source.endpointURL)
+                return try JSONDecoder().decode(AIIQResponse.self, from: data)
+                    .snapshot(fetchedAt: Date())
+            }
+        } catch is CancellationError {
+            throw CancellationError()
+        } catch let error as DirectCodexRadarClientError {
+            throw error
+        } catch let error as DecodingError {
+            throw DirectCodexRadarClientError.invalidResponse(error.localizedDescription)
+        } catch {
+            throw DirectCodexRadarClientError.network(error.localizedDescription)
+        }
+    }
+
+    /// 读取公开题库绑定，再以最多三个并发查询最新家族的各档位；任何请求失败都保留原快照。
+    private func fetchRadarBench() async throws -> CodexRadarSnapshot {
+        let bindingData = try await fetchData(from: endpointURL ?? CodexRadarSource.codexRadar.endpointURL)
+        let binding = try JSONDecoder().decode(RadarBenchBinding.self, from: bindingData)
+        guard binding.enabled, binding.productionReadVerified, binding.totalTasks > 0,
+              !binding.modelEfforts.isEmpty,
+              Set(binding.modelEfforts.map(\.id)).count == binding.modelEfforts.count else {
+            throw DirectCodexRadarClientError.invalidResponse("雷达Bench题库绑定不可用")
+        }
+        let selections = CodexRadarModelSelection.latestGPTSeriesByFamily(
+            from: binding.modelEfforts.filter { $0.model.hasPrefix("gpt-") && $0.model != "gpt-5.5" }
+                .map { $0.series }
+        )
+        let fetchedAt = Date()
+        var series: [CodexRadarModelSeries] = []
+        for offset in stride(from: 0, to: selections.count, by: 3) {
+            try Task.checkCancellation()
+            let batch = Array(selections[offset..<min(offset + 3, selections.count)])
+            let results = try await withThrowingTaskGroup(of: CodexRadarModelSeries?.self) { group in
+                for selection in batch {
+                    group.addTask {
+                        var components = URLComponents(
+                            url: endpointURL ?? URL(string: "https://codexradar.com/api/radar-bench-score")!,
+                            resolvingAgainstBaseURL: false
+                        )!
+                        components.queryItems = [
+                            URLQueryItem(name: "model", value: selection.model),
+                            URLQueryItem(name: "effort", value: selection.reasoningEffort),
+                            URLQueryItem(name: "view", value: "summary"),
+                            URLQueryItem(name: "selection", value: "user-selected-v1")
+                        ]
+                        let data = try await fetchData(from: components.url!)
+                        let summary = try JSONDecoder().decode(RadarBenchSummary.self, from: data)
+                        return try summary.series(for: selection, binding: binding, fetchedAt: fetchedAt)
+                    }
+                }
+                var results: [CodexRadarModelSeries] = []
+                for try await result in group {
+                    if let result { results.append(result) }
+                }
+                return results
+            }
+            series.append(contentsOf: results)
+        }
+        try Task.checkCancellation()
+        // 请求完成顺序不稳定；按绑定顺序恢复，保证首屏和同分模型排序一致。
+        let seriesByID = Dictionary(uniqueKeysWithValues: series.map { ($0.id, $0) })
+        let orderedSeries = selections.compactMap { seriesByID[$0.id] }
+        let latestGrade = orderedSeries.compactMap { $0.latest?.date }.compactMap { value in
+            RadarBenchSummary.parseDate(value).map { (value, $0) }
+        }.max { $0.1 < $1.1 }?.0
+        return try makeSnapshot(
+            source: .codexRadar,
+            fetchedAt: fetchedAt,
+            updatedAt: latestGrade,
+            series: orderedSeries
+        )
+    }
+
+    /// 共用只读请求配置；仅接受成功 HTTP 响应，不对失败或空数据制造替代成绩。
+    private func fetchData(from url: URL) async throws -> Data {
+        try Task.checkCancellation()
         var request = URLRequest(
-            url: endpointURL ?? source.endpointURL,
+            url: url,
             cachePolicy: .reloadIgnoringLocalCacheData,
             timeoutInterval: timeoutSeconds
         )
@@ -38,30 +124,12 @@ struct DirectCodexRadarClient: CodexRadarFetching {
         request.setValue("no-store", forHTTPHeaderField: "Cache-Control")
         request.setValue("codex-usage-widget/1.0", forHTTPHeaderField: "User-Agent")
 
-        do {
-            let (data, response) = try await transport(request)
-            guard (200..<300).contains(response.statusCode) else {
-                throw DirectCodexRadarClientError.httpStatus(response.statusCode)
-            }
-            let fetchedAt = Date()
-            switch source {
-            case .codexRadar:
-                return try JSONDecoder().decode(CodexRadarEfficiencyResponse.self, from: data)
-                    .snapshot(fetchedAt: fetchedAt)
-            case .radarInsights:
-                return try JSONDecoder().decode(CodexRadarInsightsResponse.self, from: data)
-                    .snapshot(fetchedAt: fetchedAt)
-            case .aiIQ:
-                return try JSONDecoder().decode(AIIQResponse.self, from: data)
-                    .snapshot(fetchedAt: fetchedAt)
-            }
-        } catch let error as DirectCodexRadarClientError {
-            throw error
-        } catch let error as DecodingError {
-            throw DirectCodexRadarClientError.invalidResponse(error.localizedDescription)
-        } catch {
-            throw DirectCodexRadarClientError.network(error.localizedDescription)
+        let (data, response) = try await transport(request)
+        try Task.checkCancellation()
+        guard (200..<300).contains(response.statusCode) else {
+            throw DirectCodexRadarClientError.httpStatus(response.statusCode)
         }
+        return data
     }
 
     /// 使用系统 URLSession 执行请求，并确认拿到 HTTP 响应对象。
@@ -100,7 +168,7 @@ private extension CodexRadarSource {
     var endpointURL: URL {
         switch self {
         case .codexRadar:
-            return URL(string: "https://codexradar.com/data/intelligence-efficiency.json")!
+            return URL(string: "https://codexradar.com/data/radar-bench-binding.json")!
         case .radarInsights:
             return URL(string: "https://codexradar.com/api/radar-insights")!
         case .aiIQ:
@@ -134,99 +202,161 @@ private func makeSnapshot(
     )
 }
 
-/// Codex Radar 软件工程效能响应；当前分值和完整历史共用同一个公开文件。
-private struct CodexRadarEfficiencyResponse: Decodable {
-    let sourceUpdatedAt: String?
-    let points: [Point]
-    let history: [History]
+/// 官网公开题库绑定；以其当前模型档位和题集标识核对成绩，避免混入历史评测。
+private struct RadarBenchBinding: Decodable, Sendable {
+    let enabled: Bool
+    let productionReadVerified: Bool
+    let benchmark: String
+    let taskSetSHA256: String
+    let totalTasks: Int
+    let modelEfforts: [Selection]
 
     enum CodingKeys: String, CodingKey {
-        case sourceUpdatedAt = "source_updated_at"
-        case points
-        case history
+        case enabled, benchmark
+        case productionReadVerified = "production_read_verified"
+        case taskSetSHA256 = "task_set_sha256"
+        case totalTasks = "total_tasks"
+        case modelEfforts = "model_efforts"
     }
 
-    /// 仅保留 Codex 中的 GPT 模型，并把每个模型档位的历史快照合并到同一序列。
-    func snapshot(fetchedAt: Date) throws -> CodexRadarSnapshot {
-        let currentPoints = points.filter(\.isRadarModel)
-        let dateFormatter = ISO8601DateFormatter()
-        let latestHistoryDate = history.compactMap { dateFormatter.date(from: $0.at) }.max()
-        let historyCutoff = latestHistoryDate?.addingTimeInterval(-3 * 24 * 60 * 60)
-        let recentHistory = history.filter { item in
-            guard let historyCutoff, let date = dateFormatter.date(from: item.at) else {
-                return false
-            }
-            return date >= historyCutoff
-        }
-        var historyByID: [String: [CodexRadarIQRun]] = [:]
-        for item in recentHistory {
-            for point in item.points where point.isRadarModel {
-                historyByID[point.id, default: []].append(point.run(date: item.at))
-            }
-        }
-        let series = currentPoints.map { point in
+    /// 绑定中的单个配置；复用已有家族版本筛选，不硬编码 GPT 版本与档位。
+    struct Selection: Decodable, Sendable {
+        let model: String
+        let effort: String
+        var id: String { "\(model)|\(effort)" }
+        var series: CodexRadarModelSeries {
             CodexRadarModelSeries(
-                id: point.id,
-                label: point.label,
-                model: point.model,
-                reasoningEffort: point.effort,
-                latest: point.run(date: point.latestGradedAt ?? sourceUpdatedAt ?? ""),
-                recentDays: historyByID[point.id] ?? []
+                id: id, label: "\(model) \(effort)", model: model,
+                reasoningEffort: effort, latest: nil, recentDays: []
             )
         }
-        return try makeSnapshot(
-            source: .codexRadar,
-            fetchedAt: fetchedAt,
-            updatedAt: sourceUpdatedAt,
-            series: series
+    }
+}
+
+/// RadarBench 满分 150 的公开聚合成绩；覆盖题数与通过题数分开，缺失分数不补零。
+private struct RadarBenchSummary: Decodable {
+    let benchmark: String
+    let taskSetSHA256: String
+    let scoreVersion: String
+    let scoreMax: Double
+    let model: String
+    let effort: String
+    let score: Double?
+    let coverage: Int
+    let requiredTasks: Int
+    let scoreStatus: String
+    let detailMetrics: DetailMetrics?
+    let history: History?
+
+    enum CodingKeys: String, CodingKey {
+        case benchmark, model, effort, score, coverage, history
+        case taskSetSHA256 = "task_set_sha256"
+        case scoreVersion = "score_version"
+        case scoreMax = "score_max"
+        case requiredTasks = "required_tasks"
+        case scoreStatus = "score_status"
+        case detailMetrics = "detail_metrics"
+    }
+
+    /// 校验模型、题集与评分刻度，返回当前分数和最近三个 UTC 日的历史；缺分配置返回 nil。
+    func series(
+        for selection: CodexRadarModelSeries,
+        binding: RadarBenchBinding,
+        fetchedAt: Date
+    ) throws -> CodexRadarModelSeries? {
+        guard model == selection.model, effort == selection.reasoningEffort,
+              benchmark == binding.benchmark, taskSetSHA256 == binding.taskSetSHA256,
+              scoreVersion == "radar-bench-v2-150", scoreMax == 150,
+              requiredTasks == binding.totalTasks, (0...requiredTasks).contains(coverage) else {
+            throw DirectCodexRadarClientError.invalidResponse("雷达Bench成绩与题库绑定不一致")
+        }
+        guard let score else { return nil }
+        guard score.isFinite, (0...150).contains(score), coverage > 0,
+              scoreStatus == (coverage == requiredTasks ? "complete" : "provisional") else {
+            throw DirectCodexRadarClientError.invalidResponse("雷达Bench分值或覆盖状态无效")
+        }
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(secondsFromGMT: 0)!
+        let cutoff = calendar.startOfDay(for: fetchedAt).addingTimeInterval(-2 * 24 * 60 * 60)
+        var recentDays: [CodexRadarIQRun] = []
+        if let history {
+            guard history.model == model, history.effort == effort,
+                  history.scoreVersion == scoreVersion, history.scoreMax == scoreMax,
+                  history.timeZone == "UTC", history.bucket == "day" else {
+                throw DirectCodexRadarClientError.invalidResponse("雷达Bench历史口径不一致")
+            }
+            for point in history.points.sorted(by: { $0.at < $1.at }) {
+                guard let date = Self.parseDate(point.at), date >= cutoff, date <= fetchedAt else { continue }
+                guard let historyScore = point.score else { continue }
+                guard historyScore.isFinite, (0...150).contains(historyScore),
+                      point.requiredTasks == requiredTasks, (1...requiredTasks).contains(point.coverage),
+                      point.scoreStatus == (point.coverage == requiredTasks ? "complete" : "provisional") else {
+                    throw DirectCodexRadarClientError.invalidResponse("雷达Bench历史分值无效")
+                }
+                recentDays.append(run(
+                    score: historyScore, date: point.at, coverage: point.coverage, status: point.scoreStatus
+                ))
+            }
+        }
+        return CodexRadarModelSeries(
+            id: selection.id, label: selection.label, model: model, reasoningEffort: effort,
+            latest: run(score: score, date: detailMetrics?.latestGradedAt ?? "", coverage: coverage, status: scoreStatus),
+            recentDays: Array(recentDays.suffix(3))
         )
     }
 
-    /// 单个模型档位的效能分值；数值字段使用 Double 兼容上游的整数和小数 JSON。
-    struct Point: Decodable {
-        let model: String
-        let effort: String
-        let harness: String?
-        let iq: Double
-        let passed: Double?
-        let validTasks: Double?
-        let averagePriceUSD: Double?
-        let averageTotalTokens: Double?
-        let latestGradedAt: String?
-
-        enum CodingKeys: String, CodingKey {
-            case model, effort, harness, iq, passed
-            case validTasks = "valid_tasks"
-            case averagePriceUSD = "average_price_usd"
-            case averageTotalTokens = "average_total_tokens"
-            case latestGradedAt = "latest_graded_at"
-        }
-
-        var id: String { "\(model)|\(effort)" }
-        var label: String { "\(model) \(effort)" }
-        var isRadarModel: Bool { harness == nil || harness == "codex" || harness == "dsh" }
-
-        /// 把当前点或历史点转换为 UI 已使用的运行记录。
-        func run(date: String) -> CodexRadarIQRun {
-            CodexRadarIQRun(
-                date: date,
-                score: iq,
-                status: nil,
-                passed: passed.map(Int.init),
-                tasks: validTasks.map(Int.init),
-                invalid: nil,
-                totalTokens: averageTotalTokens.map(Int.init),
-                wallTimeHuman: nil,
-                model: model,
-                reasoningEffort: effort,
-                costUSD: averagePriceUSD
-            )
-        }
+    /// 构造可展示记录；coverage 不是通过数，保留为独立字段供悬停说明。
+    private func run(score: Double, date: String, coverage: Int, status: String) -> CodexRadarIQRun {
+        CodexRadarIQRun(
+            date: date, score: score, status: status, passed: nil, tasks: requiredTasks,
+            invalid: nil, totalTokens: nil, wallTimeHuman: nil,
+            model: model, reasoningEffort: effort, costUSD: nil, coveredTasks: coverage
+        )
     }
 
+    /// 兼容服务器返回的整秒与小数秒 ISO 时间，不能用抓取时间冒充判分时间。
+    static func parseDate(_ value: String) -> Date? {
+        (try? Date(value, strategy: .iso8601))
+            ?? (try? Date(value, strategy: Date.ISO8601FormatStyle(includingFractionalSeconds: true)))
+    }
+
+    /// 接口的最近真实判分时间；不使用 as_of 抓取时刻替代。
+    struct DetailMetrics: Decodable {
+        let latestGradedAt: String?
+        enum CodingKeys: String, CodingKey { case latestGradedAt = "latest_graded_at" }
+    }
+
+    /// 服务端按 UTC 日归档的同口径历史；只保留三个自然日供迷你曲线展示。
     struct History: Decodable {
-        let at: String
+        let model: String
+        let effort: String
+        let scoreVersion: String
+        let scoreMax: Double
+        let timeZone: String
+        let bucket: String
         let points: [Point]
+
+        enum CodingKeys: String, CodingKey {
+            case model, effort, bucket, points
+            case scoreVersion = "score_version"
+            case scoreMax = "score_max"
+            case timeZone = "time_zone"
+        }
+
+        /// 单日快照允许缺分，但合法的零分与暂定成绩均有真实覆盖记录。
+        struct Point: Decodable {
+            let at: String
+            let score: Double?
+            let coverage: Int
+            let requiredTasks: Int
+            let scoreStatus: String
+
+            enum CodingKeys: String, CodingKey {
+                case at, score, coverage
+                case requiredTasks = "required_tasks"
+                case scoreStatus = "score_status"
+            }
+        }
     }
 }
 

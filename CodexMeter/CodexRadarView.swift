@@ -1,7 +1,7 @@
 import CodexMeterShared
 import SwiftUI
 
-// 本文件负责下拉面板中的降智雷达可视化，包括分数卡、IQ 折线和同步状态。
+// 本文件负责降智雷达可视化，区分 RadarBench 雷达分与其他来源的 IQ 口径。
 
 /// 下拉面板里的降智雷达区块；展示最新 IQ 分数、历史折线和拉取状态。
 struct CodexRadarSection: View {
@@ -249,10 +249,12 @@ struct CodexRadarSection: View {
         }
     }
 
-    /// 生成底部同步文案；模型 IQ 更新时间优先，缺失时回退到本地抓取时间。
+    /// 说明当前评分口径；RadarBench 使用满分150，不沿用旧 IQ 的常态区间。
     private func footer(snapshot: CodexRadarSnapshot) -> some View {
         HStack(alignment: .firstTextBaseline, spacing: 8) {
-            Text(AppLocalization.string("常态 90-110"))
+            Text(settings.source == .codexRadar
+                 ? (AppLocalization.usesEnglish() ? "RadarBench · out of 150" : "RadarBench · 满分150")
+                 : settings.source == .aiIQ ? "Composite IQ" : AppLocalization.string("常态 90-110"))
                 .foregroundStyle(.secondary)
             Spacer(minLength: 8)
             Text(syncText(snapshot: snapshot))
@@ -263,9 +265,12 @@ struct CodexRadarSection: View {
         .font(.caption2)
     }
 
-    /// 格式化模型 IQ 的上游更新时间；缺失时才回退为本地抓取时间。
+    /// 新雷达标注真实判分时间；没有上游时间时只显示抓取时间。
     private func syncText(snapshot: CodexRadarSnapshot) -> String {
         if let updatedAt = snapshot.modelIQ?.updatedAt.flatMap(CodexRadarDateFormatter.shortDateTime) {
+            if settings.source == .codexRadar {
+                return AppLocalization.usesEnglish() ? "Graded \(updatedAt)" : "最近判分 \(updatedAt)"
+            }
             return AppLocalization.usesEnglish() ? "Model IQ updated \(updatedAt)" : "模型IQ更新 \(updatedAt)"
         }
         let time = CodexRadarDateFormatter.shortTime(snapshot.fetchedAt)
@@ -361,7 +366,7 @@ private struct CodexRadarScoreGrid: View {
             groupLabel(group)
             Spacer(minLength: 4)
             if let run = group.runs.first {
-                Text(CodexRadarNumberFormatter.compactScore(run.score))
+                Text(CodexRadarNumberFormatter.compactScore(run.score) + (run.status == "provisional" ? "*" : ""))
                     .font(.caption.weight(.bold))
                     .monospacedDigit()
                     .foregroundStyle(color(for: run))
@@ -404,7 +409,7 @@ private struct CodexRadarScoreGrid: View {
                 .foregroundStyle(.primary)
                 .lineLimit(1)
                 .minimumScaleFactor(0.72)
-            Text(CodexRadarNumberFormatter.compactScore(run.score))
+            Text(CodexRadarNumberFormatter.compactScore(run.score) + (run.status == "provisional" ? "*" : ""))
                 .font(.caption.weight(.bold))
                 .monospacedDigit()
                 .foregroundStyle(color(for: run))
@@ -427,7 +432,7 @@ private struct CodexRadarScoreGrid: View {
     }
 }
 
-/// IQ 折线图；使用 Canvas 自绘以避免引入 Charts 依赖和额外系统版本约束。
+/// 雷达分折线图；只画同一评分口径的最近三天，不添加旧 IQ 的常态区间。
 private struct CodexRadarLineChart: View {
     let series: [CodexRadarModelSeries]
     @Environment(\.displayScale) private var displayScale
@@ -445,7 +450,7 @@ private struct CodexRadarLineChart: View {
             Canvas { context, size in
                 drawChart(context: &context, size: size)
             }
-            .accessibilityLabel(AppLocalization.string("降智雷达 IQ 曲线"))
+            .accessibilityLabel(AppLocalization.usesEnglish() ? "Radar score history" : "雷达分历史曲线")
 
             GeometryReader { proxy in
                 Color.clear
@@ -470,24 +475,15 @@ private struct CodexRadarLineChart: View {
         .frame(height: 116)
     }
 
-    /// 画坐标、常态区间和每条模型曲线。
+    /// 绘制坐标和各档位曲线；雷达分没有已定义的正常区间。
     private func drawChart(context: inout GraphicsContext, size: CGSize) {
         let plotRect = plotRect(for: size)
-        drawNormalBand(context: &context, rect: plotRect)
         drawGrid(context: &context, rect: plotRect)
         drawXAxisLabels(context: &context, rect: plotRect)
 
         for (index, item) in series.enumerated() {
             drawSeries(item, index: index, context: &context, rect: plotRect)
         }
-    }
-
-    /// 绘制 90-110 常态区间背景。
-    private func drawNormalBand(context: inout GraphicsContext, rect: CGRect) {
-        let yTop = yPosition(score: 110, rect: rect)
-        let yBottom = yPosition(score: 90, rect: rect)
-        let band = CGRect(x: rect.minX, y: yTop, width: rect.width, height: yBottom - yTop)
-        context.fill(Path(roundedRect: band, cornerRadius: 6), with: .color(.primary.opacity(0.045)))
     }
 
     /// 绘制轻量网格和关键刻度，保持菜单弹窗可扫读。
@@ -497,7 +493,7 @@ private struct CodexRadarLineChart: View {
             var path = Path()
             path.move(to: CGPoint(x: rect.minX, y: y))
             path.addLine(to: CGPoint(x: rect.maxX, y: y))
-            context.stroke(path, with: .color(.primary.opacity(score == 110 ? 0.22 : 0.11)), lineWidth: 1)
+            context.stroke(path, with: .color(.primary.opacity(0.11)), lineWidth: 1)
             let label = Text("\(Int(score))")
                 .font(.caption2.weight(.semibold))
                 .foregroundStyle(.secondary)
@@ -644,7 +640,7 @@ private struct CodexRadarLineChart: View {
                         Circle()
                             .fill(CodexRadarPalette.seriesColor(index: index))
                             .frame(width: 7, height: 7)
-                        Text("\(CodexRadarScoreCardText.shortLabel(model: item.model, effort: item.reasoningEffort)) · IQ \(CodexRadarNumberFormatter.compactScore(run.score))")
+                        Text("\(CodexRadarScoreCardText.shortLabel(model: item.model, effort: item.reasoningEffort)) · \(CodexRadarNumberFormatter.compactScore(run.score)) /150")
                     }
                 }
             }
@@ -688,7 +684,11 @@ private struct CodexRadarLineChart: View {
 
 /// 雷达颜色表；状态色保留分数语义，曲线色复用全应用图表主题。
 private enum CodexRadarPalette {
+    /// 雷达分按120/100/80分为绿、蓝、橙、红四档，旧 IQ 来源保留原规则。
     static func color(status: String?, score: Double) -> Color {
+        if (status == "complete" || status == "provisional"), score >= 120 {
+            return Color(hexRGB: "#16A34A")
+        }
         switch status {
         case "green":
             return Color(hexRGB: "#2F6ED3")
@@ -735,6 +735,12 @@ private enum CodexRadarDetailFormatter {
         ]
         if let passed = run.passed, let tasks = run.tasks {
             details.append(AppLocalization.usesEnglish() ? "Passed \(passed)/\(tasks)" : "通过 \(passed)/\(tasks)")
+        }
+        if let covered = run.coveredTasks, let tasks = run.tasks {
+            details.append(AppLocalization.usesEnglish() ? "Coverage \(covered)/\(tasks)" : "覆盖 \(covered)/\(tasks)")
+        }
+        if run.status == "provisional" {
+            details.append(AppLocalization.usesEnglish() ? "* Provisional: incomplete task coverage" : "* 暂定分：题目覆盖不足")
         }
         return details.joined(separator: "\n")
     }

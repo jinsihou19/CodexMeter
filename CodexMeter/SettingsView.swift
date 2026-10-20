@@ -903,7 +903,9 @@ struct SettingsView: View {
             Section(AppLocalization.string("降智雷达")) {
                 SettingsToggleRow(
                     title: "开启降智雷达",
-                    subtitle: "读取所选公开数据源并展示模型 IQ。",
+                    subtitle: AppLocalization.usesEnglish()
+                        ? "Show RadarBench scores or model IQ from the selected source."
+                        : "读取所选公开数据源，展示雷达分或模型 IQ。",
                     isOn: codexRadarBinding($codexRadarEnabled, key: CodexRadarPreferenceKeys.isEnabled)
                 )
                 if codexRadarEnabled {
@@ -926,7 +928,9 @@ struct SettingsView: View {
                     if currentCodexRadarSettings.source.supportsScoreHistory {
                         SettingsToggleRow(
                             title: "显示分值折线图",
-                            subtitle: "默认关闭；开启后绘制该来源提供的历史分值。",
+                            subtitle: AppLocalization.usesEnglish()
+                                ? "Off by default; show at most three days of score history."
+                                : "默认关闭；开启后最多展示三天的历史分值。",
                             isOn: codexRadarScoreChartBinding
                         )
                     }

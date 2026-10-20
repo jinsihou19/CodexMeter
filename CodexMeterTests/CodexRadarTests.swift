@@ -216,56 +216,139 @@ final class CodexRadarTests: XCTestCase {
         XCTAssertEqual(client.fetchCount, 0)
     }
 
-    /// 验证 Codex Radar 新接口能读取 Astra 当前分值，并仅保留最近三天历史。
+    /// 验证官网绑定动态提供6.1，旧家族不请求，缺分与零分分开，历史最多三个自然日。
     func testDirectCodexRadarClientReadsCodexRadarHistory() async throws {
-        let body = """
-        {
-          "source_updated_at": "2026-09-16T12:17:06+08:00",
-          "points": [
-            {
-              "model": "gpt-6-astra", "effort": "high", "harness": "codex",
-              "iq": 108.2, "passed": 88.0, "valid_tasks": 122.0,
-              "average_price_usd": 3.14, "latest_graded_at": "2026-09-15T11:43:38Z"
-            },
-            {"model": "gpt-5.5", "effort": "high", "harness": "codex", "iq": 96.9},
-            {"model": "claude-opus-5", "effort": "high", "harness": "codex", "iq": 112.0}
-          ],
-          "history": [
-            {
-              "at": "2026-09-12T11:59:59+08:00",
-              "points": [{"model": "gpt-6-astra", "effort": "high", "iq": 88.0}]
-            },
-            {
-              "at": "2026-09-13T12:00:00+08:00",
-              "points": [{"model": "gpt-6-astra", "effort": "high", "iq": 99.0}]
-            },
-            {
-              "at": "2026-09-16T12:00:00+08:00",
-              "points": [{"model": "gpt-6-astra", "effort": "high", "iq": 107.1}]
-            }
-          ]
+        let transport = RadarBenchTestTransport()
+        let client = DirectCodexRadarClient { request in
+            try await transport.respond(to: request)
         }
-        """
-        let client = DirectCodexRadarClient(
-            endpointURL: URL(string: "https://example.test/efficiency.json")!
-        ) { request in
-            let response = try XCTUnwrap(HTTPURLResponse(
-                url: try XCTUnwrap(request.url),
-                statusCode: 200,
-                httpVersion: nil,
-                headerFields: nil
-            ))
-            return (Data(body.utf8), response)
-        }
-
         let snapshot = try await client.fetchRadarSnapshot(source: .codexRadar)
-
+        let series = try XCTUnwrap(snapshot.modelIQ?.allSeries)
+        let sol = series.filter { $0.model == "gpt-6.1-sol" }
         XCTAssertEqual(snapshot.source, .codexRadar)
-        XCTAssertEqual(snapshot.modelIQ?.primary.model, "gpt-6-astra")
-        XCTAssertEqual(snapshot.modelIQ?.primary.latest?.score, 108.2)
-        XCTAssertEqual(snapshot.modelIQ?.primary.recentDays.map(\.score), [99.0, 107.1])
-        XCTAssertFalse(snapshot.modelIQ?.allSeries.contains { $0.model == "gpt-5.5" } == true)
-        XCTAssertTrue(snapshot.modelIQ?.allSeries.contains { $0.model == "claude-opus-5" } == true)
+        XCTAssertEqual(sol.count, 3)
+        XCTAssertEqual(sol.first { $0.reasoningEffort == "low" }?.latest?.score, 0)
+        XCTAssertEqual(sol.first { $0.reasoningEffort == "high" }?.latest?.status, "provisional")
+        XCTAssertEqual(sol.first { $0.reasoningEffort == "high" }?.latest?.coveredTasks, 16)
+        XCTAssertNil(sol.first { $0.reasoningEffort == "high" }?.latest?.passed)
+        XCTAssertEqual(sol.first { $0.reasoningEffort == "max" }?.latest?.score, 104.28)
+        XCTAssertTrue(series.allSatisfy { $0.recentDays.count == 3 })
+        XCTAssertEqual(sol.first?.recentDays.map(\.score), [103, 104, 105])
+        let requests = await transport.requests
+        XCTAssertEqual(requests.count, 9) // 一次绑定、八个最新家族档位；medium 缺分仍完成一次查询。
+        XCTAssertEqual(requests.first?.url?.path, "/data/radar-bench-binding.json")
+        for request in requests.dropFirst() {
+            let url = try XCTUnwrap(request.url)
+            let query = try XCTUnwrap(URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems)
+            XCTAssertEqual(url.host, "codexradar.com")
+            XCTAssertEqual(url.path, "/api/radar-bench-score")
+            XCTAssertTrue(["gpt-6.1-sol", "gpt-6-astra"].contains(query.first { $0.name == "model" }?.value ?? ""))
+            XCTAssertEqual(query.first { $0.name == "view" }?.value, "summary")
+            XCTAssertEqual(query.first { $0.name == "selection" }?.value, "user-selected-v1")
+            XCTAssertEqual(request.value(forHTTPHeaderField: "Cache-Control"), "no-store")
+        }
+        let peakRequests = await transport.peakRequests
+        XCTAssertLessThanOrEqual(peakRequests, 3)
+    }
+
+    /// 拒绝串模型、旧题集、不同刻度和异常分值，不能静默展示为可用成绩。
+    func testRadarBenchRejectsMismatchedAndInvalidScores() async throws {
+        for field in ["model", "benchmark", "task_set_sha256", "score_version", "score_max", "score", "coverage", "score_status"] {
+            let transport = RadarBenchTestTransport(invalidField: field)
+            let client = DirectCodexRadarClient { try await transport.respond(to: $0) }
+            do {
+                _ = try await client.fetchRadarSnapshot(source: .codexRadar)
+                XCTFail("应拒绝异常字段 \(field)")
+            } catch {
+                guard case DirectCodexRadarClientError.invalidResponse = error else {
+                    return XCTFail("\(field): \(error)")
+                }
+            }
+        }
+    }
+
+    /// 限流直接报告失败，不批量重试或悄悄回退到冻结的旧 JSON。
+    func testRadarBenchStopsOnRateLimit() async throws {
+        let transport = RadarBenchTestTransport(statusCode: 429)
+        let client = DirectCodexRadarClient { try await transport.respond(to: $0) }
+        do {
+            _ = try await client.fetchRadarSnapshot(source: .codexRadar)
+            XCTFail("限流应返回错误")
+        } catch {
+            XCTAssertEqual(error as? DirectCodexRadarClientError, .httpStatus(429))
+        }
+        let requests = await transport.requests
+        XCTAssertLessThanOrEqual(requests.count, 4)
+    }
+
+    /// 手动与后台首轮均使用当前选中的来源，不额外请求其余供应商。
+    @MainActor
+    func testCodexRadarStoreRefreshesOnlySelectedSource() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let client = CountingCodexRadarClient()
+        let store = CodexRadarStore(
+            client: client,
+            store: CodexRadarSnapshotStore(appGroupIdentifier: "", fallbackDirectory: directory),
+            settingsProvider: { CodexRadarSettings(source: .aiIQ) }
+        )
+        store.start()
+        for _ in 0..<100 where store.snapshot == nil {
+            try await Task.sleep(nanoseconds: 1_000_000)
+        }
+        await store.refresh()
+        XCTAssertEqual(client.fetchedSources, [.aiIQ, .aiIQ])
+        XCTAssertEqual(store.snapshot?.source, .aiIQ)
+    }
+
+    /// 来源切换后旧请求即使报错也不能恢复旧缓存、污染错误信息或提前结束新来源的加载状态。
+    @MainActor
+    func testRadarSourceSwitchIgnoresStaleFailure() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let cache = CodexRadarSnapshotStore(appGroupIdentifier: "", fallbackDirectory: directory)
+        try cache.save(CodexRadarSnapshot(
+            fetchedAt: Date(), monitoredAt: nil, timezone: nil,
+            prediction: nil, modelIQ: nil, source: .codexRadar
+        ))
+        let settings = RadarTestSettings()
+        let client = SuspendedRadarClient()
+        let store = CodexRadarStore(client: client, store: cache, settingsProvider: {
+            CodexRadarSettings(source: settings.source)
+        })
+        let oldRefresh = Task { await store.refresh() }
+        for _ in 0..<100 {
+            if await client.requestCount == 1 { break }
+            try await Task.sleep(nanoseconds: 1_000_000)
+        }
+        settings.source = .aiIQ
+        let newRefresh = Task { await store.refresh() }
+        for _ in 0..<100 {
+            if await client.requestCount == 2 { break }
+            try await Task.sleep(nanoseconds: 1_000_000)
+        }
+        await client.finish(source: .codexRadar, fails: true)
+        await oldRefresh.value
+        XCTAssertTrue(store.isRefreshing)
+        XCTAssertNil(store.errorMessage)
+        await client.finish(source: .aiIQ, fails: false)
+        await newRefresh.value
+        XCTAssertEqual(store.snapshot?.source, .aiIQ)
+        XCTAssertEqual(try cache.load()?.source, .aiIQ)
+        XCTAssertFalse(store.isRefreshing)
+    }
+
+    /// 新评分使用独立缓存文件；旧 IQ 留在磁盘，但不再被新雷达加载。
+    func testRadarBenchCacheDoesNotLoadLegacyIQ() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let oldStore = CodexRadarSnapshotStore(
+            appGroupIdentifier: "", fallbackDirectory: directory, fileName: "latest-codex-radar-v1.json"
+        )
+        try oldStore.save(CodexRadarSnapshot(
+            fetchedAt: Date(), monitoredAt: nil, timezone: nil,
+            prediction: nil, modelIQ: nil, source: .codexRadar
+        ))
+        let currentStore = CodexRadarSnapshotStore(appGroupIdentifier: "", fallbackDirectory: directory)
+        XCTAssertNil(try currentStore.load())
+        XCTAssertNotNil(try oldStore.load())
     }
 
     /// 验证 Radar Insights 只提供当前综合分，不把推荐趋势拼成不完整历史。
@@ -435,7 +518,7 @@ final class CodexRadarTests: XCTestCase {
         try store.save(snapshot)
 
         XCTAssertEqual(try store.load(), snapshot)
-        XCTAssertEqual(store.snapshotURL().lastPathComponent, "latest-codex-radar-v1.json")
+        XCTAssertEqual(store.snapshotURL().lastPathComponent, "latest-codex-radar-v2.json")
     }
 
     /// 验证雷达缓存遇到不可用 App Group 时仍能回退写入，避免首次拉取成功却无法落盘。
@@ -492,18 +575,25 @@ private func makeRadarSeries(
     )
 }
 
+/// 线程安全地记录请求次数与来源，验证关闭和定时任务不会访问其他数据源。
 private final class CountingCodexRadarClient: CodexRadarFetching, @unchecked Sendable {
     private let queue = DispatchQueue(label: "CodexMeterTests.CountingCodexRadarClient")
     private var storedFetchCount = 0
+    private var storedSources: [CodexRadarSource] = []
 
     var fetchCount: Int {
         queue.sync { storedFetchCount }
+    }
+
+    var fetchedSources: [CodexRadarSource] {
+        queue.sync { storedSources }
     }
 
     /// 记录雷达请求次数并返回最小可用快照；测试只关心是否触发网络抽象。
     func fetchRadarSnapshot(source: CodexRadarSource) async throws -> CodexRadarSnapshot {
         queue.sync {
             storedFetchCount += 1
+            storedSources.append(source)
         }
         return CodexRadarSnapshot(
             fetchedAt: Date(timeIntervalSince1970: 1_779_940_000),
@@ -513,5 +603,106 @@ private final class CountingCodexRadarClient: CodexRadarFetching, @unchecked Sen
             modelIQ: nil,
             source: source
         )
+    }
+}
+
+/// 提供真实绑定与聚合响应形状的内存传输，检查请求数量、并发上限与字段校验。
+private actor RadarBenchTestTransport {
+    private(set) var requests: [URLRequest] = []
+    private(set) var peakRequests = 0
+    private var inFlight = 0
+    private let invalidField: String?
+    private let statusCode: Int
+
+    /// 仅改变指定的边界字段或 HTTP 状态，避免测试依赖公网和固定日期。
+    init(invalidField: String? = nil, statusCode: Int = 200) {
+        self.invalidField = invalidField
+        self.statusCode = statusCode
+    }
+
+    /// 绑定后只接受 summary 查询；构造零分、缺分、暂定分与超过三天的日历史。
+    func respond(to request: URLRequest) async throws -> (Data, HTTPURLResponse) {
+        requests.append(request)
+        inFlight += 1
+        peakRequests = max(peakRequests, inFlight)
+        defer { inFlight -= 1 }
+        try await Task.sleep(nanoseconds: 1_000_000)
+        let url = try XCTUnwrap(request.url)
+        let query = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems ?? []
+        let model = query.first { $0.name == "model" }?.value
+        let effort = query.first { $0.name == "effort" }?.value ?? "max"
+        var body: [String: Any]
+        let code: Int
+        if let model {
+            code = statusCode
+            var calendar = Calendar(identifier: .gregorian)
+            calendar.timeZone = TimeZone(secondsFromGMT: 0)!
+            let today = calendar.startOfDay(for: Date())
+            let historyPoints: [[String: Any]] = (0..<6).map { index in
+                ["at": today.addingTimeInterval(Double(index - 5) * 86400).ISO8601Format(),
+                 "score": 100 + index, "coverage": 64, "required_tasks": 64, "score_status": "complete"]
+            }
+            let coverage = effort == "high" ? 16 : 64
+            body = [
+                "model": model, "effort": effort, "benchmark": "test64", "task_set_sha256": "hash64",
+                "score_version": "radar-bench-v2-150", "score_max": 150,
+                "score": effort == "medium" ? NSNull() : effort == "low" ? 0.0 : 104.28,
+                "coverage": coverage, "required_tasks": 64,
+                "score_status": coverage == 64 ? "complete" : "provisional",
+                "detail_metrics": ["latest_graded_at": today.ISO8601Format()],
+                "history": ["model": model, "effort": effort, "score_version": "radar-bench-v2-150",
+                            "score_max": 150, "time_zone": "UTC", "bucket": "day", "points": historyPoints]
+            ]
+            if let invalidField {
+                switch invalidField {
+                case "score_max": body[invalidField] = 100
+                case "score": body[invalidField] = 151
+                case "coverage": body[invalidField] = 65
+                default: body[invalidField] = "wrong"
+                }
+            }
+        } else {
+            code = 200
+            let selections = ["gpt-6-sol", "gpt-6.1-sol", "gpt-6-astra", "gpt-5.5"].flatMap { model in
+                ["low", "medium", "high", "max"].map { ["model": model, "effort": $0] }
+            }
+            body = ["enabled": true, "production_read_verified": true, "benchmark": "test64",
+                    "task_set_sha256": "hash64", "total_tasks": 64, "model_efforts": selections]
+        }
+        let response = try XCTUnwrap(HTTPURLResponse(url: url, statusCode: code, httpVersion: nil, headerFields: nil))
+        return (try JSONSerialization.data(withJSONObject: body), response)
+    }
+}
+
+/// 测试专用主线程设置盒，允许安全地在异步请求期间切换来源。
+@MainActor
+private final class RadarTestSettings {
+    var source: CodexRadarSource = .codexRadar
+}
+
+/// 显式控制请求完成顺序，验证旧来源迟到的失败不会干扰当前来源。
+private actor SuspendedRadarClient: CodexRadarFetching {
+    private var pending: [CodexRadarSource: CheckedContinuation<CodexRadarSnapshot, Error>] = [:]
+    private(set) var requestCount = 0
+
+    /// 挂起当前配置请求，直到测试明确完成该来源。
+    func fetchRadarSnapshot(source: CodexRadarSource) async throws -> CodexRadarSnapshot {
+        requestCount += 1
+        return try await withCheckedThrowingContinuation { pending[source] = $0 }
+    }
+
+    /// 返回最小快照或模拟限流；没有待完成请求意味着测试编排错误。
+    func finish(source: CodexRadarSource, fails: Bool) {
+        guard let continuation = pending.removeValue(forKey: source) else {
+            return XCTFail("不存在待完成请求 \(source)")
+        }
+        if fails {
+            continuation.resume(throwing: DirectCodexRadarClientError.httpStatus(429))
+        } else {
+            continuation.resume(returning: CodexRadarSnapshot(
+                fetchedAt: Date(), monitoredAt: nil, timezone: nil,
+                prediction: nil, modelIQ: nil, source: source
+            ))
+        }
     }
 }

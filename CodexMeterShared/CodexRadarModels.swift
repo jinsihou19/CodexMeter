@@ -39,9 +39,9 @@ public enum CodexRadarSource: String, Codable, CaseIterable, Identifiable, Senda
         self == .codexRadar
     }
 
-    /// Codex Radar 和 AI IQ 包含非 GPT 模型，Radar Insights 当前只有 GPT 系列。
+    /// 当前 RadarBench 绑定与 Radar Insights 只提供 GPT 系列，其他厂商从 AI IQ 展示。
     public var supportsOtherModels: Bool {
-        self == .codexRadar || self == .aiIQ
+        self == .aiIQ
     }
 }
 
@@ -279,6 +279,8 @@ public struct CodexRadarIQRun: Codable, Equatable, Identifiable, Sendable {
     public let model: String?
     public let reasoningEffort: String?
     public let costUSD: Double?
+    /// RadarBench 已覆盖题数；不是通过题数，旧 IQ 来源不填写。
+    public let coveredTasks: Int?
 
     public init(
         date: String,
@@ -291,7 +293,8 @@ public struct CodexRadarIQRun: Codable, Equatable, Identifiable, Sendable {
         wallTimeHuman: String?,
         model: String?,
         reasoningEffort: String?,
-        costUSD: Double?
+        costUSD: Double?,
+        coveredTasks: Int? = nil
     ) {
         self.date = date
         self.score = score
@@ -304,6 +307,7 @@ public struct CodexRadarIQRun: Codable, Equatable, Identifiable, Sendable {
         self.model = model
         self.reasoningEffort = reasoningEffort
         self.costUSD = costUSD
+        self.coveredTasks = coveredTasks
     }
 
     public var id: String {
