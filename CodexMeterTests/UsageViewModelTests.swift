@@ -1873,6 +1873,21 @@ final class UsageViewModelTests: XCTestCase {
         XCTAssertNil(MenuBarColorPreset.matchingPreset(for: ("#111111", "#222222", "#333333")))
     }
 
+    /// 浅色额度卡降低状态色亮度，文字和条形保持同色；深色卡与菜单栏规则独立。
+    func testPopoverStatusColorsAreCalmerOnlyOnLightBackground() throws {
+        let settings = MenuBarDisplaySettings()
+        for tone: UsageRemainingTone in [.good, .warning, .danger] {
+            let original = try XCTUnwrap(NSColor(tone.statusBarColor(settings: settings)).usingColorSpace(.sRGB))
+            let light = try XCTUnwrap(NSColor(tone.popoverColor(settings: settings, colorScheme: .light)).usingColorSpace(.sRGB))
+            let dark = try XCTUnwrap(NSColor(tone.popoverColor(settings: settings, colorScheme: .dark)).usingColorSpace(.sRGB))
+            XCTAssertLessThan(light.brightnessComponent, original.brightnessComponent * 0.8)
+            XCTAssertEqual(light.alphaComponent, 1, accuracy: 0.001)
+            XCTAssertEqual(dark.redComponent, original.redComponent, accuracy: 0.001)
+            XCTAssertEqual(dark.greenComponent, original.greenComponent, accuracy: 0.001)
+            XCTAssertEqual(dark.blueComponent, original.blueComponent, accuracy: 0.001)
+        }
+    }
+
     func testMenuBarDisplaySettingsDetectsDefaultValues() {
         XCTAssertTrue(MenuBarDisplaySettings().usesDefaultValues)
 

@@ -1,3 +1,4 @@
+// 应用设置入口、供应商配置分组和更新管理。
 import AppKit
 import Combine
 import CodexMeterShared
@@ -111,6 +112,7 @@ struct SettingsView: View {
         case widget
         case codex
         case gemini
+        case openCodeGo
         case about
 
         var id: String {
@@ -133,6 +135,8 @@ struct SettingsView: View {
                 return "Codex"
             case .gemini:
                 return "Antigravity"
+            case .openCodeGo:
+                return "OpenCode Go"
             case .about:
                 return "关于"
             }
@@ -154,6 +158,8 @@ struct SettingsView: View {
                 return "doc.text.magnifyingglass"
             case .gemini:
                 return "sparkles"
+            case .openCodeGo:
+                return "terminal"
             case .about:
                 return "info.circle"
             }
@@ -307,7 +313,7 @@ struct SettingsView: View {
         return NSImage(named: NSImage.Name(resourceName)) ?? NSApplication.shared.applicationIconImage
     }
 
-    /// 原生侧栏展示八个稳定入口，底部版本入口始终可见并可跳转到关于页。
+    /// 原生侧栏展示功能和供应商入口，底部版本入口始终可见并可跳转到关于页。
     private var sidebar: some View {
         VStack(spacing: 0) {
             List(selection: sidebarSelection) {
@@ -315,8 +321,8 @@ struct SettingsView: View {
                     Label {
                         Text(localized(pane.title))
                     } icon: {
-                        if pane == .gemini {
-                            Image("AntigravityIcon")
+                        if pane == .gemini || pane == .openCodeGo {
+                            Image(pane == .openCodeGo ? "OpenCodeIcon" : "AntigravityIcon")
                                 .resizable()
                                 .renderingMode(.template)
                                 .scaledToFit()
@@ -371,6 +377,7 @@ struct SettingsView: View {
         )
     }
 
+    /// 按侧栏选择展示独立设置页，供应商凭据不混入 Codex 的连接配置。
     @ViewBuilder
     private var contentPane: some View {
         switch selectedPane {
@@ -388,6 +395,8 @@ struct SettingsView: View {
             codexPane
         case .gemini:
             geminiPane
+        case .openCodeGo:
+            OpenCodeGoSettingsView()
         case .about:
             aboutPane
         }
@@ -950,7 +959,7 @@ struct SettingsView: View {
         .scrollContentBackground(.hidden)
     }
 
-    /// Gemini 页单独保存模型配额展示偏好，不混入 Codex 的连接状态。
+    /// Gemini 页保存独立展示偏好，并用共享额度卡呈现随快照更新的实际使用进度。
     private var geminiPane: some View {
         Form {
             Section {
@@ -984,6 +993,21 @@ struct SettingsView: View {
                         key: GeminiModelsPreferenceKeys.showsInMenuBar
                     )
                 )
+            }
+
+            if geminiModelsEnabled {
+                Section {
+                    GeminiModelsSection(
+                        geminiSettings: GeminiModelsSettings(defaults: MenuBarDisplaySettings.sharedDefaults),
+                        displaySettings: currentSettings,
+                        showsPaceComparison: currentPopoverSettings.showsPaceComparison,
+                        snapshot: previewSnapshot?.geminiModels,
+                        errorMessage: nil,
+                        formatter: UsageFormatter(language: activeLanguage),
+                        resetTimeDisplayStyle: currentPopoverSettings.resetTimeDisplayStyle,
+                        onPaceMarkerHoverChange: { _, _ in }
+                    )
+                }
             }
 
             Section {

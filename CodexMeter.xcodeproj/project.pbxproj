@@ -7,6 +7,8 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+        A40000000000000000000002 /* QuotaWindowView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A40000000000000000000001 /* QuotaWindowView.swift */; };
+        A40000000000000000000003 /* QuotaWindowView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A40000000000000000000001 /* QuotaWindowView.swift */; };
 		920000000000000000000002 /* LocalCodexPricingStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 920000000000000000000001 /* LocalCodexPricingStore.swift */; };
 		920000000000000000000003 /* LocalCodexPricingStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 920000000000000000000001 /* LocalCodexPricingStore.swift */; };
 		910000000000000000000002 /* LocalCodexPricing.swift in Sources */ = {isa = PBXBuildFile; fileRef = 910000000000000000000001 /* LocalCodexPricing.swift */; };
@@ -67,6 +69,11 @@
 		300000000000000000000005 /* LocalCodexUsageReader.swift in Sources */ = {isa = PBXBuildFile; fileRef = 300000000000000000000004 /* LocalCodexUsageReader.swift */; };
 		200000000000000000000001 /* Sparkle in Frameworks */ = {isa = PBXBuildFile; productRef = 200000000000000000000003 /* Sparkle */; };
 		200000000000000000000004 /* Sparkle in Frameworks */ = {isa = PBXBuildFile; productRef = 200000000000000000000005 /* Sparkle */; };
+		A10000000000000000000002 /* OpenCodeGo.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000001 /* OpenCodeGo.swift */; };
+		A10000000000000000000003 /* OpenCodeGo.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000001 /* OpenCodeGo.swift */; };
+		A20000000000000000000002 /* OpenCodeGoViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000001 /* OpenCodeGoViews.swift */; };
+		A20000000000000000000003 /* OpenCodeGoViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000001 /* OpenCodeGoViews.swift */; };
+		A30000000000000000000003 /* OpenCodeGoTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A30000000000000000000001 /* OpenCodeGoTests.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -137,6 +144,7 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
+        A40000000000000000000001 /* QuotaWindowView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QuotaWindowView.swift; sourceTree = "<group>"; };
 		920000000000000000000001 /* LocalCodexPricingStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalCodexPricingStore.swift; sourceTree = "<group>"; };
 		910000000000000000000001 /* LocalCodexPricing.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalCodexPricing.swift; sourceTree = "<group>"; };
 		100000000000000000000011 /* Empty.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Empty.swift; sourceTree = "<group>"; };
@@ -183,6 +191,9 @@
 		100000000000000000001020 /* MenuBarPopoverLayout.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MenuBarPopoverLayout.swift; sourceTree = "<group>"; };
 		300000000000000000000003 /* LocalCodexUsageReaderTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalCodexUsageReaderTests.swift; sourceTree = "<group>"; };
 		300000000000000000000004 /* LocalCodexUsageReader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalCodexUsageReader.swift; sourceTree = "<group>"; };
+		A10000000000000000000001 /* OpenCodeGo.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OpenCodeGo.swift; sourceTree = "<group>"; };
+		A20000000000000000000001 /* OpenCodeGoViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OpenCodeGoViews.swift; sourceTree = "<group>"; };
+		A30000000000000000000001 /* OpenCodeGoTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OpenCodeGoTests.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -257,6 +268,7 @@
 				100000000000000000000015 /* DirectCodexUsageClientTests.swift */,
 				100000000000000000000A03 /* UsageViewModelTests.swift */,
 				100000000000000000001006 /* CodexRadarTests.swift */,
+				A30000000000000000000001 /* OpenCodeGoTests.swift */,
 				300000000000000000000003 /* LocalCodexUsageReaderTests.swift */,
 				10000000000000000000002E /* Info.plist */,
 			);
@@ -286,6 +298,9 @@
 				920000000000000000000001 /* LocalCodexPricingStore.swift */,
 				910000000000000000000001 /* LocalCodexPricing.swift */,
 				100000000000000000001004 /* CodexRadarStore.swift */,
+				A20000000000000000000001 /* OpenCodeGoViews.swift */,
+				A40000000000000000000001 /* QuotaWindowView.swift */,
+				A10000000000000000000001 /* OpenCodeGo.swift */,
 				100000000000000000001020 /* MenuBarPopoverLayout.swift */,
 				10000000000000000000001C /* MenuBarView.swift */,
 				100000000000000000001005 /* CodexRadarView.swift */,
@@ -534,6 +549,10 @@
 				100000000000000000000D08 /* SettingsSections.swift in Sources */,
 				100000000000000000000D0A /* SettingsControls.swift in Sources */,
 				100000000000000000001016 /* CodexRadarTests.swift in Sources */,
+				A30000000000000000000003 /* OpenCodeGoTests.swift in Sources */,
+				A20000000000000000000003 /* OpenCodeGoViews.swift in Sources */,
+				A40000000000000000000003 /* QuotaWindowView.swift in Sources */,
+				A10000000000000000000003 /* OpenCodeGo.swift in Sources */,
 				100000000000000000001017 /* CodexRadarClient.swift in Sources */,
 				100000000000000000001023 /* CodexRadarStore.swift in Sources */,
 				300000000000000000000001 /* LocalCodexUsageReaderTests.swift in Sources */,
@@ -553,6 +572,9 @@
 				920000000000000000000003 /* LocalCodexPricingStore.swift in Sources */,
 				910000000000000000000003 /* LocalCodexPricing.swift in Sources */,
 				100000000000000000001014 /* CodexRadarStore.swift in Sources */,
+				A20000000000000000000002 /* OpenCodeGoViews.swift in Sources */,
+				A40000000000000000000002 /* QuotaWindowView.swift in Sources */,
+				A10000000000000000000002 /* OpenCodeGo.swift in Sources */,
 				100000000000000000001021 /* MenuBarPopoverLayout.swift in Sources */,
 				10000000000000000000000D /* MenuBarView.swift in Sources */,
 				100000000000000000001015 /* CodexRadarView.swift in Sources */,

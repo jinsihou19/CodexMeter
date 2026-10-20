@@ -1,3 +1,4 @@
+// 菜单栏布局解析、用量样式和宽度测量，供真实菜单与设置预览共同使用。
 import AppKit
 import CodexMeterShared
 import Foundation
@@ -215,6 +216,16 @@ enum MenuBarColorPreset: String, CaseIterable, Identifiable {
     }
 }
 
+extension UsageRemainingTone {
+    /// 浅色额度卡压暗状态原色以减少荧光感并提高文字对比度；深色卡与未知状态沿用原色。
+    func popoverColor(settings: MenuBarDisplaySettings, colorScheme: ColorScheme) -> Color {
+        let original = statusBarColor(settings: settings)
+        guard colorScheme == .light, self != .unavailable else { return original }
+        let color = NSColor(original)
+        return Color(nsColor: color.blended(withFraction: 0.30, of: .black) ?? color)
+    }
+}
+
 enum MenuBarPopoverPositioning {
     static let defaultVerticalGap: CGFloat = 4
 
@@ -424,6 +435,7 @@ struct MenuBarUsageBarView: View {
     }
 }
 
+/// 统一供应商读数的文本与状态色，供菜单栏渲染、预览和宽度测量共同使用。
 struct StatusLineDisplay: Identifiable, Equatable {
     let id: String
     let label: String
@@ -433,6 +445,9 @@ struct StatusLineDisplay: Identifiable, Equatable {
     /// 只有额度和 Pace 数值使用状态色；身份、时间、费用等辅助信息保持系统默认色。
     var usesUsageColor: Bool {
         switch id {
+        case "openCodeGoPrimary", "openCodeGoSecondary", "openCodeGoMonthly",
+             "openCodeGoPaceRemaining", "openCodeGoPaceDelta", "openCodeGoFiveHourPaceRemaining", "openCodeGoFiveHourPaceDelta", "openCodeGoWeeklyPaceRemaining", "openCodeGoWeeklyPaceDelta":
+            return true
         case "primary", "secondary", "weekly", "session", "pace-remaining", "pace-delta",
              "fiveHourPaceRemaining", "fiveHourPaceDelta", "weeklyPaceRemaining", "weeklyPaceDelta",
              "gemini-primary", "gemini-secondary", "gemini-pace-remaining",
@@ -739,7 +754,9 @@ extension StatusLineDisplay {
             )
         case .usageBar:
             return nil
-        case .icon, .geminiIcon,
+        case .openCodeGoIcon, .openCodeGoPrimary, .openCodeGoSecondary, .openCodeGoMonthly, .openCodeGoProvider,
+             .openCodeGoPaceRemaining, .openCodeGoPaceDelta, .openCodeGoFiveHourPaceRemaining, .openCodeGoFiveHourPaceDelta, .openCodeGoWeeklyPaceRemaining, .openCodeGoWeeklyPaceDelta, .openCodeGoUsageBar, .openCodeGoResetCountdown, .openCodeGoResetTime, .openCodeGoDepletionETA,
+             .icon, .geminiIcon,
              .geminiPrimary, .geminiSecondary, .geminiPaceRemaining, .geminiPaceDelta,
              .geminiFiveHourPaceRemaining, .geminiFiveHourPaceDelta,
              .geminiWeeklyPaceRemaining, .geminiWeeklyPaceDelta,
@@ -750,6 +767,68 @@ extension StatusLineDisplay {
              .separator, .space, .stackPlaceholder:
             return nil
         }
+    }
+
+    /// Go 复用通用窗口节奏与时间格式；月窗口无固定时长时不推测月节奏。
+    static func layoutOpenCodeGoLine(
+        for token: MenuBarLayoutToken,
+        snapshot: OpenCodeGoSnapshot?,
+        settings: MenuBarDisplaySettings,
+        now: Date = Date()
+    ) -> StatusLineDisplay? {
+        let rolling = snapshot?.windows.first { $0.id == "rolling" }?.quota
+        let weekly = snapshot?.windows.first { $0.id == "weekly" }?.quota
+        let monthly = snapshot?.windows.first { $0.id == "monthly" }?.quota
+        let automatic = rolling ?? weekly ?? monthly
+        switch token {
+        case .openCodeGoProvider:
+            return textLine(id: token.rawValue, value: "OpenCode Go")
+        case .openCodeGoPaceRemaining, .openCodeGoPaceDelta:
+            return windowPaceLayoutLine(for: token, window: automatic, settings: settings, now: now)
+        case .openCodeGoFiveHourPaceRemaining, .openCodeGoFiveHourPaceDelta:
+            return windowPaceLayoutLine(for: token, window: rolling, settings: settings, now: now)
+        case .openCodeGoWeeklyPaceRemaining, .openCodeGoWeeklyPaceDelta:
+            return windowPaceLayoutLine(for: token, window: weekly, settings: settings, now: now)
+        case .openCodeGoResetCountdown:
+            guard menuBarFormatter.resetRemainingSeconds(window: automatic, now: now) != nil else { return nil }
+            return textLine(id: token.rawValue, value: menuBarFormatter.resetRemainingText(window: automatic, now: now))
+        case .openCodeGoResetTime:
+            guard let reset = automatic?.resetsAt else { return nil }
+            return textLine(id: token.rawValue, value: menuBarFormatter.resetTime(epochSeconds: reset, now: now))
+        case .openCodeGoDepletionETA:
+            guard let window = automatic,
+                  let pace = UsagePaceDisplay(percentWindow: window, paceWindow: window, now: now,
+                                             weeklyProgressWorkDays: settings.weeklyProgressWorkDays) else { return nil }
+            return textLine(id: token.rawValue, value: pace.widgetProjectionText)
+        default:
+            break
+        }
+        let window: RateLimitWindow?
+        switch token {
+        case .openCodeGoPrimary: window = rolling
+        case .openCodeGoSecondary: window = weekly
+        case .openCodeGoMonthly: window = monthly
+        default: return nil
+        }
+        guard let window else { return nil }
+        return StatusLineDisplay(
+            id: token.rawValue, label: "",
+            value: formattedValue(window.remainingPercentText, settings: settings),
+            tone: UsageRemainingTone(remainingPercent: window.remainingPercent)
+        )
+    }
+
+    /// 用量条复用现有双环组件，外环 5 小时、内环 7 天；月额度仍保留独立文字项目。
+    static func layoutOpenCodeGoUsageBar(snapshot: OpenCodeGoSnapshot?) -> MenuBarUsageBarDisplay? {
+        let windows = ["rolling", "weekly"].compactMap { id -> MenuBarUsageWindowDisplay? in
+            guard let window = snapshot?.windows.first(where: { $0.id == id }) else { return nil }
+            return MenuBarUsageWindowDisplay(
+                label: window.quota.compactDurationLabel,
+                remainingPercent: window.quota.remainingPercent,
+                tone: UsageRemainingTone(remainingPercent: window.quota.remainingPercent)
+            )
+        }
+        return windows.isEmpty ? nil : MenuBarUsageBarDisplay(windows: windows)
     }
 
     /// 按布局项目解析 Antigravity 的固定窗口或 Pace 读数，缺少数据时直接隐藏而不是填入占位符。
@@ -1054,10 +1133,12 @@ extension StatusLineDisplay {
     ) -> StatusLineDisplay? {
         let showsRemaining: Bool
         switch token {
-        case .fiveHourPaceRemaining, .weeklyPaceRemaining,
+        case .openCodeGoPaceRemaining, .openCodeGoFiveHourPaceRemaining, .openCodeGoWeeklyPaceRemaining,
+             .fiveHourPaceRemaining, .weeklyPaceRemaining,
              .geminiFiveHourPaceRemaining, .geminiWeeklyPaceRemaining:
             showsRemaining = true
-        case .fiveHourPaceDelta, .weeklyPaceDelta,
+        case .openCodeGoPaceDelta, .openCodeGoFiveHourPaceDelta, .openCodeGoWeeklyPaceDelta,
+             .fiveHourPaceDelta, .weeklyPaceDelta,
              .geminiFiveHourPaceDelta, .geminiWeeklyPaceDelta:
             showsRemaining = false
         default:
@@ -1101,6 +1182,7 @@ extension StatusLineDisplay {
 
 /// 自定义布局解析后的最小项目；状态栏和设置页预览共用同一份结果。
 enum ResolvedMenuBarLayoutItem: Equatable {
+    case openCodeGoIcon
     case icon
     case geminiIcon
     case line(StatusLineDisplay)
@@ -1109,7 +1191,7 @@ enum ResolvedMenuBarLayoutItem: Equatable {
     case space
 }
 
-/// 将持久化布局绑定到当前快照和 Gemini 尾部数据；外层数组横向排列，内层数组纵向堆叠。
+/// 将持久化布局绑定到各供应商快照；外层数组横向排列，内层数组纵向堆叠。
 struct MenuBarLayoutDisplay: Equatable {
     let items: [[ResolvedMenuBarLayoutItem]]
     let trailingGeminiLines: [StatusLineDisplay]
@@ -1120,20 +1202,32 @@ struct MenuBarLayoutDisplay: Equatable {
         snapshot: UsageSnapshot?,
         settings: MenuBarDisplaySettings,
         geminiSettings: GeminiModelsSettings? = nil,
-        geminiSnapshot: GeminiModelsSnapshot? = nil
+        geminiSnapshot: GeminiModelsSnapshot? = nil,
+        openCodeGoEnabled: Bool = false,
+        openCodeGoSnapshot: OpenCodeGoSnapshot? = nil
     ) {
         let resolvedGeminiSettings = geminiSettings
             ?? GeminiModelsSettings(defaults: MenuBarDisplaySettings.sharedDefaults)
-        let visibleLayout = resolvedGeminiSettings.isEnabled
-            ? layout.items
-            : layout.items.map { item in
-                item.filter { !$0.isGeminiToken }
+        let visibleLayout = layout.items.map { item in
+            item.filter {
+                (!$0.isGeminiToken || resolvedGeminiSettings.isEnabled)
+                    && (!$0.isOpenCodeGoToken || openCodeGoEnabled)
             }
+        }
         items = visibleLayout.compactMap { item in
             let resolvedItems: [ResolvedMenuBarLayoutItem] = item.compactMap { token -> ResolvedMenuBarLayoutItem? in
                 switch token {
                 case .icon:
                     return .icon
+                case .openCodeGoIcon:
+                    return .openCodeGoIcon
+                case .openCodeGoUsageBar:
+                    return StatusLineDisplay.layoutOpenCodeGoUsageBar(snapshot: openCodeGoSnapshot).map(ResolvedMenuBarLayoutItem.usageBar)
+                case .openCodeGoPrimary, .openCodeGoSecondary, .openCodeGoMonthly, .openCodeGoProvider,
+                     .openCodeGoPaceRemaining, .openCodeGoPaceDelta, .openCodeGoFiveHourPaceRemaining, .openCodeGoFiveHourPaceDelta, .openCodeGoWeeklyPaceRemaining, .openCodeGoWeeklyPaceDelta, .openCodeGoResetCountdown, .openCodeGoResetTime, .openCodeGoDepletionETA:
+                    return StatusLineDisplay.layoutOpenCodeGoLine(
+                        for: token, snapshot: openCodeGoSnapshot, settings: settings
+                    ).map(ResolvedMenuBarLayoutItem.line)
                 case .geminiIcon:
                     return .geminiIcon
                 case .separator:
@@ -1353,7 +1447,7 @@ enum StatusBarDisplayMetrics {
             return activityDisplay.isVisible
                 ? activityDisplay.statusItemWidth
                 : MenuBarDisplaySettings.menuBarIconWidth
-        case .geminiIcon:
+        case .geminiIcon, .openCodeGoIcon:
             return trailingGeminiIconWidth
         case let .line(line):
             return lineWidth(

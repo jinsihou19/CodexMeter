@@ -56,6 +56,15 @@ CodexMeter 以只读方式读取当前 `CODEX_HOME` 下的 Codex 状态库、会
 - 5 小时窗口优先用于菜单栏摘要和紧张窗口判断。
 - 配额优先读取正在运行的本地 Antigravity 服务；本地服务不可用时才尝试已保存的 Google OAuth 配置。
 
+### OpenCode Go
+
+- 在“设置 → OpenCode Go”启用，展示官方返回的 5 小时、7 天和月额度及各自的重置时间。
+- 自动读取 `OPENCODE_API_KEY`，或 `$XDG_DATA_HOME/opencode/auth.json`（默认 `~/.local/share/opencode/auth.json`）中的 `opencode-go` API 凭据；也可在设置中保存手动 Key 到系统钥匙串。
+- 设置页独立管理启用与凭据；菜单栏通过“菜单栏 → + → OpenCode Go”添加图标、5 小时、7 天、月额度、自动剩余、预期偏差、用量条、重置时间和预计耗尽，与其他供应商一起拖动、堆叠和排列。
+- 刷新频率沿用通用设置；请求失败时显示错误并保留本次运行中同一凭据的最近成功数据，关闭或更换凭据后清空。
+- 使用 [OpenCode 官方品牌](https://opencode.ai/brand)标识的 CodexBar 单色菜单栏版本；账号、余额和费用未从当前用量 API 获取，不展示猜测值。
+- 参考 [CodexBar 的 OpenCode Go 实现](https://github.com/steipete/CodexBar/tree/main/Sources/CodexBarCore/Providers/OpenCodeGo)，使用官方只读用量 API，不将本机成本估算当作账户配额。
+
 ### 小组件、通知与更新
 
 - WidgetKit 提供额度小组件和本机统计小组件，共享主应用最近一次成功同步的安全快照。

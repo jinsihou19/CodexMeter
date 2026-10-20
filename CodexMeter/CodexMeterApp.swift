@@ -1,3 +1,4 @@
+// 应用启动、菜单栏和原生窗口协调；各用量供应商保持独立状态与开关。
 import AppKit
 import Combine
 import CodexMeterShared
@@ -212,6 +213,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let updater = AppUpdater.shared
     private let settingsWindowOpener = SettingsWindowOpener()
 
+    /// 启动各供应商独立状态源和菜单入口；Go 的开关与刷新失败不阻塞 Codex 启动。
     func applicationDidFinishLaunching(_ notification: Notification) {
         offerLegacyConfigurationMigration()
         MenuBarDisplaySettings.migrateStandardDefaultsToSharedDefaults()
@@ -236,6 +238,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         self.viewModel = viewModel
         self.radarStore = radarStore
         statusBarController = StatusBarController(viewModel: viewModel, radarStore: radarStore)
+        OpenCodeGoStore.shared.start()
         viewModel.start()
         radarStore.start()
         if AppBehaviorSettings(defaults: MenuBarDisplaySettings.sharedDefaults).opensSettingsAtLaunch {
@@ -299,6 +302,7 @@ final class StatusBarController: NSObject {
     private var statusLabel: PassthroughHostingView<StatusBarLabel>?
     private var nativeStatusButtonFont: NSFont?
     private var defaultsObservers: [NSObjectProtocol] = []
+    private var openCodeGoObserver: AnyCancellable?
     private var usageObserver: AnyCancellable?
     private var activityObserver: AnyCancellable?
     private var preferredPopoverSize = MenuBarPopoverLayout.initialSize
@@ -306,6 +310,7 @@ final class StatusBarController: NSObject {
     private var pendingPopoverSizeWorkItem: DispatchWorkItem?
     private static let popoverResizeDebounceDelay = DispatchTimeInterval.milliseconds(80)
 
+    /// 创建唯一菜单栏按钮并监听各供应商；初始宽度与后续更新采用相同布局解析。
     init(viewModel: UsageViewModel, radarStore: CodexRadarStore) {
         self.viewModel = viewModel
         self.radarStore = radarStore
@@ -315,7 +320,9 @@ final class StatusBarController: NSObject {
             layout: layout,
             snapshot: viewModel.snapshot,
             settings: settings,
-            geminiSnapshot: viewModel.geminiSnapshot
+            geminiSnapshot: viewModel.geminiSnapshot,
+            openCodeGoEnabled: OpenCodeGoStore.shared.isEnabled,
+            openCodeGoSnapshot: OpenCodeGoStore.shared.snapshot
         )
         let statusWidth = StatusBarDisplayMetrics.statusItemWidth(
             for: layout,
@@ -332,6 +339,7 @@ final class StatusBarController: NSObject {
         observeActivityChanges()
     }
 
+    /// 将统一布局挂载到原生状态栏按钮，图标与额度共用点击入口。
     private func configureStatusItem() {
         guard let button = statusItem.button else {
             return
@@ -353,7 +361,9 @@ final class StatusBarController: NSObject {
             layout: layout,
             snapshot: viewModel.snapshot,
             settings: settings,
-            geminiSnapshot: viewModel.geminiSnapshot
+            geminiSnapshot: viewModel.geminiSnapshot,
+            openCodeGoEnabled: OpenCodeGoStore.shared.isEnabled,
+            openCodeGoSnapshot: OpenCodeGoStore.shared.snapshot
         )
         let statusWidth = StatusBarDisplayMetrics.statusItemWidth(
             for: layout,
@@ -411,7 +421,11 @@ final class StatusBarController: NSObject {
         defaultsObservers.append(observer)
     }
 
+    /// 同时监听 Codex 与 Go，读数或开关改变时重新测量同一个菜单栏项目。
     private func observeUsageChanges() {
+        openCodeGoObserver = OpenCodeGoStore.shared.objectWillChange.sink { [weak self] _ in
+            DispatchQueue.main.async { self?.applyStatusDisplay() }
+        }
         usageObserver = viewModel.objectWillChange.sink { [weak self] _ in
             DispatchQueue.main.async {
                 self?.applyStatusDisplay()
@@ -445,6 +459,7 @@ final class StatusBarController: NSObject {
         preferredPopoverSize = MenuBarPopoverLayout.initialSize
     }
 
+    /// 使用当前供应商快照重算宽度并更新内容，避免启停或数值变化后裁切文本。
     private func applyStatusDisplay(settings: MenuBarDisplaySettings? = nil) {
         let settings = settings ?? MenuBarDisplaySettings(defaults: MenuBarDisplaySettings.sharedDefaults)
         let layout = MenuBarLayoutStore.load()
@@ -452,7 +467,9 @@ final class StatusBarController: NSObject {
             layout: layout,
             snapshot: viewModel.snapshot,
             settings: settings,
-            geminiSnapshot: viewModel.geminiSnapshot
+            geminiSnapshot: viewModel.geminiSnapshot,
+            openCodeGoEnabled: OpenCodeGoStore.shared.isEnabled,
+            openCodeGoSnapshot: OpenCodeGoStore.shared.snapshot
         )
         let activityDisplay = settings.showsHookActivityLight ? activityStore.display : CodexHookActivityDisplay(snapshot: nil)
         let statusWidth = StatusBarDisplayMetrics.statusItemWidth(
@@ -688,7 +705,9 @@ final class StatusBarController: NSObject {
     }
 }
 
+/// 将统一布局渲染到唯一的菜单栏按钮，各供应商共用排版规则。
 private struct StatusBarLabel: View {
+    @ObservedObject private var openCodeGoStore = OpenCodeGoStore.shared
     @ObservedObject var viewModel: UsageViewModel
     @ObservedObject var activityStore: CodexHookActivityStore
     let settings: MenuBarDisplaySettings
@@ -713,12 +732,15 @@ private struct StatusBarLabel: View {
         }
     }
 
+    /// 渲染已启用的布局项目，Go 和既有供应商共享同一按钮与字体规则。
     private var content: some View {
         let display = MenuBarLayoutDisplay(
             layout: layout,
             snapshot: viewModel.snapshot,
             settings: settings,
-            geminiSnapshot: viewModel.geminiSnapshot
+            geminiSnapshot: viewModel.geminiSnapshot,
+            openCodeGoEnabled: openCodeGoStore.isEnabled,
+            openCodeGoSnapshot: openCodeGoStore.snapshot
         )
         let lines = display.codexLines
         let trailingGeminiLines = display.trailingGeminiLines
@@ -807,6 +829,13 @@ private struct StatusBarLabel: View {
                 )
                 .foregroundStyle(.primary)
                 .accessibilityHidden(true)
+        case .openCodeGoIcon:
+            Image("OpenCodeIcon")
+                .resizable()
+                .renderingMode(.template)
+                .scaledToFit()
+                .frame(width: StatusBarDisplayMetrics.trailingGeminiIconWidth, height: StatusBarDisplayMetrics.trailingGeminiIconWidth)
+                .accessibilityLabel("OpenCode Go")
         case let .line(line):
             statusLine(
                 label: line.label,

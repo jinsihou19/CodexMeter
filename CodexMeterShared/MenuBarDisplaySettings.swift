@@ -1,3 +1,4 @@
+// 共享显示偏好与可持久化的菜单栏布局项目。
 import Foundation
 import SwiftUI
 
@@ -65,6 +66,21 @@ public enum MenuBarLayoutToken: String, CaseIterable, Codable, Equatable, Identi
     case balance
     case todayCost
     case monthCost
+    case openCodeGoIcon
+    case openCodeGoPrimary
+    case openCodeGoSecondary
+    case openCodeGoMonthly
+    case openCodeGoProvider
+    case openCodeGoPaceRemaining
+    case openCodeGoPaceDelta
+    case openCodeGoFiveHourPaceRemaining
+    case openCodeGoFiveHourPaceDelta
+    case openCodeGoWeeklyPaceRemaining
+    case openCodeGoWeeklyPaceDelta
+    case openCodeGoUsageBar
+    case openCodeGoResetCountdown
+    case openCodeGoResetTime
+    case openCodeGoDepletionETA
     case geminiIcon
     case geminiPrimary
     case geminiSecondary
@@ -98,37 +114,39 @@ public enum MenuBarLayoutToken: String, CaseIterable, Codable, Equatable, Identi
     /// 返回设置页中展示的中文名称；外层可继续通过 AppLocalization 处理英文翻译。
     public var title: String {
         switch self {
-        case .icon:
+        case .icon, .openCodeGoIcon:
             return "图标"
-        case .primary:
+        case .primary, .openCodeGoPrimary:
             return "5 小时"
-        case .secondary:
+        case .secondary, .openCodeGoSecondary:
             return "7 天"
-        case .paceRemaining:
+        case .openCodeGoMonthly:
+            return "月额度"
+        case .paceRemaining, .openCodeGoPaceRemaining:
             return "自动剩余"
-        case .paceDelta:
+        case .paceDelta, .openCodeGoPaceDelta:
             return "预期偏差"
-        case .fiveHourPaceRemaining:
+        case .fiveHourPaceRemaining, .openCodeGoFiveHourPaceRemaining:
             return "5 小时剩余"
-        case .fiveHourPaceDelta:
+        case .fiveHourPaceDelta, .openCodeGoFiveHourPaceDelta:
             return "5 小时预期偏差"
-        case .weeklyPaceRemaining:
+        case .weeklyPaceRemaining, .openCodeGoWeeklyPaceRemaining:
             return "7 天剩余"
-        case .weeklyPaceDelta:
+        case .weeklyPaceDelta, .openCodeGoWeeklyPaceDelta:
             return "7 天预期偏差"
-        case .provider, .geminiProvider:
+        case .provider, .geminiProvider, .openCodeGoProvider:
             return "提供商名"
         case .account, .geminiAccount:
             return "账号"
         case .plan, .geminiPlan:
             return "套餐"
-        case .usageBar, .geminiUsageBar:
+        case .usageBar, .geminiUsageBar, .openCodeGoUsageBar:
             return "用量条"
-        case .resetCountdown, .geminiResetCountdown:
+        case .resetCountdown, .geminiResetCountdown, .openCodeGoResetCountdown:
             return "重置倒计时"
-        case .resetTime, .geminiResetTime:
+        case .resetTime, .geminiResetTime, .openCodeGoResetTime:
             return "重置时间"
-        case .depletionETA, .geminiDepletionETA:
+        case .depletionETA, .geminiDepletionETA, .openCodeGoDepletionETA:
             return "预计耗尽"
         case .balance, .geminiBalance:
             return "余额"
@@ -168,29 +186,31 @@ public enum MenuBarLayoutToken: String, CaseIterable, Codable, Equatable, Identi
         switch self {
         case .icon:
             return "square.dashed"
-        case .primary, .secondary:
+        case .primary, .secondary, .openCodeGoPrimary, .openCodeGoSecondary, .openCodeGoMonthly:
             return "percent"
-        case .paceRemaining:
+        case .openCodeGoIcon:
+            return "terminal"
+        case .paceRemaining, .openCodeGoPaceRemaining:
             return "gauge.with.dots.needle.33percent"
-        case .paceDelta:
+        case .paceDelta, .openCodeGoPaceDelta:
             return "chart.line.uptrend.xyaxis"
-        case .fiveHourPaceRemaining, .weeklyPaceRemaining:
+        case .fiveHourPaceRemaining, .weeklyPaceRemaining, .openCodeGoFiveHourPaceRemaining, .openCodeGoWeeklyPaceRemaining:
             return "gauge.with.dots.needle.33percent"
-        case .fiveHourPaceDelta, .weeklyPaceDelta:
+        case .fiveHourPaceDelta, .weeklyPaceDelta, .openCodeGoFiveHourPaceDelta, .openCodeGoWeeklyPaceDelta:
             return "chart.line.uptrend.xyaxis"
-        case .provider, .geminiProvider:
+        case .provider, .geminiProvider, .openCodeGoProvider:
             return "building.2"
         case .account, .geminiAccount:
             return "person.crop.circle"
         case .plan, .geminiPlan:
             return "person.text.rectangle"
-        case .usageBar, .geminiUsageBar:
+        case .usageBar, .geminiUsageBar, .openCodeGoUsageBar:
             return "chart.bar.fill"
-        case .resetCountdown, .geminiResetCountdown:
+        case .resetCountdown, .geminiResetCountdown, .openCodeGoResetCountdown:
             return "timer"
-        case .resetTime, .geminiResetTime:
+        case .resetTime, .geminiResetTime, .openCodeGoResetTime:
             return "clock"
-        case .depletionETA, .geminiDepletionETA:
+        case .depletionETA, .geminiDepletionETA, .openCodeGoDepletionETA:
             return "hourglass"
         case .balance, .geminiBalance:
             return "creditcard"
@@ -219,10 +239,22 @@ public enum MenuBarLayoutToken: String, CaseIterable, Codable, Equatable, Identi
         self == .separator || self == .space || self == .stackPlaceholder
     }
 
-    /// 图标项目必须独立成项；Codex 与 Antigravity 各自保留自己的图标位置。
+    /// 所有供应商图标必须独立成项，不能作为额度堆叠中的一行。
     public var isProviderIcon: Bool {
-        self == .icon || self == .geminiIcon
+        self == .icon || self == .geminiIcon || self == .openCodeGoIcon
     }
+
+    /// Go 项目通过统一布局配置，禁用供应商时保留布局但隐藏真实菜单内容。
+    public var isOpenCodeGoToken: Bool {
+        Self.openCodeGoTokens.contains(self)
+    }
+
+    /// Go 的额度与衍生显示项共享同一真实窗口数据，不添加缺少数据来源的账号费用项目。
+    public static let openCodeGoTokens: [MenuBarLayoutToken] = [
+        .openCodeGoIcon, .openCodeGoPrimary, .openCodeGoSecondary, .openCodeGoMonthly,
+        .openCodeGoPaceRemaining, .openCodeGoPaceDelta, .openCodeGoFiveHourPaceRemaining, .openCodeGoFiveHourPaceDelta, .openCodeGoWeeklyPaceRemaining, .openCodeGoWeeklyPaceDelta,
+        .openCodeGoProvider, .openCodeGoUsageBar, .openCodeGoResetCountdown, .openCodeGoResetTime, .openCodeGoDepletionETA
+    ]
 
     /// 标记堆叠容器尚未填满的行；它只存在于布局模型中，不参与菜单栏渲染。
     public var isStackPlaceholder: Bool {

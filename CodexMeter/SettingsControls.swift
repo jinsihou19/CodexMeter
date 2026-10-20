@@ -1,3 +1,4 @@
+// 原生设置控件和菜单栏布局编辑器；供应商内容统一支持添加、拖动与堆叠。
 import AppKit
 import CodexMeterShared
 import SwiftUI
@@ -152,6 +153,7 @@ private struct MenuBarStackRowTarget: Identifiable, Equatable {
 
 /// 菜单栏项目编辑器；预览本身就是可拖动的菜单栏，点击内容通过弹出菜单进行配置。
 struct MenuBarLayoutEditor: View {
+    @ObservedObject private var openCodeGoStore = OpenCodeGoStore.shared
     @Binding var layout: MenuBarLayout
     let onChange: (MenuBarLayout) -> Void
     let settings: MenuBarDisplaySettings
@@ -261,9 +263,10 @@ struct MenuBarLayoutEditor: View {
         !token.isStackPlaceholder
     }
 
-    /// 判断某个预览内容是否因 Antigravity 关闭而处于禁用状态。
+    /// 判断预览内容是否因所属供应商关闭而置灰；保留布局以便提前配置。
     private func isDisabledToken(_ token: MenuBarLayoutToken) -> Bool {
-        token.isGeminiToken && !geminiSettings.isEnabled
+        (token.isGeminiToken && !geminiSettings.isEnabled)
+            || (token.isOpenCodeGoToken && !openCodeGoStore.isEnabled)
     }
 
     /// 返回布局中的全部横向项目，让关闭的 Antigravity 项目仍能在编辑器中定位和调整。
@@ -422,12 +425,12 @@ struct MenuBarLayoutEditor: View {
             .geminiProvider, .geminiAccount, .geminiPlan, .geminiUsageBar,
             .geminiResetCountdown, .geminiResetTime, .geminiDepletionETA,
             .geminiBalance, .geminiTodayCost, .geminiMonthCost
-        ]
+        ] + MenuBarLayoutToken.openCodeGoTokens
     }
 
     /// 按供应商拆分堆叠行可选项目；二级菜单内不再重复显示供应商名称。
     private var codexStackConfigurationTokens: [MenuBarLayoutToken] {
-        stackConfigurationTokens.filter { !$0.isGeminiToken }
+        stackConfigurationTokens.filter { !$0.isGeminiToken && !$0.isOpenCodeGoToken }
     }
 
     /// 返回 Antigravity 项目；关闭供应商时仍允许预先配置，预览层负责置灰提示。
@@ -490,7 +493,7 @@ struct MenuBarLayoutEditor: View {
         if token == .separator || token == .space {
             return AppLocalization.string(token.title)
         }
-        let provider = token.isGeminiToken ? "Antigravity" : "Codex"
+        let provider = token.isOpenCodeGoToken ? "OpenCode Go" : (token.isGeminiToken ? "Antigravity" : "Codex")
         return "\(provider) \(AppLocalization.string(token.title))"
     }
 
@@ -508,6 +511,7 @@ struct MenuBarLayoutEditor: View {
             tokens: geminiStackConfigurationTokens,
             target: target
         )
+        stackProviderMenu(title: "OpenCode Go", iconToken: .openCodeGoIcon, tokens: MenuBarLayoutToken.openCodeGoTokens, target: target)
     }
 
     /// 绘制供应商一级菜单及其项目二级菜单；沿用添加菜单的原生层级行为。
@@ -617,8 +621,8 @@ struct MenuBarLayoutEditor: View {
                     .scaledToFit()
                     .frame(width: MenuBarDisplaySettings.menuBarIconWidth, height: MenuBarDisplaySettings.menuBarIconWidth)
                     .clipped()
-            case .geminiIcon:
-                Image("AntigravityIcon")
+            case .geminiIcon, .openCodeGoIcon:
+                Image(token == .openCodeGoIcon ? "OpenCodeIcon" : "AntigravityIcon")
                     .resizable()
                     .renderingMode(.template)
                     .scaledToFit()
@@ -654,6 +658,11 @@ struct MenuBarLayoutEditor: View {
     /// 解析编辑器中某个项目对应的 Codex 或 Antigravity 实时读数。
     private func liveLine(for token: MenuBarLayoutToken) -> StatusLineDisplay? {
         switch token {
+        case .openCodeGoPrimary, .openCodeGoSecondary, .openCodeGoMonthly, .openCodeGoProvider,
+             .openCodeGoPaceRemaining, .openCodeGoPaceDelta, .openCodeGoFiveHourPaceRemaining, .openCodeGoFiveHourPaceDelta, .openCodeGoWeeklyPaceRemaining, .openCodeGoWeeklyPaceDelta, .openCodeGoResetCountdown, .openCodeGoResetTime, .openCodeGoDepletionETA:
+            return StatusLineDisplay.layoutOpenCodeGoLine(
+                for: token, snapshot: openCodeGoStore.snapshot, settings: settings
+            )
         case .primary, .secondary, .paceRemaining, .paceDelta,
              .fiveHourPaceRemaining, .fiveHourPaceDelta,
              .weeklyPaceRemaining, .weeklyPaceDelta,
@@ -694,6 +703,8 @@ struct MenuBarLayoutEditor: View {
     /// 解析编辑器中两个供应商的分段用量条，确保预览和真实菜单共用同一份比例。
     private func liveUsageBar(for token: MenuBarLayoutToken) -> MenuBarUsageBarDisplay? {
         switch token {
+        case .openCodeGoUsageBar:
+            return StatusLineDisplay.layoutOpenCodeGoUsageBar(snapshot: openCodeGoStore.snapshot)
         case .usageBar:
             return StatusLineDisplay.layoutUsageBar(for: token, snapshot: snapshot)
         case .geminiUsageBar:
@@ -791,6 +802,21 @@ struct MenuBarLayoutEditor: View {
                     menuTokenPreview(.geminiIcon)
                 }
             }
+            Menu {
+                ForEach(MenuBarLayoutToken.openCodeGoTokens) {
+                    addTokenButton($0, previewWidth: menuTokenPreviewColumnWidth(for: MenuBarLayoutToken.openCodeGoTokens))
+                }
+                ForEach([
+                    [MenuBarLayoutToken.openCodeGoPaceRemaining, .openCodeGoPaceDelta],
+                    [.openCodeGoPrimary, .openCodeGoSecondary],
+                    [.openCodeGoFiveHourPaceRemaining, .openCodeGoFiveHourPaceDelta],
+                    [.openCodeGoWeeklyPaceRemaining, .openCodeGoWeeklyPaceDelta]
+                ], id: \.self) { tokens in
+                    addStackButton(tokens: tokens, previewWidth: menuTokenPreviewColumnWidth(for: MenuBarLayoutToken.openCodeGoTokens))
+                }
+            } label: {
+                menuLabel(title: "OpenCode Go") { menuTokenPreview(.openCodeGoIcon) }
+            }
             addTokenButton(.space)
             addTokenButton(.separator)
             addEmptyStackButton
@@ -841,7 +867,9 @@ struct MenuBarLayoutEditor: View {
     private func stackTitle(for tokens: [MenuBarLayoutToken]) -> String {
         var titleParts = tokens.map { AppLocalization.string($0.title) }
         switch tokens {
-        case [.fiveHourPaceRemaining, .fiveHourPaceDelta],
+        case [.openCodeGoFiveHourPaceRemaining, .openCodeGoFiveHourPaceDelta],
+             [.openCodeGoWeeklyPaceRemaining, .openCodeGoWeeklyPaceDelta],
+             [.fiveHourPaceRemaining, .fiveHourPaceDelta],
              [.geminiFiveHourPaceRemaining, .geminiFiveHourPaceDelta],
              [.weeklyPaceRemaining, .weeklyPaceDelta],
              [.geminiWeeklyPaceRemaining, .geminiWeeklyPaceDelta]:
@@ -1024,10 +1052,10 @@ struct MenuBarLayoutEditor: View {
                 named: "OpenAIStatusIcon",
                 in: imageBounds(width: iconSize, height: iconSize, containerHeight: image.size.height)
             )
-        case .geminiIcon:
+        case .geminiIcon, .openCodeGoIcon:
             let iconSize = max(1, min(16, image.size.height - 2))
             drawMenuImage(
-                named: "AntigravityIcon",
+                named: token == .openCodeGoIcon ? "OpenCodeIcon" : "AntigravityIcon",
                 in: imageBounds(width: iconSize, height: iconSize, containerHeight: image.size.height)
             )
         case .separator:
