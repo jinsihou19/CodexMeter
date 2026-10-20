@@ -2669,7 +2669,7 @@ public extension UsageRemainingTone {
     }
 }
 
-/// 管理 CodexUsage 身份切换到 CodexMeter 后的设置迁移；只复制偏好键，不搬运行状态或凭据。
+/// 协调旧身份的偏好迁移和收尾；仅在新域保存成功后清理已迁移设置，不触碰运行状态或凭据。
 public struct CodexMeterConfigurationMigration {
     public static let legacyAppGroupIdentifier = "group.com.jinsihou.CodexUsage"
     public static let legacyBundleIdentifier = "com.jinsihou.CodexUsage"
@@ -2697,16 +2697,20 @@ public struct CodexMeterConfigurationMigration {
     private let currentDefaults: UserDefaults
     private let currentDomainName: String
     private let legacyDomains: [[String: Any]]
+    private let legacyDomainNames: [String]
 
     /// 使用当前共享偏好和旧 Bundle/App Group 持久化域创建迁移器；测试可注入隔离字典。
     public init(
         currentDefaults: UserDefaults = MenuBarDisplaySettings.sharedDefaults,
         currentDomainName: String = UsageSnapshotStore.defaultAppGroupIdentifier,
-        legacyDomains: [[String: Any]]? = nil
+        legacyDomains: [[String: Any]]? = nil,
+        legacyDomainNames: [String] = [legacyBundleIdentifier, legacyAppGroupIdentifier]
     ) {
         self.currentDefaults = currentDefaults
         self.currentDomainName = currentDomainName
-        self.legacyDomains = legacyDomains ?? Self.loadLegacyDomains()
+        self.legacyDomains = legacyDomains ?? Self.loadLegacyDomains(legacyDomainNames)
+        // 字典夹具没有真实旧域，不能让隔离测试清理用户的实际配置。
+        self.legacyDomainNames = legacyDomains == nil ? legacyDomainNames : []
     }
 
     /// 只有旧配置存在、当前配置为空且用户尚未做过选择时才需要弹窗。
@@ -2721,18 +2725,62 @@ public struct CodexMeterConfigurationMigration {
         legacyConfiguration.count
     }
 
-    /// 从旧 Bundle 和 App Group 合并配置到当前域；新域已有的键优先，避免覆盖用户刚设置的值。
+    /// 保留当前设置并补齐旧偏好；落盘并读回验证后才记录成功和清理旧键，保存失败时保留旧配置并抛错。
     @discardableResult
-    public func migrate() -> Int {
+    public func migrate() throws -> Int {
         let existingConfiguration = currentConfiguration
+        var expectedConfiguration = existingConfiguration
         var copiedCount = 0
         for (key, value) in legacyConfiguration where existingConfiguration[key] == nil {
             currentDefaults.set(value, forKey: key)
+            expectedConfiguration[key] = value
             copiedCount += 1
         }
+        guard hasPersistedConfiguration(expectedConfiguration) else {
+            throw persistenceError()
+        }
         currentDefaults.set(Self.migratedDecision, forKey: Self.decisionKey)
-        currentDefaults.synchronize()
+        guard hasPersistedConfiguration(expectedConfiguration), decision == Self.migratedDecision else {
+            throw persistenceError()
+        }
+        cleanupMigratedLegacyConfiguration()
         return copiedCount
+    }
+
+    /// 收尾已成功迁移的旧安装；只删除新域中已有对应设置的旧键，未复制的键和运行状态继续保留。
+    @discardableResult
+    public func cleanupMigratedLegacyConfiguration() -> Int {
+        guard decision == Self.migratedDecision, currentDefaults.synchronize() else { return 0 }
+        let savedConfiguration = currentConfiguration
+        var removedCount = 0
+        for identifier in legacyDomainNames where identifier != currentDomainName {
+            guard let defaults = UserDefaults(suiteName: identifier),
+                  let domain = defaults.persistentDomain(forName: identifier) else { continue }
+            let migratedKeys = Self.configuration(from: domain).keys.filter { savedConfiguration[$0] != nil }
+            for key in migratedKeys {
+                defaults.removeObject(forKey: key)
+            }
+            if defaults.synchronize() {
+                removedCount += migratedKeys.count
+            }
+        }
+        return removedCount
+    }
+
+    /// 同步后核对每个预期设置，避免把写入被拒绝或未落盘的配置当成迁移成功。
+    private func hasPersistedConfiguration(_ expected: [String: Any]) -> Bool {
+        guard currentDefaults.synchronize() else { return false }
+        let saved = currentConfiguration.filter { expected[$0.key] != nil }
+        return NSDictionary(dictionary: expected).isEqual(to: saved)
+    }
+
+    /// 保存失败不清理来源，让用户修复权限或安装包签名后仍能重试。
+    private func persistenceError() -> NSError {
+        NSError(
+            domain: "com.jinsihou.CodexMeter.ConfigurationMigration",
+            code: 1,
+            userInfo: [NSLocalizedDescriptionKey: "配置未能保存，旧配置已保留。请检查应用权限或重新安装当前版本。"]
+        )
     }
 
     /// 记录用户暂不迁移，避免每次启动重复打扰；旧数据仍保留在原持久化域中。
@@ -2764,8 +2812,8 @@ public struct CodexMeterConfigurationMigration {
     }
 
     /// 读取旧 Bundle 和旧 App Group 的持久化域，不触碰标准全局偏好或运行时文件。
-    private static func loadLegacyDomains() -> [[String: Any]] {
-        [legacyBundleIdentifier, legacyAppGroupIdentifier].compactMap { identifier in
+    private static func loadLegacyDomains(_ identifiers: [String]) -> [[String: Any]] {
+        identifiers.compactMap { identifier in
             guard let defaults = UserDefaults(suiteName: identifier) else { return nil }
             return defaults.persistentDomain(forName: identifier)
         }
@@ -2774,7 +2822,9 @@ public struct CodexMeterConfigurationMigration {
     /// 过滤为应用设置键，明确排除每日请求状态等不应迁移的运行数据。
     private static func configuration(from domain: [String: Any]) -> [String: Any] {
         domain.filter { key, _ in
-            !ignoredKeys.contains(key) && configurationKeyPrefixes.contains(where: key.hasPrefix)
+            !ignoredKeys.contains(key)
+                && !key.hasPrefix("celebrations.resetDetectorStates.")
+                && configurationKeyPrefixes.contains(where: key.hasPrefix)
         }
     }
 

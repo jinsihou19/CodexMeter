@@ -105,7 +105,7 @@ CODEX_PUBLISH_RELEASE=0 CODEX_INSTALL_LOCAL=1 bash script/package_release.sh
 
 ### 标识迁移
 
-应用、Bundle ID、App Group、Widget kind 和缓存目录统一使用 CodexMeter 标识。首次启动新版时，如果检测到旧版 CodexUsage 的配置，应用会询问是否迁移显示和偏好设置；缓存、授权和每日请求状态不会迁移。
+应用、Bundle ID、App Group、Widget kind 和缓存目录统一使用 CodexMeter 标识。只有当前配置为空且尚未做过选择时，应用才询问是否迁移旧版 CodexUsage 的显示和偏好设置。新配置保留当前值，保存并读回验证成功后清理已复制的旧设置；已经迁移的安装会在启动时补做清理。保存失败则保留旧配置，缓存、授权和每日请求状态不参与迁移或清理。
 
 ## 数据来源与隐私
 

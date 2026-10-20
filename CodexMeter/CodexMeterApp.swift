@@ -243,9 +243,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    /// 首次启动时询问是否迁移旧身份配置；缓存、凭据和每日请求状态不参与迁移。
+    /// 已迁移安装先清理旧偏好；新安装才询问，保存失败时保留旧配置并展示错误。
     private func offerLegacyConfigurationMigration() {
         let migration = CodexMeterConfigurationMigration()
+        migration.cleanupMigratedLegacyConfiguration()
         guard migration.shouldPrompt else { return }
 
         let language = migration.preferredLanguage
@@ -260,7 +261,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         alert.addButton(withTitle: AppLocalization.string("暂不迁移", language: language))
 
         if alert.runModal() == .alertFirstButtonReturn {
-            migration.migrate()
+            do {
+                try migration.migrate()
+            } catch {
+                NSAlert(error: error).runModal()
+            }
         } else {
             migration.skip()
         }

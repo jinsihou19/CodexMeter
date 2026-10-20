@@ -1,7 +1,14 @@
+// 用量、显示偏好和配置迁移的回归测试；所有可写偏好均使用隔离域。
 import AppKit
 import ServiceManagement
 import XCTest
 @testable import CodexMeterShared
+
+/// 模拟偏好服务拒绝落盘，验证迁移失败不会销毁来源配置。
+private final class UnwritableMigrationDefaults: UserDefaults {
+    /// 固定返回失败，不依赖测试机器的真实 App Group 权限。
+    override func synchronize() -> Bool { false }
+}
 
 @MainActor
 final class UsageViewModelTests: XCTestCase {
@@ -1450,7 +1457,7 @@ final class UsageViewModelTests: XCTestCase {
         XCTAssertTrue(migration.shouldPrompt)
         XCTAssertEqual(migration.legacyConfigurationCount, 3)
         XCTAssertEqual(migration.preferredLanguage, .english)
-        XCTAssertEqual(migration.migrate(), 3)
+        XCTAssertEqual(try? migration.migrate(), 3)
         XCTAssertFalse(migration.shouldPrompt)
         XCTAssertEqual(
             currentDefaults.string(forKey: AppLanguagePreferenceKeys.selectedLanguage),
@@ -1486,6 +1493,129 @@ final class UsageViewModelTests: XCTestCase {
         )
         XCTAssertFalse(nextLaunch.shouldPrompt)
         XCTAssertNil(currentDefaults.object(forKey: MenuBarPreferenceKeys.contentMode))
+    }
+
+    /// 各供应商的重置探测状态都属于运行数据，不应随显示偏好迁移。
+    func testConfigurationMigrationExcludesNamespacedRuntimeState() throws {
+        let name = "CodexMeterTests.migrationRuntimeState.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: name)!
+        defer { defaults.removePersistentDomain(forName: name) }
+        let migration = CodexMeterConfigurationMigration(
+            currentDefaults: defaults, currentDomainName: name,
+            legacyDomains: [[
+                "surface.appearanceMode": "dark",
+                "celebrations.resetDetectorStates.antigravity.v1": Data([1]),
+                "celebrations.resetDetectorStates.other.v1": Data([2])
+            ]]
+        )
+        XCTAssertEqual(try migration.migrate(), 1)
+        XCTAssertNil(defaults.object(forKey: "celebrations.resetDetectorStates.antigravity.v1"))
+        XCTAssertNil(defaults.object(forKey: "celebrations.resetDetectorStates.other.v1"))
+    }
+
+    /// 迁移落盘后清理旧偏好，保留用户当前值，以及旧域的缓存状态和非配置键。
+    func testConfigurationMigrationCleansOnlyCopiedLegacySettings() throws {
+        let currentName = "CodexMeterTests.migrationCurrent.\(UUID().uuidString)"
+        let legacyName = "CodexMeterTests.migrationLegacy.\(UUID().uuidString)"
+        let current = UserDefaults(suiteName: currentName)!
+        let legacy = UserDefaults(suiteName: legacyName)!
+        defer {
+            current.removePersistentDomain(forName: currentName)
+            legacy.removePersistentDomain(forName: legacyName)
+        }
+        current.set("dark", forKey: "surface.appearanceMode")
+        legacy.set("automatic", forKey: "surface.appearanceMode")
+        legacy.set(true, forKey: "popover.showsLocalOverview")
+        legacy.set(Data([1]), forKey: "usage.resetCredits.dailyAttempt")
+        legacy.set("keep", forKey: "unrelated.windowState")
+        let migration = CodexMeterConfigurationMigration(
+            currentDefaults: current, currentDomainName: currentName, legacyDomainNames: [legacyName]
+        )
+
+        XCTAssertFalse(migration.shouldPrompt)
+        XCTAssertEqual(try migration.migrate(), 1)
+        XCTAssertEqual(current.string(forKey: "surface.appearanceMode"), "dark")
+        XCTAssertTrue(current.bool(forKey: "popover.showsLocalOverview"))
+        XCTAssertNil(legacy.object(forKey: "surface.appearanceMode"))
+        XCTAssertNil(legacy.object(forKey: "popover.showsLocalOverview"))
+        XCTAssertEqual(legacy.data(forKey: "usage.resetCredits.dailyAttempt"), Data([1]))
+        XCTAssertEqual(legacy.string(forKey: "unrelated.windowState"), "keep")
+        let nextLaunch = CodexMeterConfigurationMigration(
+            currentDefaults: UserDefaults(suiteName: currentName)!,
+            currentDomainName: currentName, legacyDomainNames: [legacyName]
+        )
+        XCTAssertFalse(nextLaunch.shouldPrompt)
+        XCTAssertEqual(nextLaunch.cleanupMigratedLegacyConfiguration(), 0)
+    }
+
+    /// 旧版本已标记迁移成功时自动收尾，但未复制到新域的设置仍保留，防止误删。
+    func testConfigurationMigrationFinishesPreviouslyMigratedInstall() {
+        let currentName = "CodexMeterTests.migrationCompleted.\(UUID().uuidString)"
+        let legacyName = "CodexMeterTests.migrationPendingCleanup.\(UUID().uuidString)"
+        let current = UserDefaults(suiteName: currentName)!
+        let legacy = UserDefaults(suiteName: legacyName)!
+        defer {
+            current.removePersistentDomain(forName: currentName)
+            legacy.removePersistentDomain(forName: legacyName)
+        }
+        current.set("migrated", forKey: "codexMeter.configurationMigrationDecision")
+        current.set("dark", forKey: "surface.appearanceMode")
+        legacy.set("automatic", forKey: "surface.appearanceMode")
+        legacy.set(true, forKey: "popover.showsLocalOverview")
+        let migration = CodexMeterConfigurationMigration(
+            currentDefaults: current, currentDomainName: currentName, legacyDomainNames: [legacyName]
+        )
+
+        XCTAssertFalse(migration.shouldPrompt)
+        XCTAssertEqual(migration.cleanupMigratedLegacyConfiguration(), 1)
+        XCTAssertNil(legacy.object(forKey: "surface.appearanceMode"))
+        XCTAssertTrue(legacy.bool(forKey: "popover.showsLocalOverview"))
+        XCTAssertEqual(current.string(forKey: "surface.appearanceMode"), "dark")
+    }
+
+    /// 已自行配置或选择跳过，不代表迁移成功，不能删除旧域中的设置。
+    func testConfigurationMigrationDoesNotCleanSkippedInstall() {
+        let currentName = "CodexMeterTests.migrationSkipped.\(UUID().uuidString)"
+        let legacyName = "CodexMeterTests.migrationSkippedLegacy.\(UUID().uuidString)"
+        let current = UserDefaults(suiteName: currentName)!
+        let legacy = UserDefaults(suiteName: legacyName)!
+        defer {
+            current.removePersistentDomain(forName: currentName)
+            legacy.removePersistentDomain(forName: legacyName)
+        }
+        current.set("dark", forKey: "surface.appearanceMode")
+        legacy.set("automatic", forKey: "surface.appearanceMode")
+        let migration = CodexMeterConfigurationMigration(
+            currentDefaults: current, currentDomainName: currentName, legacyDomainNames: [legacyName]
+        )
+
+        XCTAssertFalse(migration.shouldPrompt)
+        XCTAssertEqual(migration.cleanupMigratedLegacyConfiguration(), 0)
+        migration.skip()
+        XCTAssertFalse(migration.shouldPrompt)
+        XCTAssertEqual(migration.cleanupMigratedLegacyConfiguration(), 0)
+        XCTAssertEqual(legacy.string(forKey: "surface.appearanceMode"), "automatic")
+    }
+
+    /// 模拟系统拒绝偏好落盘；不得标记迁移成功，更不能删除唯一的旧配置。
+    func testConfigurationMigrationPreservesLegacyOnPersistenceFailure() {
+        let currentName = "CodexMeterTests.migrationUnwritable.\(UUID().uuidString)"
+        let legacyName = "CodexMeterTests.migrationRecoverable.\(UUID().uuidString)"
+        let current = UnwritableMigrationDefaults(suiteName: currentName)!
+        let legacy = UserDefaults(suiteName: legacyName)!
+        defer {
+            current.removePersistentDomain(forName: currentName)
+            legacy.removePersistentDomain(forName: legacyName)
+        }
+        legacy.set("dark", forKey: "surface.appearanceMode")
+        let migration = CodexMeterConfigurationMigration(
+            currentDefaults: current, currentDomainName: currentName, legacyDomainNames: [legacyName]
+        )
+
+        XCTAssertThrowsError(try migration.migrate())
+        XCTAssertNil(current.object(forKey: "codexMeter.configurationMigrationDecision"))
+        XCTAssertEqual(migration.cleanupMigratedLegacyConfiguration(), 0)
+        XCTAssertEqual(legacy.string(forKey: "surface.appearanceMode"), "dark")
     }
 
     func testMenuBarDisplaySettingsMigratesLegacyDefaultsToCurrentDefaults() {
