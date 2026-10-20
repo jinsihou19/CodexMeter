@@ -705,31 +705,17 @@ final class StatusBarController: NSObject {
     }
 }
 
-/// 将统一布局渲染到唯一的菜单栏按钮，各供应商共用排版规则。
+/// 将统一布局渲染到唯一的菜单栏按钮；文字明暗跟随菜单栏自身外观，各供应商共用排版规则。
 private struct StatusBarLabel: View {
+    @Environment(\.colorScheme) private var colorScheme
     @ObservedObject private var openCodeGoStore = OpenCodeGoStore.shared
     @ObservedObject var viewModel: UsageViewModel
     @ObservedObject var activityStore: CodexHookActivityStore
     let settings: MenuBarDisplaySettings
     let statusWidth: CGFloat
     let layout: MenuBarLayout
-    private var appearanceSettings: SurfaceAppearanceSettings {
-        SurfaceAppearanceSettings(defaults: MenuBarDisplaySettings.sharedDefaults)
-    }
-
     var body: some View {
-        themedContent
-    }
-
-    /// 菜单栏标签跟随全局外观设置，保证浅色/深色强制模式能覆盖系统当前主题。
-    @ViewBuilder private var themedContent: some View {
-        let activeAppearance = appearanceSettings
-        let baseContent = content
-        if let colorScheme = activeAppearance.appearanceMode.colorScheme {
-            baseContent.environment(\.colorScheme, colorScheme)
-        } else {
-            baseContent
-        }
+        content
     }
 
     /// 渲染已启用的布局项目，Go 和既有供应商共享同一按钮与字体规则。
@@ -917,7 +903,7 @@ private struct StatusBarLabel: View {
             Text(value)
                 .foregroundStyle(
                     usesUsageColor
-                        ? tone.statusBarColor(settings: settings)
+                        ? tone.statusBarColor(settings: settings, colorScheme: colorScheme)
                         : Color.primary
                 )
         }
@@ -1190,9 +1176,10 @@ private struct CodexMenuBarIcon: View {
     }
 }
 
+/// 承载菜单栏彩色读数并穿透点击；禁用 Vibrancy，避免系统材质把状态色混成浅色。
 private final class PassthroughHostingView<Content: View>: NSHostingView<Content> {
     override var allowsVibrancy: Bool {
-        true
+        false
     }
 
     override func hitTest(_ point: NSPoint) -> NSView? {

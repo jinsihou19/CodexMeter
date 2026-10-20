@@ -224,6 +224,19 @@ extension UsageRemainingTone {
         let color = NSColor(original)
         return Color(nsColor: color.blended(withFraction: 0.30, of: .black) ?? color)
     }
+
+    /// 浅色菜单栏保留用户设置的原色；深色菜单栏轻微压暗状态色。
+    func statusBarColor(settings: MenuBarDisplaySettings, colorScheme: ColorScheme) -> Color {
+        guard colorScheme == .dark, self != .unavailable,
+              let rgb = UInt32(settings.colorHex(for: self).dropFirst(), radix: 16)
+        else { return statusBarColor(settings: settings) }
+        let red = Double((rgb >> 16) & 0xFF)
+        let green = Double((rgb >> 8) & 0xFF)
+        let blue = Double(rgb & 0xFF)
+        // ponytail: 固定压暗 15%；若需按背景精细适配，再读取菜单栏实际背景。
+        let scale = 0.85 / 255
+        return Color(.sRGB, red: red * scale, green: green * scale, blue: blue * scale, opacity: 1)
+    }
 }
 
 enum MenuBarPopoverPositioning {
@@ -354,6 +367,7 @@ struct MenuBarUsageBarView: View {
     nonisolated static let width: CGFloat = 18
     static let height: CGFloat = 18
 
+    @Environment(\.colorScheme) private var colorScheme
     let display: MenuBarUsageBarDisplay
     let settings: MenuBarDisplaySettings
     let isDisabled: Bool
@@ -425,7 +439,7 @@ struct MenuBarUsageBarView: View {
     private func indicatorColor(for window: MenuBarUsageWindowDisplay) -> Color {
         isDisabled
             ? Color.secondary.opacity(0.42)
-            : window.tone.statusBarColor(settings: settings)
+            : window.tone.statusBarColor(settings: settings, colorScheme: colorScheme)
     }
 
     /// 生成辅助功能文本，让两个窗口的含义在图形模式下仍然可读。
