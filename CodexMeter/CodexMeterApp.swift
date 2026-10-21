@@ -12,7 +12,12 @@ enum CodexMeterMain {
     @MainActor private static var appDelegate: AppDelegate?
 
     @MainActor
+    /// Hook 调用只写入活动状态后退出；普通启动才创建菜单栏与窗口。
     static func main() {
+        if CommandLine.arguments.dropFirst().first == CodexActivityHook.argument {
+            CodexActivityHook.run()
+            return
+        }
         let application = NSApplication.shared
         let delegate = AppDelegate()
         appDelegate = delegate
@@ -1026,6 +1031,8 @@ private struct CodexActivityGlyph: View {
             return .completed
         }
         switch style {
+        case .none:
+            return .idle
         case .automatic:
             return display.state.glyphEffect
         case .variableDots:

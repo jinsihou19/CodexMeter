@@ -1,7 +1,21 @@
+// 验证用量和活动模型的业务语义，以及主应用与 Hook 共用的状态文件约定。
 import XCTest
 @testable import CodexMeterShared
 
+/// 对共享展示模型做无用户数据副作用的回归验证。
 final class UsageModelsTests: XCTestCase {
+    /// 活动文件必须使用主应用自己的用户支持目录，避免 Hook 可写但菜单栏因 App Group 权限拒绝读取。
+    func testActivityFileUsesUserApplicationSupport() throws {
+        let support = try XCTUnwrap(FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first)
+        let directory = support.appendingPathComponent("CodexMeter", isDirectory: true)
+        XCTAssertEqual(CodexHookActivityLocation.activityDirectoryURL(), directory)
+        XCTAssertEqual(CodexHookActivityLocation.activityURL(), directory.appendingPathComponent("codex-activity.json"))
+
+        let isolated = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        XCTAssertEqual(CodexHookActivityLocation.activityDirectoryURL(fallbackDirectory: isolated), isolated)
+        XCTAssertEqual(CodexHookActivityLocation.activityURL(fallbackDirectory: isolated), isolated.appendingPathComponent("codex-activity.json"))
+    }
+
     /// 验证窗口标签始终来自接口时长，覆盖单窗口 Team 账号的非标准周期。
     func testDurationLabelsUseActualWindowDuration() {
         let hourly = RateLimitWindow(usedPercent: 0, windowDurationMins: 180, resetsAt: nil)

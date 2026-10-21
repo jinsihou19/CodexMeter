@@ -68,12 +68,8 @@ final class UsageViewModelTests: XCTestCase {
         XCTAssertFalse(source.contains("private var header:"))
         XCTAssertFalse(source.contains("SettingsInfoRow(title: \"缓存文件\""))
 
-        let activityToggle = try XCTUnwrap(source.range(of: "title: \"显示活动指示\""))
-        let activityStyle = try XCTUnwrap(source.range(of: "title: \"活动样式\""))
-        XCTAssertLessThan(activityToggle.lowerBound, activityStyle.lowerBound)
         XCTAssertTrue(source.contains("Section {\n                MenuBarLayoutEditor("))
         XCTAssertFalse(source.contains("Section(AppLocalization.string(\"布局\"))"))
-        XCTAssertTrue(source.contains("if showsHookActivityLight"))
 
         let sidebarStart = try XCTUnwrap(source.range(of: "private var sidebar: some View"))
         let sidebarEnd = try XCTUnwrap(source.range(of: "private var sidebarSelection"))
@@ -861,6 +857,7 @@ final class UsageViewModelTests: XCTestCase {
         XCTAssertFalse(PopoverDisplaySettings().showsAnyLocalSection)
     }
 
+    /// 默认显示保持紧凑，活动样式默认关闭，不为未配置 Hook 的用户显示活动图标。
     func testMenuBarDisplaySettingsDefaultToCompactReadableValues() {
         let settings = MenuBarDisplaySettings()
 
@@ -874,8 +871,8 @@ final class UsageViewModelTests: XCTestCase {
         XCTAssertEqual(settings.warningColorHex, "#F5931A")
         XCTAssertEqual(settings.dangerColorHex, "#F23838")
         XCTAssertFalse(settings.showsMenuBarIcon)
-        XCTAssertTrue(settings.showsHookActivityLight)
-        XCTAssertEqual(settings.hookActivityIndicatorStyle, .automatic)
+        XCTAssertFalse(settings.showsHookActivityLight)
+        XCTAssertEqual(settings.hookActivityIndicatorStyle, HookActivityIndicatorStyle.none)
         XCTAssertEqual(settings.statusItemWidth, 48)
         XCTAssertEqual(MenuBarDisplayPreset.matchingPreset(for: settings), .balanced)
     }
@@ -1281,9 +1278,10 @@ final class UsageViewModelTests: XCTestCase {
         XCTAssertEqual(width, expected, accuracy: 0.001)
     }
 
+    /// 显式启用样式后才为活动状态留宽；“无”和旧版关闭开关都不占宽度。
     func testStatusBarWidthIncludesHookActivityIndicatorOnlyWhenVisible() {
-        let settings = MenuBarDisplaySettings()
-        let iconSettings = MenuBarDisplaySettings(showsMenuBarIcon: true)
+        let settings = MenuBarDisplaySettings(hookActivityIndicatorStyle: .automatic)
+        let iconSettings = MenuBarDisplaySettings(showsMenuBarIcon: true, hookActivityIndicatorStyle: .automatic)
         let lines = [
             StatusLineDisplay(id: "primary", label: "5h", value: "49%", tone: .warning),
             StatusLineDisplay(id: "secondary", label: "7d", value: "51%", tone: .warning)
@@ -1330,7 +1328,7 @@ final class UsageViewModelTests: XCTestCase {
 
     /// 验证活动图标迫使单行继续走 SwiftUI 时，宽度使用同一套单行字体而不会裁切末尾。
     func testSingleLineWithVisibleActivityUsesSwiftUITypographyWidth() {
-        let settings = MenuBarDisplayPreset.balanced.settings
+        let settings = MenuBarDisplaySettings(hookActivityIndicatorStyle: .automatic)
         let line = StatusLineDisplay(id: "weekly", label: "7d", value: "100%", tone: .good)
         let snapshot = CodexHookActivitySnapshot(
             state: .running,

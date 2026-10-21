@@ -11,7 +11,6 @@ from pathlib import Path
 from typing import Any
 
 
-APP_GROUP_ID = "group.com.jinsihou.CodexMeter"
 STATE_FILE_NAME = "codex-activity.json"
 STATE_EXPIRATION_SECONDS = {
     "idle": 3,
@@ -26,15 +25,14 @@ STATE_EXPIRATION_SECONDS = {
 
 
 def activity_file_path() -> Path:
-    """返回状态文件路径；允许环境变量覆盖，方便调试和测试。"""
+    """与 App 共用用户级支持目录，避免主进程无权读取 Group Containers；允许覆盖以隔离测试。"""
     override_path = os.environ.get("CODEX_USAGE_ACTIVITY_FILE")
     if override_path:
         return Path(override_path).expanduser()
     return (
         Path.home()
         / "Library"
-        / "Group Containers"
-        / APP_GROUP_ID
+        / "Application Support"
         / "CodexMeter"
         / STATE_FILE_NAME
     )

@@ -225,6 +225,8 @@ struct SettingsView: View {
     @State private var launchAtLoginEnabled = false
     @State private var launchAtLoginError: String?
     @State private var cacheActionMessage: String?
+    @State private var activityInstallationMessage: String?
+    @State private var activityHookInstalled = CodexActivityHookInstaller.isInstalled()
     @State private var menuBarLayoutChoice = MenuBarLayoutChoice.custom
     @State private var menuBarLayout = MenuBarLayoutStore.load()
     @State private var explicitlyUsesCustomColors = false
@@ -687,21 +689,32 @@ struct SettingsView: View {
             }
 
             Section(AppLocalization.string("显示内容")) {
-                SettingsToggleRow(
-                    title: "显示活动指示",
-                    subtitle: "Codex 运行、思考、需确认或刚完成时显示状态符号；空闲时自动隐藏。",
-                    isOn: menuBarBinding($showsHookActivityLight, key: MenuBarPreferenceKeys.showsHookActivityLight)
+                SettingsPickerRow(
+                    title: "活动样式",
+                    subtitle: "自动会按状态切换；固定样式会一直使用选中的系统符号。",
+                    selection: activityStyleBinding,
+                    options: HookActivityIndicatorStyle.allCases.map { ($0.rawValue, $0.title) }
                 )
-                if showsHookActivityLight {
-                    SettingsPickerRow(
-                        title: "活动样式",
-                        subtitle: "自动会按状态切换；固定样式会一直使用选中的系统符号。",
-                        selection: menuBarBinding(
-                            $hookActivityIndicatorStyle,
-                            key: MenuBarPreferenceKeys.hookActivityIndicatorStyle
-                        ),
-                        options: HookActivityIndicatorStyle.allCases.map { ($0.rawValue, $0.title) }
-                    )
+                if currentSettings.showsHookActivityLight {
+                    SettingsPreferenceRow(
+                        title: "活动钩子",
+                        subtitle: activityHookInstalled
+                            ? "请在 Codex 的 /hooks → 用户配置中信任命令含 --codexmeter-activity-hook 的 10 个钩子，再开始新回合；已有配置已备份。"
+                            : "所有项目通用，无需复制脚本或手动启动服务。"
+                    ) {
+                        if activityHookInstalled {
+                            Text(localized("已安装"))
+                                .foregroundStyle(.secondary)
+                        } else {
+                            Button(localized("安装"), action: installActivityHook)
+                                .controlSize(.small)
+                        }
+                    }
+                    if let activityInstallationMessage {
+                        Text(activityInstallationMessage)
+                            .font(.callout)
+                            .foregroundStyle(.secondary)
+                    }
                 }
             }
 
@@ -761,6 +774,10 @@ struct SettingsView: View {
         }
         .formStyle(.grouped)
         .scrollContentBackground(.hidden)
+        .onAppear(perform: refreshActivityHookInstallation)
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+            refreshActivityHookInstallation()
+        }
     }
 
     /// 小组件页只展示用户可配置项，不暴露时间线与缓存文件等实现信息。
@@ -1119,8 +1136,8 @@ struct SettingsView: View {
 
                     SettingsInfoRow(title: "状态文件", value: hookActivityURL.path)
                     SettingsInfoRow(title: "日志文件", value: AppDiagnosticLog.shared.fileURL.path)
-                    SettingsInfoRow(title: "Hook 配置", value: ".codex/hooks.json")
-                    SettingsInfoRow(title: "Hook 脚本", value: ".codex/hooks/codex_activity.py")
+                    SettingsInfoRow(title: "Hook 配置", value: CodexActivityHookInstaller.configurationURL.path)
+                    SettingsInfoRow(title: "活动状态来源", value: "CodexMeter 内置，全局 Hook")
 
                     SettingsActionRow(
                         title: "清除最近同步缓存",
@@ -1296,6 +1313,23 @@ struct SettingsView: View {
                 UsageNotificationController.requestAuthorization()
             }
         }
+    }
+
+    /// 用“无”统一控制关闭状态，并同步旧版开关键，避免重新选择样式后仍被旧开关隐藏。
+    private var activityStyleBinding: Binding<String> {
+        Binding(
+            get: { currentSettings.showsHookActivityLight ? hookActivityIndicatorStyle : HookActivityIndicatorStyle.none.rawValue },
+            set: { rawValue in
+                hookActivityIndicatorStyle = rawValue
+                showsHookActivityLight = rawValue != HookActivityIndicatorStyle.none.rawValue
+                let defaults = MenuBarDisplaySettings.sharedDefaults
+                defaults.set(rawValue, forKey: MenuBarPreferenceKeys.hookActivityIndicatorStyle)
+                defaults.set(showsHookActivityLight, forKey: MenuBarPreferenceKeys.showsHookActivityLight)
+                activityInstallationMessage = nil
+                refreshActivityHookInstallation()
+                notifyMenuBarDisplaySettingsDidChange()
+            }
+        )
     }
 
     /// 包装设置控件的写入路径，点击后立即落到共享 defaults，再通知外层界面重读。
@@ -1535,6 +1569,22 @@ struct SettingsView: View {
     /// 在 Finder 中打开 hook 活动状态目录，便于确认脚本是否正在写入 JSON。
     private func openActivityDirectory() {
         openDirectory(hookActivityURL.deletingLastPathComponent())
+    }
+
+    /// 由用户主动安装或修复全局桥接；保留其他 Hook，失败原因直接显示在当前设置页。
+    private func installActivityHook() {
+        do {
+            try CodexActivityHookInstaller.install()
+            activityInstallationMessage = nil
+        } catch {
+            activityInstallationMessage = "安装失败：\(error.localizedDescription)"
+        }
+        refreshActivityHookInstallation()
+    }
+
+    /// 每次进入菜单栏设置或返回应用时核对完整配置；已安装不代表已通过 Codex 的信任审核。
+    private func refreshActivityHookInstallation() {
+        activityHookInstalled = CodexActivityHookInstaller.isInstalled()
     }
 
     /// 确保应用诊断日志存在，并交给系统默认文本查看器打开。

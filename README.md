@@ -110,7 +110,7 @@ CODEX_PUBLISH_RELEASE=0 CODEX_INSTALL_LOCAL=1 bash script/package_release.sh
 - Codex 额度从 `CODEX_HOME/auth.json` 或 `~/.codex/auth.json` 读取现有登录状态；应用不会替你登录，也不会保存认证 token 副本。
 - 本机统计需要当前用户可以读取 Codex 状态库；数据库不存在或 schema 不兼容时，网络额度仍可正常使用。
 - Antigravity 为可选功能；开启后会优先探测本地服务，必要时再使用已有 Google OAuth 配置。
-- 使用 Codex hook 活动指示器前，先通过 `/hooks` 信任项目 hook。
+- 活动样式默认为“无”。在“设置 → 菜单栏”选择其他活动样式后，未安装时可点击“活动钩子”右侧的“安装”；安装完成后显示“已安装”和信任说明。无需 Python、复制脚本或手动启动服务，所有本机项目通用。
 
 ### 标识迁移
 
@@ -151,7 +151,7 @@ Astra 支持缓存读取、缓存写入、272K 输入阈值和日志明确记录
 
 - Codex Radar 读取 <https://codexradar.com/current.json>，只用于模型雷达展示。
 - Antigravity 额度优先读取本地服务；本地服务不可用时才尝试已有 Google OAuth 配置。
-- 项目 hook 只写入轻量活动状态，不包含 prompt、transcript 或工具输出。
+- 活动 Hook 只写入轻量状态，不包含 prompt、transcript 或工具输出。
 
 ## 自动更新
 
@@ -196,9 +196,15 @@ bash script/package_release.sh
 
 ## Codex Hook
 
-仓库包含项目级 hook 桥接：
+在“设置 → 菜单栏”选择非“无”的活动样式，再点击“活动钩子”右侧的“安装”。应用把原生入口合并到 `CODEX_HOME/hooks.json`（默认 `~/.codex/hooks.json`），保留其他 Hook，并在首次改写前备份到同目录的 `hooks.json.codexmeter-backup`。检测全部活动事件完整配置后，按钮自动替换成“已安装”；移动 App 或条目缺失时会重新显示安装按钮。选择“无”隐藏活动图标与安装行，保留已安装的 Hook。
+
+配置后需要在 Codex 的 `/hooks → 来自配置 → 用户配置` 中审核并信任活动 Hook，再开始新回合。需要的 10 项是 `SessionStart`、`UserPromptSubmit`、`PreToolUse`、`PermissionRequest`、`PostToolUse`、`PreCompact`、`PostCompact`、`SubagentStart`、`SubagentStop` 和 `Stop`；它们的命令均包含 `--codexmeter-activity-hook`，状态说明统一为“CodexMeter 活动指示 · 事件名”。“已安装”只表示配置完整，不表示已获 Codex 信任。应用不修改 Codex 的信任设置。
+
+为兼容更名前的安装，应用在系统允许访问时也读取旧版 App Group 目录的活动文件，按会话取新旧文件中最新事件，避免同一回合重复显示。旧目录被系统拒绝时，使用内置全局 Hook 写入新的用户支持目录即可恢复活动显示。
+
+仓库仍保留可选的项目级桥接，已使用全局入口的项目无需重复配置：
 
 - `.codex/hooks.json`
 - `.codex/hooks/codex_activity.py`
 
-通过 `/hooks` 信任项目 hook 后，活动状态会写入 CodexMeter App Group 容器，CodexMeter 会聚合并显示当前 Codex 会话状态。它是本地会话活动指示，不是 OpenAI 账单或计费接口。
+活动状态写入 `~/Library/Application Support/CodexMeter/codex-activity.json`，应用聚合显示当前 Codex 会话状态。这份文件只供菜单栏使用，采用主应用自己的用户目录，避免 ad-hoc 主进程因没有 App Group 授权而无法读取 Hook 写入的状态。现有原生 Hook 的命令保持不变，升级 App 即可使用新目录。它是本地会话活动指示，不是 OpenAI 账单或计费接口。

@@ -1,24 +1,31 @@
+// 读取新旧活动目录并发布菜单栏状态，兼容更名前已安装的全局 Hook。
 import Combine
 import CodexMeterShared
 import Foundation
 
-/// 轮询 Codex hook 活动文件并发布给菜单栏 UI；状态文件是单向输入，不反向控制 Codex 执行。
+/// 轮询新旧 Codex Hook 文件并按会话合并；状态仅供菜单栏展示，不反向控制 Codex 执行。
 @MainActor
 final class CodexHookActivityStore: ObservableObject {
     @Published private(set) var snapshots: [CodexHookActivitySnapshot] = []
 
     let activityURL: URL
+    private let legacyActivityURL: URL?
     private let pollInterval: TimeInterval
     private let decoder = JSONDecoder()
     private var timer: Timer?
-    private var lastLoadedData: Data?
+    private var lastLoadedData: [URL: Data] = [:]
+    private var loadedSnapshots: [URL: [CodexHookActivitySnapshot]] = [:]
 
+    /// 默认兼容旧版全局 Hook 的写入目录；测试可注入独立路径或关闭兼容读取。
     init(
         activityURL: URL = CodexHookActivityLocation.activityURL(),
-        pollInterval: TimeInterval = 0.8
+        pollInterval: TimeInterval = 0.8,
+        legacyActivityURL: URL? = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library/Group Containers/group.com.jinsihou.CodexUsage/CodexUsage/codex-activity.json")
     ) {
         self.activityURL = activityURL
         self.pollInterval = pollInterval
+        self.legacyActivityURL = legacyActivityURL
     }
 
     var display: CodexHookActivityDisplay {
@@ -46,33 +53,31 @@ final class CodexHookActivityStore: ObservableObject {
         timer = nil
     }
 
-    /// 读取最新状态并处理过期回落；解码失败时保留上一帧，避免半写入文件造成闪烁。
+    /// 合并新旧目录的最新会话状态后再处理过期；短暂完成态到期不能使旧运行态重新出现。
     func refresh(now: Date = Date()) {
-        guard let data = try? Data(contentsOf: activityURL) else {
-            applySnapshots([])
-            lastLoadedData = nil
-            return
-        }
-
-        if data != lastLoadedData {
-            lastLoadedData = data
-
-            if let decodedDocument = try? decoder.decode(CodexHookActivityDocument.self, from: data) {
-                applySnapshots(decodedDocument.activeSnapshots(now: now))
-                return
+        var latestBySession: [String: CodexHookActivitySnapshot] = [:]
+        for url in [activityURL, legacyActivityURL].compactMap({ $0 }) {
+            if let data = try? Data(contentsOf: url) {
+                if data != lastLoadedData[url] {
+                    if let document = try? decoder.decode(CodexHookActivityDocument.self, from: data) {
+                        loadedSnapshots[url] = Array(document.sessions.values)
+                        lastLoadedData[url] = data
+                    } else if let snapshot = try? decoder.decode(CodexHookActivitySnapshot.self, from: data) {
+                        loadedSnapshots[url] = [snapshot]
+                        lastLoadedData[url] = data
+                    }
+                }
+            } else {
+                loadedSnapshots.removeValue(forKey: url)
+                lastLoadedData.removeValue(forKey: url)
             }
-
-            if let decodedSnapshot = try? decoder.decode(CodexHookActivitySnapshot.self, from: data) {
-                applySnapshots(decodedSnapshot.isFresh(now: now) ? [decodedSnapshot] : [])
-                return
+            for snapshot in loadedSnapshots[url] ?? [] {
+                let key = snapshot.sessionID ?? url.path
+                if let existing = latestBySession[key], existing.updatedAt >= snapshot.updatedAt { continue }
+                latestBySession[key] = snapshot
             }
         }
-
-        let freshSnapshots = snapshots.filter { $0.isFresh(now: now) && $0.state != .idle }
-        if freshSnapshots.count != snapshots.count {
-            applySnapshots(freshSnapshots)
-            return
-        }
+        applySnapshots(latestBySession.values.filter { $0.isFresh(now: now) && $0.state != .idle })
     }
 
     /// 只有真实变化时才发布，避免菜单栏宽度和弹窗内容被轮询频率反复刷新。

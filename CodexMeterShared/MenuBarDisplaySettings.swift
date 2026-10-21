@@ -952,6 +952,11 @@ public enum AppLocalization {
         "显示活动指示": "Show Activity Indicator",
         "Codex 运行、思考、需确认或刚完成时显示状态符号；空闲时自动隐藏。": "Show a status symbol while Codex runs, thinks, waits, or completes; hide it when idle.",
         "活动样式": "Activity Style",
+        "活动钩子": "Activity Hooks",
+        "安装": "Install",
+        "已安装": "Installed",
+        "所有项目通用，无需复制脚本或手动启动服务。": "Works across projects without copying scripts or starting a service.",
+        "请在 Codex 的 /hooks → 用户配置中信任命令含 --codexmeter-activity-hook 的 10 个钩子，再开始新回合；已有配置已备份。": "In Codex /hooks, open User configuration and trust the 10 hooks whose command contains --codexmeter-activity-hook, then start a new turn. Existing configuration is backed up.",
         "自动会按状态切换；固定样式会一直使用选中的系统符号。": "Automatic changes with status; a fixed style always uses the selected symbol.",
         "布局": "Layout",
         "布局模式": "Layout Mode",
@@ -1823,8 +1828,9 @@ public enum MenuBarNumberFontWeight: String, CaseIterable, Identifiable, Sendabl
     }
 }
 
-/// 控制菜单栏 hook 活动指示的视觉语言；旧 rawValue 保留用于兼容已保存设置，实际显示改为系统 SF Symbol。
+/// 控制菜单栏活动指示；“无”关闭显示，其余样式沿用旧 rawValue 兼容已保存设置。
 public enum HookActivityIndicatorStyle: String, CaseIterable, Identifiable, Sendable {
+    case none
     case automatic
     case variableDots
     case fanHead
@@ -1836,6 +1842,8 @@ public enum HookActivityIndicatorStyle: String, CaseIterable, Identifiable, Send
 
     public var title: String {
         switch self {
+        case .none:
+            return "无"
         case .automatic:
             return "自动"
         case .variableDots:
@@ -1891,7 +1899,7 @@ public struct MenuBarDisplaySettings: Equatable, Sendable {
     public static let defaultShowsPercentSymbol = true
     public static let defaultShowsMenuBarIcon = false
     public static let defaultShowsHookActivityLight = true
-    public static let defaultHookActivityIndicatorStyle = HookActivityIndicatorStyle.automatic
+    public static let defaultHookActivityIndicatorStyle = HookActivityIndicatorStyle.none
     public static let defaultWeeklyProgressWorkDays = 5
     public static let menuBarIconWidth: CGFloat = 15
     public static let menuBarIconTextSpacing: CGFloat = 2
@@ -1920,6 +1928,7 @@ public struct MenuBarDisplaySettings: Equatable, Sendable {
     public let hookActivityIndicatorStyle: HookActivityIndicatorStyle
     public let weeklyProgressWorkDays: Int
 
+    /// 校验显示偏好；“无”始终关闭活动指示，旧版独立开关仍作为已保存设置的兼容约束。
     public init(
         contentMode: MenuBarContentMode = Self.defaultContentMode,
         layoutDensity: MenuBarLayoutDensity = Self.defaultLayoutDensity,
@@ -1956,7 +1965,7 @@ public struct MenuBarDisplaySettings: Equatable, Sendable {
         )
         self.showsPercentSymbol = showsPercentSymbol
         self.showsMenuBarIcon = showsMenuBarIcon
-        self.showsHookActivityLight = showsHookActivityLight
+        self.showsHookActivityLight = showsHookActivityLight && hookActivityIndicatorStyle != .none
         self.hookActivityIndicatorStyle = hookActivityIndicatorStyle
         /// 0 是“无”选项；其余值仍限制在至少 2 个工作日的有效范围内。
         self.weeklyProgressWorkDays = weeklyProgressWorkDays == 0

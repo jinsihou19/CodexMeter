@@ -1,3 +1,4 @@
+// 活动状态的数据模型与文件约定；菜单栏和 Hook 使用用户级 Application Support，不依赖 App Group 授权。
 import CoreGraphics
 import Foundation
 
@@ -238,10 +239,11 @@ public struct CodexHookActivityDisplay: Equatable, Sendable {
     }
 }
 
-/// 统一计算 hook 活动状态文件位置，保证 App、设置页和外部脚本使用同一条约定。
+/// 统一计算仅供主应用使用的活动文件位置，保证 Hook 与菜单栏都能访问同一份状态。
 public enum CodexHookActivityLocation {
     public static let fileName = "codex-activity.json"
 
+    /// 返回轻量活动文件；自定义目录用于隔离测试，旧 App Group 参数仅保留调用兼容。
     public static func activityURL(
         appGroupIdentifier: String = UsageSnapshotStore.defaultAppGroupIdentifier,
         fallbackDirectory: URL? = nil
@@ -253,17 +255,17 @@ public enum CodexHookActivityLocation {
         .appendingPathComponent(fileName, isDirectory: false)
     }
 
+    /// 使用应用自身的支持目录；ad-hoc 主进程访问 Group Containers 会被 macOS 拒绝，不能依赖 Hook 父进程的权限。
     public static func activityDirectoryURL(
-        appGroupIdentifier: String = UsageSnapshotStore.defaultAppGroupIdentifier,
+        appGroupIdentifier _: String = UsageSnapshotStore.defaultAppGroupIdentifier,
         fallbackDirectory: URL? = nil
     ) -> URL {
-        if let appGroupURL = AppGroupAccess.containerURL(for: appGroupIdentifier) {
-            return appGroupURL.appendingPathComponent("CodexMeter", isDirectory: true)
-        }
-        return fallbackDirectory ?? externalWritableDirectory(appGroupIdentifier: appGroupIdentifier)
+        let supportDirectory = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
+            ?? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Application Support", isDirectory: true)
+        return fallbackDirectory ?? supportDirectory.appendingPathComponent("CodexMeter", isDirectory: true)
     }
 
-    /// 外部 hook 脚本没有 App Group entitlement 时仍能按同一目录约定写入文件。
+    /// 返回历史版本的外部写入目录，仅供旧安装兼容或排查使用；新 Hook 不应写入此处。
     public static func externalWritableDirectory(appGroupIdentifier: String) -> URL {
         FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent("Library/Group Containers", isDirectory: true)
