@@ -216,8 +216,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// 启动各供应商独立状态源和菜单入口；Go 的开关与刷新失败不阻塞 Codex 启动。
     func applicationDidFinishLaunching(_ notification: Notification) {
         offerLegacyConfigurationMigration()
-        MenuBarDisplaySettings.migrateStandardDefaultsToSharedDefaults()
-        MenuBarDisplaySettings.migrateLegacyDisplayDefaults()
         updater.start()
         NotificationCenter.default.addObserver(
             self,
@@ -246,10 +244,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    /// 已迁移安装先清理旧偏好；新安装才询问，保存失败时保留旧配置并展示错误。
+    /// 启动时只询问是否迁移；只有点击“迁移配置”才允许转换、写入或清理旧偏好。
     private func offerLegacyConfigurationMigration() {
         let migration = CodexMeterConfigurationMigration()
-        migration.cleanupMigratedLegacyConfiguration()
         guard migration.shouldPrompt else { return }
 
         let language = migration.preferredLanguage

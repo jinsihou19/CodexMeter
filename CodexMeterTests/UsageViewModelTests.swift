@@ -1404,28 +1404,105 @@ final class UsageViewModelTests: XCTestCase {
         ))
     }
 
-    func testMenuBarDisplaySettingsMigratesStandardDefaultsToSharedDefaults() {
-        let standardSuiteName = "CodexMeterTests.standard.\(UUID().uuidString)"
-        let sharedSuiteName = "CodexMeterTests.shared.\(UUID().uuidString)"
-        let standardDefaults = UserDefaults(suiteName: standardSuiteName)!
-        let sharedDefaults = UserDefaults(suiteName: sharedSuiteName)!
-        defer {
-            standardDefaults.removePersistentDomain(forName: standardSuiteName)
-            sharedDefaults.removePersistentDomain(forName: sharedSuiteName)
+    /// 普通配置读取不转换旧键、不替换旧默认值，也不写回任何迁移状态。
+    func testSettingsReadsNeverMigrateLegacyPreferences() {
+        let name = "CodexMeterTests.noImplicitMigration.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: name)!
+        defer { defaults.removePersistentDomain(forName: name) }
+        defaults.set("dark", forKey: WidgetDisplayPreferenceKeys.appearanceMode)
+        defaults.set(0.2, forKey: WidgetDisplayPreferenceKeys.cardOpacity)
+        defaults.set(true, forKey: PopoverPreferenceKeys.showsLocalUsage)
+        defaults.set(false, forKey: MenuBarPreferenceKeys.showsPrimaryWindow)
+        defaults.set("paceComparison", forKey: MenuBarPreferenceKeys.contentMode)
+        defaults.set(9.0, forKey: MenuBarPreferenceKeys.numberFontSize)
+        defaults.set(0, forKey: "menuBar.displayDefaultsVersion")
+        let before = defaults.persistentDomain(forName: name)!
+
+        for _ in 0..<3 {
+            let surface = SurfaceAppearanceSettings(defaults: defaults)
+            let popover = PopoverDisplaySettings(defaults: defaults)
+            let menuBar = MenuBarDisplaySettings(defaults: defaults)
+            XCTAssertEqual(surface.appearanceMode, .automatic)
+            XCTAssertEqual(surface.cardOpacity, SurfaceAppearanceSettings.defaultCardOpacity)
+            XCTAssertFalse(popover.showsAnyLocalSection)
+            XCTAssertTrue(menuBar.hiddenWindowDurationMins.isEmpty)
+            XCTAssertEqual(menuBar.contentMode, .paceComparison)
+            XCTAssertEqual(menuBar.numberFontSize, 9)
         }
+        XCTAssertEqual(NSDictionary(dictionary: defaults.persistentDomain(forName: name)!), NSDictionary(dictionary: before))
+    }
 
-        standardDefaults.set(MenuBarLayoutDensity.normal.rawValue, forKey: MenuBarPreferenceKeys.layoutDensity)
-        standardDefaults.set("#00C853", forKey: MenuBarPreferenceKeys.goodColorHex)
-        standardDefaults.set(false, forKey: MenuBarPreferenceKeys.showsSecondaryWindow)
+    /// 点击迁移才转换旧键；保留已有的新键、旧字号和布局中的主动删减，不补入供应商。
+    func testExplicitMigrationConvertsLegacyKeysWithoutReplacingUserChoices() throws {
+        let name = "CodexMeterTests.explicitMigration.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: name)!
+        defer { defaults.removePersistentDomain(forName: name) }
+        let layout = MenuBarLayout(items: [[.openCodeGoIcon], [.openCodeGoPrimary], [.icon]])
+        let layoutData = try JSONEncoder().encode(layout)
+        let migration = CodexMeterConfigurationMigration(
+            currentDefaults: defaults, currentDomainName: name,
+            legacyDomains: [[
+                WidgetDisplayPreferenceKeys.appearanceMode: "dark",
+                WidgetDisplayPreferenceKeys.cardOpacity: 0.2,
+                SurfaceAppearancePreferenceKeys.cardOpacity: 0.7,
+                PopoverPreferenceKeys.showsLocalUsage: true,
+                PopoverPreferenceKeys.showsLocalTrend: false,
+                MenuBarPreferenceKeys.showsPrimaryWindow: false,
+                MenuBarPreferenceKeys.numberFontSize: 9.0,
+                MenuBarPreferenceKeys.layout: layoutData,
+                GeminiModelsPreferenceKeys.model: "gemini-pro"
+            ]]
+        )
+        XCTAssertTrue(migration.shouldPrompt)
+        XCTAssertNil(defaults.object(forKey: SurfaceAppearancePreferenceKeys.appearanceMode))
 
-        MenuBarDisplaySettings.migrateStandardDefaultsToSharedDefaults(
-            standardDefaults: standardDefaults,
-            sharedDefaults: sharedDefaults
+        XCTAssertGreaterThan(try migration.migrate(), 0)
+        XCTAssertEqual(SurfaceAppearanceSettings(defaults: defaults).appearanceMode, .dark)
+        XCTAssertEqual(SurfaceAppearanceSettings(defaults: defaults).cardOpacity, 0.7)
+        let popover = PopoverDisplaySettings(defaults: defaults)
+        XCTAssertTrue(popover.showsLocalOverview)
+        XCTAssertFalse(popover.showsLocalTrend)
+        XCTAssertTrue(popover.showsLocalProjects)
+        XCTAssertEqual(MenuBarDisplaySettings(defaults: defaults).hiddenWindowDurationMins, [300])
+        XCTAssertEqual(MenuBarDisplaySettings(defaults: defaults).numberFontSize, 9)
+        XCTAssertEqual(defaults.string(forKey: GeminiModelsPreferenceKeys.model), GeminiModelOption.geminiModels.rawValue)
+        XCTAssertEqual(MenuBarLayoutStore.load(defaults: defaults), layout)
+        XCTAssertEqual(defaults.data(forKey: MenuBarPreferenceKeys.layout), layoutData)
+    }
+
+    /// 成功迁移后用户的修改和删除优先；重启、重复调用和跳过操作都不能重新导入或清理旧配置。
+    func testConfigurationMigrationRunsOnlyOnceAndPreservesLaterUserChanges() throws {
+        let currentName = "CodexMeterTests.migrationOnce.\(UUID().uuidString)"
+        let legacyName = "CodexMeterTests.migrationOnceSource.\(UUID().uuidString)"
+        let current = UserDefaults(suiteName: currentName)!
+        let legacy = UserDefaults(suiteName: legacyName)!
+        defer {
+            current.removePersistentDomain(forName: currentName)
+            legacy.removePersistentDomain(forName: legacyName)
+        }
+        legacy.set("dark", forKey: SurfaceAppearancePreferenceKeys.appearanceMode)
+        let migration = CodexMeterConfigurationMigration(
+            currentDefaults: current, currentDomainName: currentName, legacyDomainNames: [legacyName]
+        )
+        XCTAssertEqual(try migration.migrate(), 1)
+        current.set("light", forKey: SurfaceAppearancePreferenceKeys.appearanceMode)
+        current.removeObject(forKey: SurfaceAppearancePreferenceKeys.cardOpacity)
+        legacy.set("automatic", forKey: SurfaceAppearancePreferenceKeys.appearanceMode)
+        legacy.set(0.1, forKey: SurfaceAppearancePreferenceKeys.cardOpacity)
+        let nextLaunch = CodexMeterConfigurationMigration(
+            currentDefaults: UserDefaults(suiteName: currentName)!,
+            currentDomainName: currentName, legacyDomainNames: [legacyName]
         )
 
-        XCTAssertEqual(sharedDefaults.string(forKey: MenuBarPreferenceKeys.layoutDensity), MenuBarLayoutDensity.normal.rawValue)
-        XCTAssertEqual(sharedDefaults.string(forKey: MenuBarPreferenceKeys.goodColorHex), "#00C853")
-        XCTAssertFalse(sharedDefaults.bool(forKey: MenuBarPreferenceKeys.showsSecondaryWindow))
+        XCTAssertFalse(nextLaunch.shouldPrompt)
+        XCTAssertEqual(legacy.string(forKey: SurfaceAppearancePreferenceKeys.appearanceMode), "automatic")
+        XCTAssertEqual(try migration.migrate(), 0)
+        XCTAssertEqual(try nextLaunch.migrate(), 0)
+        nextLaunch.skip()
+        XCTAssertEqual(current.string(forKey: "codexMeter.configurationMigrationDecision"), "migrated")
+        XCTAssertEqual(current.string(forKey: SurfaceAppearancePreferenceKeys.appearanceMode), "light")
+        XCTAssertNil(current.object(forKey: SurfaceAppearancePreferenceKeys.cardOpacity))
+        XCTAssertEqual(legacy.double(forKey: SurfaceAppearancePreferenceKeys.cardOpacity), 0.1)
     }
 
     /// 验证旧身份迁移只复制显示和偏好设置，且 App Group 配置覆盖旧 Bundle 同名值。
@@ -1545,36 +1622,11 @@ final class UsageViewModelTests: XCTestCase {
             currentDomainName: currentName, legacyDomainNames: [legacyName]
         )
         XCTAssertFalse(nextLaunch.shouldPrompt)
-        XCTAssertEqual(nextLaunch.cleanupMigratedLegacyConfiguration(), 0)
-    }
-
-    /// 旧版本已标记迁移成功时自动收尾，但未复制到新域的设置仍保留，防止误删。
-    func testConfigurationMigrationFinishesPreviouslyMigratedInstall() {
-        let currentName = "CodexMeterTests.migrationCompleted.\(UUID().uuidString)"
-        let legacyName = "CodexMeterTests.migrationPendingCleanup.\(UUID().uuidString)"
-        let current = UserDefaults(suiteName: currentName)!
-        let legacy = UserDefaults(suiteName: legacyName)!
-        defer {
-            current.removePersistentDomain(forName: currentName)
-            legacy.removePersistentDomain(forName: legacyName)
-        }
-        current.set("migrated", forKey: "codexMeter.configurationMigrationDecision")
-        current.set("dark", forKey: "surface.appearanceMode")
-        legacy.set("automatic", forKey: "surface.appearanceMode")
-        legacy.set(true, forKey: "popover.showsLocalOverview")
-        let migration = CodexMeterConfigurationMigration(
-            currentDefaults: current, currentDomainName: currentName, legacyDomainNames: [legacyName]
-        )
-
-        XCTAssertFalse(migration.shouldPrompt)
-        XCTAssertEqual(migration.cleanupMigratedLegacyConfiguration(), 1)
-        XCTAssertNil(legacy.object(forKey: "surface.appearanceMode"))
-        XCTAssertTrue(legacy.bool(forKey: "popover.showsLocalOverview"))
-        XCTAssertEqual(current.string(forKey: "surface.appearanceMode"), "dark")
+        XCTAssertEqual(try nextLaunch.migrate(), 0)
     }
 
     /// 已自行配置或选择跳过，不代表迁移成功，不能删除旧域中的设置。
-    func testConfigurationMigrationDoesNotCleanSkippedInstall() {
+    func testConfigurationMigrationDoesNotCleanSkippedInstall() throws {
         let currentName = "CodexMeterTests.migrationSkipped.\(UUID().uuidString)"
         let legacyName = "CodexMeterTests.migrationSkippedLegacy.\(UUID().uuidString)"
         let current = UserDefaults(suiteName: currentName)!
@@ -1590,10 +1642,9 @@ final class UsageViewModelTests: XCTestCase {
         )
 
         XCTAssertFalse(migration.shouldPrompt)
-        XCTAssertEqual(migration.cleanupMigratedLegacyConfiguration(), 0)
         migration.skip()
         XCTAssertFalse(migration.shouldPrompt)
-        XCTAssertEqual(migration.cleanupMigratedLegacyConfiguration(), 0)
+        XCTAssertEqual(try migration.migrate(), 0)
         XCTAssertEqual(legacy.string(forKey: "surface.appearanceMode"), "automatic")
     }
 
@@ -1614,68 +1665,7 @@ final class UsageViewModelTests: XCTestCase {
 
         XCTAssertThrowsError(try migration.migrate())
         XCTAssertNil(current.object(forKey: "codexMeter.configurationMigrationDecision"))
-        XCTAssertEqual(migration.cleanupMigratedLegacyConfiguration(), 0)
         XCTAssertEqual(legacy.string(forKey: "surface.appearanceMode"), "dark")
-    }
-
-    func testMenuBarDisplaySettingsMigratesLegacyDefaultsToCurrentDefaults() {
-        let suiteName = "CodexMeterTests.legacy.\(UUID().uuidString)"
-        let defaults = UserDefaults(suiteName: suiteName)!
-        defer {
-            defaults.removePersistentDomain(forName: suiteName)
-        }
-
-        defaults.set(MenuBarContentMode.paceComparison.rawValue, forKey: MenuBarPreferenceKeys.contentMode)
-        defaults.set(MenuBarLayoutDensity.compact.rawValue, forKey: MenuBarPreferenceKeys.layoutDensity)
-        defaults.set(1.0, forKey: MenuBarPreferenceKeys.itemSpacing)
-        defaults.set(-2.0, forKey: MenuBarPreferenceKeys.rowSpacing)
-        defaults.set(9.0, forKey: MenuBarPreferenceKeys.numberFontSize)
-        defaults.set(MenuBarNumberFontWeight.medium.rawValue, forKey: MenuBarPreferenceKeys.numberFontWeight)
-        defaults.set(false, forKey: MenuBarPreferenceKeys.showsMenuBarIcon)
-
-        MenuBarDisplaySettings.migrateLegacyDisplayDefaults(defaults: defaults)
-
-        let settings = MenuBarDisplaySettings(defaults: defaults)
-        XCTAssertEqual(settings.contentMode, .remainingWindows)
-        XCTAssertEqual(settings.layoutDensity, .compact)
-        XCTAssertEqual(settings.itemSpacing, 2)
-        XCTAssertEqual(settings.rowSpacing, -1)
-        XCTAssertEqual(settings.numberFontSize, 10)
-        XCTAssertEqual(settings.numberFontWeight, .medium)
-        XCTAssertFalse(settings.showsMenuBarIcon)
-        XCTAssertTrue(settings.showsHookActivityLight)
-        XCTAssertEqual(settings.hookActivityIndicatorStyle, .automatic)
-        XCTAssertEqual(
-            defaults.integer(forKey: MenuBarPreferenceKeys.displayDefaultsVersion),
-            MenuBarDisplaySettings.currentDisplayDefaultsVersion
-        )
-    }
-
-    /// 验证 v3 只迁移完整预设的字号，不覆盖用户手工调整的 11pt。
-    func testMenuBarDisplaySettingsMigratesVersion3PresetFontWithoutChangingCustomFont() {
-        let presetSuiteName = "CodexMeterTests.v3Preset.\(UUID().uuidString)"
-        let customSuiteName = "CodexMeterTests.v3Custom.\(UUID().uuidString)"
-        let presetDefaults = UserDefaults(suiteName: presetSuiteName)!
-        let customDefaults = UserDefaults(suiteName: customSuiteName)!
-        defer {
-            presetDefaults.removePersistentDomain(forName: presetSuiteName)
-            customDefaults.removePersistentDomain(forName: customSuiteName)
-        }
-        for defaults in [presetDefaults, customDefaults] {
-            defaults.set(3, forKey: MenuBarPreferenceKeys.displayDefaultsVersion)
-            defaults.set(MenuBarLayoutDensity.compact.rawValue, forKey: MenuBarPreferenceKeys.layoutDensity)
-            defaults.set(11.0, forKey: MenuBarPreferenceKeys.numberFontSize)
-            defaults.set(MenuBarNumberFontWeight.medium.rawValue, forKey: MenuBarPreferenceKeys.numberFontWeight)
-            defaults.set(-1.0, forKey: MenuBarPreferenceKeys.rowSpacing)
-        }
-        presetDefaults.set(2.0, forKey: MenuBarPreferenceKeys.itemSpacing)
-        customDefaults.set(4.0, forKey: MenuBarPreferenceKeys.itemSpacing)
-
-        MenuBarDisplaySettings.migrateLegacyDisplayDefaults(defaults: presetDefaults)
-        MenuBarDisplaySettings.migrateLegacyDisplayDefaults(defaults: customDefaults)
-
-        XCTAssertEqual(presetDefaults.double(forKey: MenuBarPreferenceKeys.numberFontSize), 10)
-        XCTAssertEqual(customDefaults.double(forKey: MenuBarPreferenceKeys.numberFontSize), 11)
     }
 
     func testMenuBarDisplaySettingsPostsImmediateChangeNotification() {
@@ -2836,11 +2826,55 @@ final class UsageViewModelTests: XCTestCase {
             [
                 [.icon],
                 [.primary],
-                [.secondary, .paceDelta],
-                [.geminiIcon],
-                [.geminiPaceRemaining, .geminiPaceDelta]
+                [.secondary, .paceDelta]
             ]
         )
+    }
+
+    /// 回归真实删除路径：保存后反复读取、重新创建偏好实例，都保持用户删除与排序后的供应商布局。
+    func testMenuBarLayoutStorePreservesProviderDeletionAcrossReadsAndRelaunch() throws {
+        let name = "CodexMeterTests.layoutDeletion.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: name)!
+        defer { defaults.removePersistentDomain(forName: name) }
+        MenuBarLayoutStore.save(.defaultStacked, defaults: defaults)
+        let edited = MenuBarLayout(items: [
+            [.openCodeGoIcon], [.openCodeGoPrimary, .openCodeGoSecondary],
+            [.icon], [.paceRemaining, .paceDelta]
+        ])
+        MenuBarLayoutStore.save(edited, defaults: defaults)
+        let savedData = try XCTUnwrap(defaults.data(forKey: MenuBarPreferenceKeys.layout))
+
+        for _ in 0..<3 {
+            let relaunchedDefaults = UserDefaults(suiteName: name)!
+            XCTAssertEqual(MenuBarLayoutStore.load(defaults: relaunchedDefaults), edited)
+            XCTAssertEqual(relaunchedDefaults.data(forKey: MenuBarPreferenceKeys.layout), savedData)
+        }
+    }
+
+    /// 已保存但没有版本标记的布局同样属于用户配置，读取时不得当成旧布局补入 Antigravity。
+    func testMenuBarLayoutStorePreservesExistingLayoutWithoutMigrationMarker() throws {
+        let name = "CodexMeterTests.existingLayout.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: name)!
+        defer { defaults.removePersistentDomain(forName: name) }
+        let layout = MenuBarLayout(items: [[.secondary], [.icon], [.geminiPrimary]])
+        defaults.set(try JSONEncoder().encode(layout), forKey: MenuBarPreferenceKeys.layout)
+        let before = defaults.persistentDomain(forName: name)!
+
+        XCTAssertEqual(MenuBarLayoutStore.load(defaults: defaults), layout)
+        XCTAssertEqual(NSDictionary(dictionary: defaults.persistentDomain(forName: name)!), NSDictionary(dictionary: before))
+    }
+
+    /// 新安装仍有默认布局，缺失或损坏的数据不触发迁移写入。
+    func testMenuBarLayoutStoreUsesDefaultsWithoutPersistingMigration() {
+        let name = "CodexMeterTests.layoutDefaults.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: name)!
+        defer { defaults.removePersistentDomain(forName: name) }
+        XCTAssertEqual(MenuBarLayoutStore.load(defaults: defaults), .defaultStacked)
+        XCTAssertNil(defaults.data(forKey: MenuBarPreferenceKeys.layout))
+        let invalid = Data("invalid layout".utf8)
+        defaults.set(invalid, forKey: MenuBarPreferenceKeys.layout)
+        XCTAssertEqual(MenuBarLayoutStore.load(defaults: defaults), .defaultStacked)
+        XCTAssertEqual(defaults.data(forKey: MenuBarPreferenceKeys.layout), invalid)
     }
 
     /// 验证固定窗口项目按真实时长取值，避免接口交换 primary/secondary 后两个项目都显示 7d。

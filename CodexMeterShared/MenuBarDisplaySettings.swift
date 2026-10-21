@@ -3,7 +3,6 @@ import Foundation
 import SwiftUI
 
 public enum MenuBarPreferenceKeys {
-    public static let displayDefaultsVersion = "menuBar.displayDefaultsVersion"
     public static let contentMode = "menuBar.contentMode"
     public static let layoutDensity = "menuBar.layoutDensity"
     public static let itemSpacing = "menuBar.itemSpacing"
@@ -261,7 +260,7 @@ public enum MenuBarLayoutToken: String, CaseIterable, Codable, Equatable, Identi
         self == .stackPlaceholder
     }
 
-    /// 判断项目是否属于 Antigravity，供布局解析决定是否启用旧的尾部兼容渲染。
+    /// 判断项目是否属于 Antigravity，供布局解析按供应商开关筛选项目。
     public var isGeminiToken: Bool {
         switch self {
         case .geminiIcon, .geminiPrimary, .geminiSecondary, .geminiPaceRemaining, .geminiPaceDelta,
@@ -306,7 +305,7 @@ public struct MenuBarLayout: Codable, Equatable, Sendable {
         var normalizedItems: [[MenuBarLayoutToken]] = []
 
         for item in items.prefix(12) {
-            // 空数组是旧版本空容器；迁移成两个显式空槽，才能区分“第一行空、第二行有内容”。
+            // 空容器保留两个显式空槽，才能区分“第一行空、第二行有内容”。
             let isStackContainer = item.isEmpty || item.contains { $0.isStackPlaceholder }
             var stack: [MenuBarLayoutToken] = []
             let sourceTokens: [MenuBarLayoutToken]
@@ -363,11 +362,6 @@ public struct MenuBarLayout: Codable, Equatable, Sendable {
     /// 读取布局中是否包含独立图标项目，供旧的“显示图标”快捷开关复用。
     public var containsIcon: Bool {
         items.flatMap { $0 }.contains(.icon)
-    }
-
-    /// 读取布局中是否包含 Antigravity 项目；旧布局没有该字段时由存储层补入默认项目。
-    public var containsGeminiTokens: Bool {
-        items.flatMap { $0 }.contains(where: \.isGeminiToken)
     }
 
     /// 返回安全副本，避免编辑器的临时数组绕过项目和堆叠约束。
@@ -607,14 +601,6 @@ public struct MenuBarLayout: Codable, Equatable, Sendable {
         return MenuBarLayout(items: updated)
     }
 
-    /// 为旧版只包含 Codex 项目的布局补入 Antigravity 默认项目，迁移后即可继续编辑第二个提供商。
-    public var addingDefaultGeminiItems: MenuBarLayout {
-        guard !containsGeminiTokens else { return self }
-        return MenuBarLayout(items: items + [
-            [.geminiIcon],
-            [.geminiPaceRemaining, .geminiPaceDelta]
-        ])
-    }
 }
 
 /// 菜单栏项目的内置入口；“堆叠”与横向布局都最终落成同一份可编辑模型。
@@ -671,16 +657,16 @@ public enum MenuBarLayoutPreset: String, CaseIterable, Equatable, Hashable, Iden
     }
 }
 
-/// 负责保存和读取菜单栏布局；无历史数据时直接返回默认堆叠，不另设模式开关。
+/// 保存和读取用户布局；读取不执行迁移或补入供应商项目，只有无有效配置时使用默认堆叠。
 public enum MenuBarLayoutStore {
-    /// 从共享 UserDefaults 解码布局，损坏或缺失时回到可编辑的默认堆叠。
+    /// 从共享偏好解码并校验布局，保留用户删除和排序；损坏或缺失时返回默认堆叠，不写回偏好。
     public static func load(defaults: UserDefaults = MenuBarDisplaySettings.sharedDefaults) -> MenuBarLayout {
         guard let data = defaults.data(forKey: MenuBarPreferenceKeys.layout),
               let layout = try? JSONDecoder().decode(MenuBarLayout.self, from: data)
         else {
             return .defaultStacked
         }
-        return layout.normalized.addingDefaultGeminiItems
+        return layout.normalized
     }
 
     /// 把布局写入共享 UserDefaults，并沿用现有菜单栏通知链立即刷新状态栏。
@@ -820,11 +806,10 @@ public struct GeminiModelsSettings: Equatable, Sendable {
         self.showsInMenuBar = showsInMenuBar
     }
 
-    /// 从共享偏好读取并归一化模型组配置；旧版 Pro/Flash 值归入 Gemini Models。
+    /// 只读取当前模型组键；旧版取值转换由用户点击迁移后单独处理。
     public init(defaults: UserDefaults) {
         let storedModel = defaults.string(forKey: GeminiModelsPreferenceKeys.model) ?? ""
-        let model = GeminiModelOption(rawValue: storedModel)
-            ?? (["gemini-pro", "gemini-flash"].contains(storedModel) ? .geminiModels : Self.defaultModel)
+        let model = GeminiModelOption(rawValue: storedModel) ?? Self.defaultModel
         self.init(
             isEnabled: defaults.object(forKey: GeminiModelsPreferenceKeys.isEnabled) as? Bool
                 ?? Self.defaultIsEnabled,
@@ -1533,7 +1518,7 @@ public enum UsageRemainingTone: Equatable, Sendable {
     }
 }
 
-/// 保存所有可见浮层的外观设置；小组件旧 key 会作为兼容回退，随后由设置页归一化到新 key。
+/// 保存所有可见浮层的外观设置；正常读取只使用当前外观键，旧键转换限定在显式迁移中。
 public struct SurfaceAppearanceSettings: Equatable, Sendable {
     public static let defaultAppearanceMode = SurfaceAppearanceMode.automatic
     public static let defaultCardOpacity = 0.5
@@ -1554,12 +1539,11 @@ public struct SurfaceAppearanceSettings: Equatable, Sendable {
         self.glassStyle = glassStyle
     }
 
+    /// 读取当前外观配置，缺失时使用新版默认值，不从旧的小组件键推导用户选择。
     public init(defaults: UserDefaults) {
         let rawAppearance = defaults.string(forKey: SurfaceAppearancePreferenceKeys.appearanceMode)
-            ?? defaults.string(forKey: WidgetDisplayPreferenceKeys.appearanceMode)
             ?? ""
         let opacity = defaults.object(forKey: SurfaceAppearancePreferenceKeys.cardOpacity) as? Double
-            ?? defaults.object(forKey: WidgetDisplayPreferenceKeys.cardOpacity) as? Double
             ?? Self.defaultCardOpacity
         let rawGlassStyle = defaults.string(forKey: SurfaceAppearancePreferenceKeys.glassStyle) ?? ""
         self.init(
@@ -1755,6 +1739,7 @@ public struct PopoverDisplaySettings: Equatable, Sendable {
         self.resetTimeDisplayStyle = resetTimeDisplayStyle
     }
 
+    /// 读取各模块的独立开关；旧总开关不参与普通读取，避免用户删除新键后旧设置重新生效。
     public init(defaults: UserDefaults) {
         self.init(
             showsPaceComparison: defaults.object(forKey: PopoverPreferenceKeys.showsPaceComparison) as? Bool
@@ -1774,13 +1759,10 @@ public struct PopoverDisplaySettings: Equatable, Sendable {
             showsResetCredits: defaults.object(forKey: PopoverPreferenceKeys.showsResetCredits) as? Bool
                 ?? Self.defaultShowsResetCredits,
             showsLocalOverview: defaults.object(forKey: PopoverPreferenceKeys.showsLocalOverview) as? Bool
-                ?? defaults.object(forKey: PopoverPreferenceKeys.showsLocalUsage) as? Bool
                 ?? Self.defaultShowsLocalOverview,
             showsLocalTrend: defaults.object(forKey: PopoverPreferenceKeys.showsLocalTrend) as? Bool
-                ?? defaults.object(forKey: PopoverPreferenceKeys.showsLocalUsage) as? Bool
                 ?? Self.defaultShowsLocalTrend,
             showsLocalProjects: defaults.object(forKey: PopoverPreferenceKeys.showsLocalProjects) as? Bool
-                ?? defaults.object(forKey: PopoverPreferenceKeys.showsLocalUsage) as? Bool
                 ?? Self.defaultShowsLocalProjects,
             resetTimeDisplayStyle: ResetTimeDisplayStyle(
                 rawValue: defaults.string(forKey: PopoverPreferenceKeys.resetTimeDisplayStyle) ?? ""
@@ -1893,8 +1875,8 @@ public enum MenuBarLayoutDensity: String, CaseIterable, Identifiable, Sendable {
     }
 }
 
+/// 菜单栏的当前显示配置；普通读取只校验当前键，不迁移或改写用户已保存的设置。
 public struct MenuBarDisplaySettings: Equatable, Sendable {
-    public static let currentDisplayDefaultsVersion = 4
     public static let defaultContentMode = MenuBarContentMode.remainingWindows
     public static let defaultLayoutDensity = MenuBarLayoutDensity.compact
     public static let defaultItemSpacing = 2.0
@@ -1982,6 +1964,7 @@ public struct MenuBarDisplaySettings: Equatable, Sendable {
             : Swift.max(2, Swift.min(7, weeklyProgressWorkDays))
     }
 
+    /// 读取当前显示键；隐藏窗口列表缺失时采用新版默认值，旧窗口开关只在显式迁移时转换。
     public init(defaults: UserDefaults) {
         self.init(
             contentMode: MenuBarContentMode(
@@ -2009,7 +1992,7 @@ public struct MenuBarDisplaySettings: Equatable, Sendable {
                 ?? Self.defaultShowsPrimaryWindow,
             showsSecondaryWindow: defaults.object(forKey: MenuBarPreferenceKeys.showsSecondaryWindow) as? Bool
                 ?? Self.defaultShowsSecondaryWindow,
-            hiddenWindowDurationMins: Self.storedHiddenWindowDurationMins(defaults: defaults),
+            hiddenWindowDurationMins: Self.storedHiddenWindowDurationMins(defaults: defaults) ?? [],
             showsPercentSymbol: defaults.object(forKey: MenuBarPreferenceKeys.showsPercentSymbol) as? Bool
                 ?? Self.defaultShowsPercentSymbol,
             showsMenuBarIcon: defaults.object(forKey: MenuBarPreferenceKeys.showsMenuBarIcon) as? Bool
@@ -2056,7 +2039,7 @@ public struct MenuBarDisplaySettings: Equatable, Sendable {
         return !hiddenWindowDurationMins.contains(duration)
     }
 
-    /// 读取动态窗口偏好；新键不存在时把旧 5 小时与 7 天开关迁移为对应时长。
+    /// 只读取动态窗口偏好；未配置时返回 nil，不读取旧窗口开关或写入新键。
     public static func storedHiddenWindowDurationMins(defaults: UserDefaults) -> Set<Int>? {
         if let values = defaults.array(forKey: MenuBarPreferenceKeys.hiddenWindowDurationMins) {
             return Set(values.compactMap { ($0 as? NSNumber)?.intValue })
@@ -2102,97 +2085,6 @@ public struct MenuBarDisplaySettings: Equatable, Sendable {
         }
     }
 
-    public static func migrateStandardDefaultsToSharedDefaults(
-        standardDefaults: UserDefaults = .standard,
-        sharedDefaults: UserDefaults = Self.sharedDefaults
-    ) {
-        for key in MenuBarPreferenceKeys.allKeys where sharedDefaults.object(forKey: key) == nil {
-            if let value = standardDefaults.object(forKey: key) {
-                sharedDefaults.set(value, forKey: key)
-            }
-        }
-    }
-
-    /// 将已经写入的旧默认值迁移到当前默认值，避免菜单栏和小组件继续读取旧版默认设置。
-    public static func migrateLegacyDisplayDefaults(defaults: UserDefaults = Self.sharedDefaults) {
-        let storedVersion = defaults.integer(forKey: MenuBarPreferenceKeys.displayDefaultsVersion)
-        guard storedVersion < currentDisplayDefaultsVersion else {
-            return
-        }
-
-        migrateVersion3PresetFontSize(defaults: defaults, storedVersion: storedVersion)
-
-        replaceStoredValue(
-            defaults: defaults,
-            key: MenuBarPreferenceKeys.contentMode,
-            legacyValue: MenuBarContentMode.paceComparison.rawValue,
-            currentValue: defaultContentMode.rawValue
-        )
-        replaceStoredValue(
-            defaults: defaults,
-            key: MenuBarPreferenceKeys.layoutDensity,
-            legacyValue: MenuBarLayoutDensity.compact.rawValue,
-            currentValue: defaultLayoutDensity.rawValue
-        )
-        replaceStoredValue(
-            defaults: defaults,
-            key: MenuBarPreferenceKeys.itemSpacing,
-            legacyValue: 1.0,
-            currentValue: defaultItemSpacing
-        )
-        replaceStoredValue(
-            defaults: defaults,
-            key: MenuBarPreferenceKeys.rowSpacing,
-            legacyValue: -2.0,
-            currentValue: defaultRowSpacing
-        )
-        replaceStoredValue(
-            defaults: defaults,
-            key: MenuBarPreferenceKeys.numberFontSize,
-            legacyValue: 9.0,
-            currentValue: defaultNumberFontSize
-        )
-        replaceStoredValue(
-            defaults: defaults,
-            key: MenuBarPreferenceKeys.numberFontSize,
-            legacyValue: 9.5,
-            currentValue: defaultNumberFontSize
-        )
-        replaceStoredValue(
-            defaults: defaults,
-            key: MenuBarPreferenceKeys.numberFontWeight,
-            legacyValue: MenuBarNumberFontWeight.medium.rawValue,
-            currentValue: defaultNumberFontWeight.rawValue
-        )
-        replaceStoredValue(
-            defaults: defaults,
-            key: MenuBarPreferenceKeys.showsMenuBarIcon,
-            legacyValue: false,
-            currentValue: defaultShowsMenuBarIcon
-        )
-        if defaults.object(forKey: MenuBarPreferenceKeys.weeklyProgressWorkDays) == nil {
-            defaults.set(defaultWeeklyProgressWorkDays, forKey: MenuBarPreferenceKeys.weeklyProgressWorkDays)
-        }
-
-        defaults.set(currentDisplayDefaultsVersion, forKey: MenuBarPreferenceKeys.displayDefaultsVersion)
-        defaults.synchronize()
-    }
-
-    /// 只把 v3 的两档完整预设从 11pt 调整为 10pt，用户手工配置的 11pt 保持不变。
-    private static func migrateVersion3PresetFontSize(defaults: UserDefaults, storedVersion: Int) {
-        guard storedVersion == 3,
-              defaults.string(forKey: MenuBarPreferenceKeys.layoutDensity) == MenuBarLayoutDensity.compact.rawValue,
-              defaults.string(forKey: MenuBarPreferenceKeys.numberFontWeight) == MenuBarNumberFontWeight.medium.rawValue,
-              (defaults.object(forKey: MenuBarPreferenceKeys.numberFontSize) as? NSNumber)?.doubleValue == 11
-        else {
-            return
-        }
-        let itemSpacing = (defaults.object(forKey: MenuBarPreferenceKeys.itemSpacing) as? NSNumber)?.doubleValue
-        let rowSpacing = (defaults.object(forKey: MenuBarPreferenceKeys.rowSpacing) as? NSNumber)?.doubleValue
-        guard (itemSpacing == 1 && rowSpacing == -2) || (itemSpacing == 2 && rowSpacing == -1) else { return }
-        defaults.set(defaultNumberFontSize, forKey: MenuBarPreferenceKeys.numberFontSize)
-    }
-
     public static func notifyDidChange(defaults: UserDefaults = Self.sharedDefaults) {
         defaults.synchronize()
         NotificationCenter.default.post(name: .menuBarDisplaySettingsDidChange, object: defaults)
@@ -2213,44 +2105,7 @@ public struct MenuBarDisplaySettings: Equatable, Sendable {
         Swift.max(min, Swift.min(max, value))
     }
 
-    /// 只替换仍等于旧默认的字符串设置，保留用户主动改过的值。
-    private static func replaceStoredValue(
-        defaults: UserDefaults,
-        key: String,
-        legacyValue: String,
-        currentValue: String
-    ) {
-        let storedValue = defaults.string(forKey: key)
-        if storedValue == nil || storedValue == legacyValue {
-            defaults.set(currentValue, forKey: key)
-        }
-    }
 
-    /// 只替换仍等于旧默认的数值设置，保留用户主动改过的值。
-    private static func replaceStoredValue(
-        defaults: UserDefaults,
-        key: String,
-        legacyValue: Double,
-        currentValue: Double
-    ) {
-        let storedValue = defaults.object(forKey: key) as? Double
-        if storedValue == nil || storedValue == legacyValue {
-            defaults.set(currentValue, forKey: key)
-        }
-    }
-
-    /// 只替换仍等于旧默认的布尔设置，保留用户主动改过的值。
-    private static func replaceStoredValue(
-        defaults: UserDefaults,
-        key: String,
-        legacyValue: Bool,
-        currentValue: Bool
-    ) {
-        let storedValue = defaults.object(forKey: key) as? Bool
-        if storedValue == nil || storedValue == legacyValue {
-            defaults.set(currentValue, forKey: key)
-        }
-    }
 }
 
 public extension Notification.Name {
@@ -2701,7 +2556,7 @@ public extension UsageRemainingTone {
     }
 }
 
-/// 协调旧身份的偏好迁移和收尾；仅在新域保存成功后清理已迁移设置，不触碰运行状态或凭据。
+/// 仅供“迁移配置”按钮调用的一次性迁移器；保留当前配置，保存成功后才清理来源，不触碰凭据。
 public struct CodexMeterConfigurationMigration {
     public static let legacyAppGroupIdentifier = "group.com.jinsihou.CodexUsage"
     public static let legacyBundleIdentifier = "com.jinsihou.CodexUsage"
@@ -2736,7 +2591,7 @@ public struct CodexMeterConfigurationMigration {
         currentDefaults: UserDefaults = MenuBarDisplaySettings.sharedDefaults,
         currentDomainName: String = UsageSnapshotStore.defaultAppGroupIdentifier,
         legacyDomains: [[String: Any]]? = nil,
-        legacyDomainNames: [String] = [legacyBundleIdentifier, legacyAppGroupIdentifier]
+        legacyDomainNames: [String] = [legacyBundleIdentifier, legacyAppGroupIdentifier, "com.jinsihou.CodexMeter"]
     ) {
         self.currentDefaults = currentDefaults
         self.currentDomainName = currentDomainName
@@ -2757,13 +2612,14 @@ public struct CodexMeterConfigurationMigration {
         legacyConfiguration.count
     }
 
-    /// 保留当前设置并补齐旧偏好；落盘并读回验证后才记录成功和清理旧键，保存失败时保留旧配置并抛错。
+    /// 用户点击迁移后仅执行一次；只补齐当前缺失的设置，成功后拒绝再次迁移，落盘失败保留来源并抛错。
     @discardableResult
     public func migrate() throws -> Int {
+        guard decision == nil else { return 0 }
         let existingConfiguration = currentConfiguration
         var expectedConfiguration = existingConfiguration
         var copiedCount = 0
-        for (key, value) in legacyConfiguration where existingConfiguration[key] == nil {
+        for (key, value) in convertedLegacyConfiguration() where existingConfiguration[key] == nil {
             currentDefaults.set(value, forKey: key)
             expectedConfiguration[key] = value
             copiedCount += 1
@@ -2779,9 +2635,9 @@ public struct CodexMeterConfigurationMigration {
         return copiedCount
     }
 
-    /// 收尾已成功迁移的旧安装；只删除新域中已有对应设置的旧键，未复制的键和运行状态继续保留。
+    /// 只在本次显式迁移成功后清理来源；保持私有，禁止启动或普通配置读取触发清理。
     @discardableResult
-    public func cleanupMigratedLegacyConfiguration() -> Int {
+    private func cleanupMigratedLegacyConfiguration() -> Int {
         guard decision == Self.migratedDecision, currentDefaults.synchronize() else { return 0 }
         let savedConfiguration = currentConfiguration
         var removedCount = 0
@@ -2817,6 +2673,7 @@ public struct CodexMeterConfigurationMigration {
 
     /// 记录用户暂不迁移，避免每次启动重复打扰；旧数据仍保留在原持久化域中。
     public func skip() {
+        guard decision == nil else { return }
         currentDefaults.set(Self.skippedDecision, forKey: Self.decisionKey)
         currentDefaults.synchronize()
     }
@@ -2841,6 +2698,34 @@ public struct CodexMeterConfigurationMigration {
                 result[key] = value
             }
         }
+    }
+
+    /// 仅在点击迁移时把旧键转换为当前键；保留来源中的新键与完整布局，不凭默认值猜测用户意图。
+    private func convertedLegacyConfiguration() -> [String: Any] {
+        var configuration = legacyConfiguration
+        let renamedKeys = [
+            (WidgetDisplayPreferenceKeys.appearanceMode, SurfaceAppearancePreferenceKeys.appearanceMode),
+            (WidgetDisplayPreferenceKeys.cardOpacity, SurfaceAppearancePreferenceKeys.cardOpacity),
+            (PopoverPreferenceKeys.showsLocalUsage, PopoverPreferenceKeys.showsLocalOverview),
+            (PopoverPreferenceKeys.showsLocalUsage, PopoverPreferenceKeys.showsLocalTrend),
+            (PopoverPreferenceKeys.showsLocalUsage, PopoverPreferenceKeys.showsLocalProjects)
+        ]
+        for (oldKey, newKey) in renamedKeys where configuration[newKey] == nil {
+            configuration[newKey] = configuration[oldKey]
+        }
+        if configuration[MenuBarPreferenceKeys.hiddenWindowDurationMins] == nil,
+           configuration[MenuBarPreferenceKeys.showsPrimaryWindow] != nil
+                || configuration[MenuBarPreferenceKeys.showsSecondaryWindow] != nil {
+            var hidden: [Int] = []
+            if configuration[MenuBarPreferenceKeys.showsPrimaryWindow] as? Bool == false { hidden.append(300) }
+            if configuration[MenuBarPreferenceKeys.showsSecondaryWindow] as? Bool == false { hidden.append(10_080) }
+            configuration[MenuBarPreferenceKeys.hiddenWindowDurationMins] = hidden
+        }
+        if let model = configuration[GeminiModelsPreferenceKeys.model] as? String,
+           ["gemini-pro", "gemini-flash"].contains(model) {
+            configuration[GeminiModelsPreferenceKeys.model] = GeminiModelOption.geminiModels.rawValue
+        }
+        return configuration
     }
 
     /// 读取旧 Bundle 和旧 App Group 的持久化域，不触碰标准全局偏好或运行时文件。
