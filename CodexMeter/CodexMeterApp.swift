@@ -1044,20 +1044,9 @@ private struct CodexActivityGlyph: View {
         }
     }
 
-    /// 活动符号颜色始终跟随 hook 状态，和状态灯语义保持一致。
+    /// 工作使用绿色动效，完成使用静止绿勾；等待和失败分别保留橙色与红色。
     private var glyphColor: Color {
-        switch display.state {
-        case .idle:
-            return .secondary
-        case .thinking, .compacting:
-            return .yellow
-        case .running:
-            return .green
-        case .waitingApproval, .failed:
-            return .red
-        case .succeeded, .completed:
-            return .green
-        }
+        display.state.indicatorColorHex.map { Color(hexRGB: $0) } ?? .secondary
     }
 
     /// 活跃会话越多，状态符号的系统动效越快；封顶避免菜单栏小图标显得刺眼。
@@ -1121,7 +1110,7 @@ private struct VariableColorSymbolGlyph: View {
     }
 }
 
-/// 完成态使用系统勾选符号，短暂显示后由状态 TTL 隐藏。
+/// 完成态使用静止的绿色勾选符号，三秒后隐藏；结束后不再播放持续工作式动画。
 private struct CompletionCheckGlyph: View {
     let size: CGFloat
     let reduceMotion: Bool
@@ -1132,13 +1121,12 @@ private struct CompletionCheckGlyph: View {
             .shadow(color: Color.green.opacity(0.24), radius: 1.5, y: 0)
     }
 
-    /// 使用系统持续弹跳动效表达任务完成，并遵循减少动态效果偏好。
+    /// 完成只作短暂确认，不播放循环弹跳，以免被误读为任务还在运行。
     @ViewBuilder private var symbol: some View {
         Image(systemName: "checkmark.circle.fill")
             .font(.system(size: size * 0.96, weight: .heavy, design: .rounded))
             .symbolRenderingMode(.monochrome)
-            .foregroundStyle(Color.green)
-            .symbolEffect(.bounce, options: .speed(1.25), isActive: !reduceMotion)
+            .foregroundStyle(Color(hexRGB: CodexHookActivityState.completed.indicatorColorHex ?? "#30D158"))
     }
 }
 

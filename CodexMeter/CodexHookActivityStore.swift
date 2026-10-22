@@ -3,7 +3,7 @@ import Combine
 import CodexMeterShared
 import Foundation
 
-/// 轮询新旧 Codex Hook 文件并按会话合并；状态仅供菜单栏展示，不反向控制 Codex 执行。
+/// 汇总持久主会话的活动；日志生命周期兜底结束清理，不把临时任务或子代理当成独立聊天。
 @MainActor
 final class CodexHookActivityStore: ObservableObject {
     @Published private(set) var snapshots: [CodexHookActivitySnapshot] = []
@@ -53,7 +53,7 @@ final class CodexHookActivityStore: ObservableObject {
         timer = nil
     }
 
-    /// 合并新旧目录的最新会话状态后再处理过期；短暂完成态到期不能使旧运行态重新出现。
+    /// 合并后核对会话身份和回合结束，再处理过期；即使结束 Hook 未执行，已完成回合也不能继续动画。
     func refresh(now: Date = Date()) {
         var latestBySession: [String: CodexHookActivitySnapshot] = [:]
         for url in [activityURL, legacyActivityURL].compactMap({ $0 }) {
@@ -72,12 +72,32 @@ final class CodexHookActivityStore: ObservableObject {
                 lastLoadedData.removeValue(forKey: url)
             }
             for snapshot in loadedSnapshots[url] ?? [] {
+                // 旧脚本没有身份信息，不能凭较新的时间戳遮住可核对的主会话记录。
+                guard snapshot.transcriptPath?.isEmpty == false else { continue }
                 let key = snapshot.sessionID ?? url.path
                 if let existing = latestBySession[key], existing.updatedAt >= snapshot.updatedAt { continue }
                 latestBySession[key] = snapshot
             }
         }
-        applySnapshots(latestBySession.values.filter { $0.isFresh(now: now) && $0.state != .idle })
+        let visible = latestBySession.values.compactMap { snapshot -> CodexHookActivitySnapshot? in
+            guard snapshot.isFresh(now: now), let path = snapshot.transcriptPath,
+                  let sessionID = snapshot.sessionID,
+                  CodexActivityTranscript.isPersistentRoot(path: path, sessionID: sessionID) else { return nil }
+            let ending = CodexActivityTranscript.ending(for: snapshot)
+            let questions = CodexActivityTranscript.unansweredQuestions(snapshot.pendingQuestionIDs ?? [], path: path)
+            let waits = !questions.isEmpty || snapshot.approvalToolName != nil
+            let state = ending?.state == .idle ? .idle : waits ? .waitingApproval : ending?.state
+                ?? (snapshot.pendingQuestionIDs?.isEmpty == false ? .thinking : snapshot.state)
+            return CodexHookActivitySnapshot(
+                state: state, sessionID: sessionID, turnID: snapshot.turnID,
+                eventName: state == .idle ? "Interrupt" : (state == .completed ? "Stop" : snapshot.eventName),
+                toolName: state == .completed || state == .idle ? nil : snapshot.toolName,
+                message: nil, updatedAt: waits ? snapshot.updatedAt : ending?.date ?? snapshot.updatedAt,
+                transcriptPath: path, pendingQuestionIDs: questions.isEmpty ? nil : questions,
+                approvalToolID: snapshot.approvalToolID, approvalToolName: snapshot.approvalToolName
+            )
+        }
+        applySnapshots(visible.filter { $0.isFresh(now: now) && $0.state != .idle })
     }
 
     /// 只有真实变化时才发布，避免菜单栏宽度和弹窗内容被轮询频率反复刷新。

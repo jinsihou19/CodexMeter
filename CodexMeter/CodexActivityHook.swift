@@ -9,39 +9,44 @@ enum CodexActivityHook {
     static let argument = "--codexmeter-activity-hook"
     static let events = [
         "SessionStart", "UserPromptSubmit", "PreToolUse", "PermissionRequest", "PostToolUse",
-        "PreCompact", "PostCompact", "SubagentStart", "SubagentStop", "Stop"
+        "PreCompact", "PostCompact", "Stop", "Interrupt", "SessionEnd"
     ]
 
     /// 消费 stdin 的单个事件；异常保持静默，不能因状态指示失败阻塞 Codex。
     static func run() {
         guard let payload = try? JSONSerialization.jsonObject(with: FileHandle.standardInput.readDataToEndOfFile())
             as? [String: Any] else { return }
-        try? record(payload: payload, at: CodexHookActivityLocation.activityURL())
+        let override = ProcessInfo.processInfo.environment["CODEX_USAGE_ACTIVITY_FILE"]
+        let url = override.map { URL(fileURLWithPath: $0) } ?? CodexHookActivityLocation.activityURL()
+        try? record(payload: payload, at: url)
         if ["Stop", "SubagentStop"].contains(payload["hook_event_name"] as? String ?? "") {
             print("{\"continue\":true}")
         }
     }
 
-    /// 原子更新单个会话，按 TTL 清理旧状态；并发调用使用短时文件锁防止覆盖其他会话。
+    /// 只跟踪持久主会话的当前回合；结束记录保留一天以拒绝迟到事件，所有入口共用同一文件锁。
     static func record(payload: [String: Any], at url: URL, now: Date = Date()) throws {
-        guard let event = payload["hook_event_name"] as? String, events.contains(event) else { return }
-        let sessionID = payload["session_id"] as? String
-        let state: CodexHookActivityState
+        guard let event = payload["hook_event_name"] as? String, events.contains(event),
+              event != "SessionStart",
+              let sessionID = payload["session_id"] as? String, !sessionID.isEmpty,
+              let path = payload["transcript_path"] as? String,
+              CodexActivityTranscript.isPersistentRoot(path: path, sessionID: sessionID)
+        else { return }
+        let turnID = payload["turn_id"] as? String
+        guard event == "SessionEnd" || (turnID?.isEmpty == false) else { return }
+        let toolName = payload["tool_name"] as? String
+        let toolID = payload["tool_use_id"] as? String
+        let questionTool = ["request_user_input", "request_user_input_async"].contains(toolName?.components(separatedBy: ".").last ?? "")
+        var state: CodexHookActivityState
         switch event {
-        case "SessionStart": state = .idle
-        case "UserPromptSubmit", "PreToolUse", "SubagentStart": state = .running
+        case "UserPromptSubmit", "PreToolUse": state = .running
         case "PermissionRequest": state = .waitingApproval
         case "PostToolUse": state = responseFailed(payload["tool_response"]) ? .failed : .thinking
         case "PreCompact", "PostCompact": state = .compacting
-        case "SubagentStop": state = .succeeded
         case "Stop": state = .completed
+        case "Interrupt", "SessionEnd": state = .idle
         default: return
         }
-        let snapshot = CodexHookActivitySnapshot(
-            state: state, sessionID: sessionID, turnID: payload["turn_id"] as? String,
-            eventName: event, toolName: payload["tool_name"] as? String,
-            message: nil, updatedAt: now.timeIntervalSince1970
-        )
         try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
         let descriptor = open(url.appendingPathExtension("lock").path, O_CREAT | O_RDWR, S_IRUSR | S_IWUSR)
         guard descriptor >= 0 else { throw POSIXError(.EIO) }
@@ -56,15 +61,77 @@ enum CodexActivityHook {
 
         let data = try? Data(contentsOf: url)
         let decoder = JSONDecoder()
-        var sessions = data.flatMap { try? decoder.decode(CodexHookActivityDocument.self, from: $0).sessions } ?? [:]
-        if sessions.isEmpty, let data, let previous = try? decoder.decode(CodexHookActivitySnapshot.self, from: data) {
-            sessions[previous.sessionID ?? "global"] = previous
+        var previousSnapshots = data.flatMap { try? decoder.decode(CodexHookActivityDocument.self, from: $0).sessions.values.map { $0 } } ?? []
+        if previousSnapshots.isEmpty, let data, let previous = try? decoder.decode(CodexHookActivitySnapshot.self, from: data) {
+            previousSnapshots = [previous]
         }
-        sessions = sessions.filter { _, previous in
-            previous.isFresh(now: now) && previous.state != .idle && previous.sessionID != sessionID
+        var sessions: [String: CodexHookActivitySnapshot] = [:]
+        for snapshot in previousSnapshots where now.timeIntervalSince1970 - snapshot.updatedAt < 86_400 {
+            guard let key = snapshot.sessionID else { continue }
+            if let existing = sessions[key], existing.updatedAt >= snapshot.updatedAt { continue }
+            sessions[key] = snapshot
         }
-        if state != .idle { sessions[sessionID ?? "global"] = snapshot }
+        let previous = sessions[sessionID]
+        let sameTurn = previous?.turnID == turnID
+        let wasEnded = previous.map { ["Stop", "Interrupt", "SessionEnd"].contains($0.eventName) } ?? false
+        if event != "SessionEnd" {
+            // 异步提问可在本轮输出结束后继续等待，此时真实中断仍必须清除等待。
+            if sameTurn && wasEnded && event != "Interrupt" { return }
+            if event == "UserPromptSubmit" {
+                // 全局 Hook 与项目桥接可能重复投递，不能把正在运行的同回合重新初始化。
+                if sameTurn { return }
+            } else if event != "Stop" && event != "Interrupt" {
+                guard sameTurn, previous != nil else { return }
+            } else if previous != nil && !sameTurn {
+                return
+            }
+        }
+        var questions = sameTurn ? CodexActivityTranscript.unansweredQuestions(previous?.pendingQuestionIDs ?? [], path: path) : []
+        var approvalID = sameTurn ? previous?.approvalToolID : nil
+        var approvalName = sameTurn ? previous?.approvalToolName : nil
+        if event == "PermissionRequest" {
+            approvalID = toolID
+            approvalName = toolName
+        }
+        if event == "PreToolUse", questionTool, let toolID {
+            let count = (payload["tool_input"] as? [String: Any])?["questions"] as? [Any]
+            questions += (0..<(count?.count ?? 1)).map { "\(toolID):\($0)" }
+        }
+        if event == "PostToolUse" {
+            if questionTool, let toolID,
+               !(toolName?.hasSuffix("request_user_input_async") == true && acceptedQuestion(payload["tool_response"])) {
+                questions.removeAll { $0.hasPrefix(toolID + ":") }
+            }
+            // 并行工具的结果不能关闭另一个待审批工具；缺少调用编号的旧事件按工具名配对。
+            if approvalName != nil, toolName == approvalName, approvalID == nil || approvalID == toolID {
+                approvalID = nil
+                approvalName = nil
+            }
+        }
+        if ["Interrupt", "SessionEnd"].contains(event) {
+            questions = []
+            approvalID = nil
+            approvalName = nil
+        } else if !questions.isEmpty || approvalName != nil {
+            state = .waitingApproval
+        }
+        sessions[sessionID] = CodexHookActivitySnapshot(
+            state: event == "Stop" && previous == nil ? .idle : state,
+            sessionID: sessionID, turnID: event == "SessionEnd" ? previous?.turnID : turnID,
+            eventName: event, toolName: payload["tool_name"] as? String,
+            message: nil, updatedAt: now.timeIntervalSince1970, transcriptPath: path,
+            pendingQuestionIDs: questions.isEmpty ? nil : Array(Set(questions)).sorted(),
+            approvalToolID: approvalID, approvalToolName: approvalName
+        )
         try JSONEncoder().encode(CodexHookActivityDocument(sessions: sessions)).write(to: url, options: .atomic)
+    }
+
+    /// 异步提问的 accepted 只表示界面已接收，不能作为用户已经回答；兼容工具返回 JSON 文本。
+    private static func acceptedQuestion(_ response: Any?) -> Bool {
+        if let response = response as? [String: Any] { return response["accepted"] as? Bool == true }
+        guard let text = response as? String, let data = text.data(using: .utf8),
+              let response = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return false }
+        return response["accepted"] as? Bool == true
     }
 
     /// 只检查结构化失败字段，不把工具输出中的普通错误文案误判为回合失败。
@@ -77,6 +144,76 @@ enum CodexActivityHook {
         if let error = response["error"], !(error is NSNull),
            error as? Bool != false, error as? String != "" { return true }
         return responseFailed(response["result"] ?? response["response"])
+    }
+}
+
+/// 只读取日志头的会话身份和尾部生命周期元数据；临时会话和子代理不参与菜单栏汇总，不保存会话正文。
+enum CodexActivityTranscript {
+    /// 只解析尾部用户回复的结构化问题编号；部分回答只清除对应选项组，不保留问题或答案文本。
+    static func unansweredQuestions(_ ids: [String], path: String) -> [String] {
+        guard !ids.isEmpty, let handle = FileHandle(forReadingAtPath: path) else { return ids }
+        defer { try? handle.close() }
+        guard let size = try? handle.seekToEnd(),
+              (try? handle.seek(toOffset: size > 65_536 ? size - 65_536 : 0)) != nil,
+              let data = try? handle.read(upToCount: 65_536) else { return ids }
+        var answered = Set<String>()
+        for line in data.split(separator: 0x0A) {
+            guard let object = try? JSONSerialization.jsonObject(with: Data(line)) as? [String: Any],
+                  object["type"] as? String == "response_item",
+                  let payload = object["payload"] as? [String: Any], payload["role"] as? String == "user",
+                  let content = payload["content"] as? [[String: Any]] else { continue }
+            for part in content {
+                guard let text = part["text"] as? String, text.hasPrefix("<send_user_message_question_reply>"),
+                      let body = text.components(separatedBy: ">").dropFirst().joined(separator: ">").components(separatedBy: "</send_user_message_question_reply>").first,
+                      let bytes = body.data(using: .utf8),
+                      let replies = try? JSONSerialization.jsonObject(with: bytes) as? [[String: Any]] else { continue }
+                for reply in replies {
+                    guard let key = (reply["questionItemId"] as? String)?.data(using: .utf8),
+                          let parts = try? JSONSerialization.jsonObject(with: key) as? [Any], parts.count == 3,
+                          let callID = parts[1] as? String, let index = parts[2] as? Int else { continue }
+                    answered.insert("\(callID):\(index)")
+                }
+            }
+        }
+        return ids.filter { !answered.contains($0) }
+    }
+
+    /// 持久主会话必须有可读取且身份匹配的日志；缺失日志的 ephemeral 请求直接忽略。
+    static func isPersistentRoot(path: String, sessionID: String) -> Bool {
+        guard path.hasPrefix("/"), let handle = FileHandle(forReadingAtPath: path) else { return false }
+        defer { try? handle.close() }
+        guard let data = try? handle.read(upToCount: 65_536),
+              let firstLine = data.split(separator: 0x0A).first,
+              let object = try? JSONSerialization.jsonObject(with: Data(firstLine)) as? [String: Any],
+              object["type"] as? String == "session_meta",
+              let metadata = object["payload"] as? [String: Any],
+              metadata["id"] as? String == sessionID,
+              metadata["source"] is String
+        else { return false }
+        return true
+    }
+
+    /// 尾部出现当前回合完成或中断时立即纠正状态；未知日志结构返回 nil，继续使用 Hook 和超时兜底。
+    static func ending(for snapshot: CodexHookActivitySnapshot) -> (state: CodexHookActivityState, date: TimeInterval)? {
+        guard let path = snapshot.transcriptPath, let turnID = snapshot.turnID,
+              let handle = FileHandle(forReadingAtPath: path) else { return nil }
+        defer { try? handle.close() }
+        guard let size = try? handle.seekToEnd(),
+              (try? handle.seek(toOffset: size > 65_536 ? size - 65_536 : 0)) != nil,
+              let data = try? handle.read(upToCount: 65_536) else { return nil }
+        for line in data.split(separator: 0x0A).reversed() {
+            guard let object = try? JSONSerialization.jsonObject(with: Data(line)) as? [String: Any],
+                  object["type"] as? String == "event_msg",
+                  let payload = object["payload"] as? [String: Any],
+                  payload["turn_id"] as? String == turnID,
+                  let type = payload["type"] as? String,
+                  ["task_complete", "turn_aborted"].contains(type) else { continue }
+            let formatter = ISO8601DateFormatter()
+            formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+            let date = (object["timestamp"] as? String).flatMap(formatter.date(from:))?.timeIntervalSince1970
+            return (type == "turn_aborted" ? .idle : .completed, date ?? snapshot.updatedAt)
+        }
+        return nil
     }
 }
 

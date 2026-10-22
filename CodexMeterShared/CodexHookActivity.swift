@@ -55,17 +55,28 @@ public enum CodexHookActivityState: String, Codable, Equatable, Sendable, CaseIt
         }
     }
 
-    /// 不同状态使用不同保鲜期：完成类状态短暂闪一下，运行类状态用更长 TTL 兜底异常中断。
+    /// 完成只显示三秒；运行状态的 TTL 仅兜底异常退出，正常结束优先由回合事件清理。
     public var expirationInterval: TimeInterval {
         switch self {
         case .idle:
             return 3
         case .succeeded, .completed:
-            return 5
+            return 3
         case .failed:
             return 18
         case .thinking, .running, .waitingApproval, .compacting:
             return 60
+        }
+    }
+
+    /// 活动颜色独立于额度配色：工作绿、待确认橙、失败红；完成用静止绿勾区分工作动效。
+    public var indicatorColorHex: String? {
+        switch self {
+        case .idle: return nil
+        case .thinking, .running, .compacting: return "#30D158"
+        case .waitingApproval: return "#FF9F0A"
+        case .failed: return "#FF453A"
+        case .succeeded, .completed: return "#30D158"
         }
     }
 }
@@ -82,7 +93,12 @@ public struct CodexHookActivitySnapshot: Codable, Equatable, Sendable {
     public let toolName: String?
     public let message: String?
     public let updatedAt: TimeInterval
+    public let transcriptPath: String?
+    public let pendingQuestionIDs: [String]?
+    public let approvalToolID: String?
+    public let approvalToolName: String?
 
+    /// 等待只保存问题编号和审批工具身份，不保存问题正文；新增字段可缺省以兼容旧快照。
     public init(
         schemaVersion: Int = Self.currentSchemaVersion,
         state: CodexHookActivityState,
@@ -91,7 +107,11 @@ public struct CodexHookActivitySnapshot: Codable, Equatable, Sendable {
         eventName: String,
         toolName: String?,
         message: String?,
-        updatedAt: TimeInterval
+        updatedAt: TimeInterval,
+        transcriptPath: String? = nil,
+        pendingQuestionIDs: [String]? = nil,
+        approvalToolID: String? = nil,
+        approvalToolName: String? = nil
     ) {
         self.schemaVersion = schemaVersion
         self.state = state
@@ -101,15 +121,20 @@ public struct CodexHookActivitySnapshot: Codable, Equatable, Sendable {
         self.toolName = toolName
         self.message = message
         self.updatedAt = updatedAt
+        self.transcriptPath = transcriptPath
+        self.pendingQuestionIDs = pendingQuestionIDs
+        self.approvalToolID = approvalToolID
+        self.approvalToolName = approvalToolName
     }
 
     public var updatedAtDate: Date {
         Date(timeIntervalSince1970: updatedAt)
     }
 
-    /// 判断快照是否仍可展示；状态文件过期后 UI 自动回到空闲，避免中断后的假运行状态。
+    /// 明确等待用户的状态可保留一天；其他状态沿用短超时，不能把无人回复误判为工作已结束。
     public func isFresh(now: Date = Date()) -> Bool {
-        now.timeIntervalSince1970 - updatedAt <= state.expirationInterval
+        let awaitsInput = state == .waitingApproval && (pendingQuestionIDs?.isEmpty == false || approvalToolName != nil)
+        return now.timeIntervalSince1970 - updatedAt <= (awaitsInput ? 86_400 : state.expirationInterval)
     }
 }
 

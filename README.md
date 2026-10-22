@@ -198,13 +198,22 @@ bash script/package_release.sh
 
 在“设置 → 菜单栏”选择非“无”的活动样式，再点击“活动钩子”右侧的“安装”。应用把原生入口合并到 `CODEX_HOME/hooks.json`（默认 `~/.codex/hooks.json`），保留其他 Hook，并在首次改写前备份到同目录的 `hooks.json.codexmeter-backup`。检测全部活动事件完整配置后，按钮自动替换成“已安装”；移动 App 或条目缺失时会重新显示安装按钮。选择“无”隐藏活动图标与安装行，保留已安装的 Hook。
 
-配置后需要在 Codex 的 `/hooks → 来自配置 → 用户配置` 中审核并信任活动 Hook，再开始新回合。需要的 10 项是 `SessionStart`、`UserPromptSubmit`、`PreToolUse`、`PermissionRequest`、`PostToolUse`、`PreCompact`、`PostCompact`、`SubagentStart`、`SubagentStop` 和 `Stop`；它们的命令均包含 `--codexmeter-activity-hook`，状态说明统一为“CodexMeter 活动指示 · 事件名”。“已安装”只表示配置完整，不表示已获 Codex 信任。应用不修改 Codex 的信任设置。
+配置后需要在 Codex 的 `/hooks → 来自配置 → 用户配置` 中审核并信任活动 Hook，再开始新回合。需要的 10 项是 `SessionStart`、`UserPromptSubmit`、`PreToolUse`、`PermissionRequest`、`PostToolUse`、`PreCompact`、`PostCompact`、`Stop`、`Interrupt` 和 `SessionEnd`；它们的命令均包含 `--codexmeter-activity-hook`，状态说明统一为“CodexMeter 活动指示 · 事件名”。“已安装”只表示配置完整，不表示已获 Codex 信任。应用不修改 Codex 的信任设置。
 
 为兼容更名前的安装，应用在系统允许访问时也读取旧版 App Group 目录的活动文件，按会话取新旧文件中最新事件，避免同一回合重复显示。旧目录被系统拒绝时，使用内置全局 Hook 写入新的用户支持目录即可恢复活动显示。
 
-仓库仍保留可选的项目级桥接，已使用全局入口的项目无需重复配置：
+仓库保留可选的项目级桥接，它只转交已安装的原生处理器，所有入口共用同一把写入锁；不再由 Python 独立写状态。已使用全局入口的项目无需重复配置：
 
 - `.codex/hooks.json`
 - `.codex/hooks/codex_activity.py`
 
 活动状态写入 `~/Library/Application Support/CodexMeter/codex-activity.json`，应用聚合显示当前 Codex 会话状态。这份文件只供菜单栏使用，采用主应用自己的用户目录，避免 ad-hoc 主进程因没有 App Group 授权而无法读取 Hook 写入的状态。现有原生 Hook 的命令保持不变，升级 App 即可使用新目录。它是本地会话活动指示，不是 OpenAI 账单或计费接口。
+
+### 活动状态与颜色
+
+- 持久主会话的当前回合才参与汇总；缺少可核对日志身份的临时请求和子代理事件不会单独点亮菜单栏。
+- 运行、思考和整理上下文统一为绿色；等待审批或提问回复为橙色；工具失败为红色；完成只显示静止的绿色勾选，3 秒后隐藏。空闲不显示。
+- 同步与异步提问均跟踪到对应回复，异步工具返回 `accepted` 或并行工具结束不会提前清除橙色；明确等待用户时不套用运行中的 60 秒异常超时。活动文件只保存问题编号和审批工具身份，不保存问题及答案正文。
+- 只有提交新回合才能启动活动；同回合重复提交不会重置状态。`Stop` 后保留结束记录以拒绝迟到事件，旧回合的事件也不能覆盖新回合。
+- `Interrupt` 和 `SessionEnd` 立即清理显示。轮询同时核对当前回合的日志尾部生命周期标记，结束 Hook 未执行时也能收起已完成或中断的回合；只读取有限大小的日志头尾，不保存正文副本。未知日志结构仍由 Hook 和 60 秒异常兜底处理。
+- 从旧安装升级后，可在“活动钩子”行安装补全 `Interrupt` 与 `SessionEnd`，并在 Codex `/hooks → 用户配置` 中信任这两项；原有相同命令的信任由 Codex 保留管理。
