@@ -21,6 +21,16 @@ enum LocalCodexPricing {
     static func price(for model: String, on day: String? = nil) -> Price? {
         let normalized = LocalCodexPricingCatalog.key(model)
         let usesReducedGPT56Price = (day ?? "9999-12-31") >= "2026-07-30"
+        // 官方模型页核对于 2026-10-23；服务档位倍率在请求计价层叠加。
+        if normalized == "gpt-6.1-sol" {
+            return price(input: 2, cachedInput: 0.1, output: 10, longContextMultiplier: (2, 2, 1.5))
+        }
+        if normalized == "gpt-6-sol" {
+            return price(input: 2, cachedInput: 0.2, output: 10, longContextMultiplier: (2, 2, 1.5))
+        }
+        if normalized == "gpt-6-luna" {
+            return price(input: 0.1, cachedInput: 0.01, output: 0.5, longContextMultiplier: (2, 2, 1.5))
+        }
         if normalized == "gpt-6-astra" {
             return price(input: 10, cachedInput: 1, output: 50, longContextMultiplier: (2, 2, 1.5))
         }

@@ -2,6 +2,7 @@
 
 import CodexMeterShared
 import Foundation
+import libzstd
 
 /// 把应用运行诊断写入统一文本文件，供设置页直接打开排查；日志不记录会话正文。
 final class AppDiagnosticLog: @unchecked Sendable {
@@ -350,18 +351,22 @@ struct LocalCodexUsageReader: Sendable {
         calendar: Calendar
     ) -> LocalUsageAggregation {
         let dayFormatter = Self.dayFormatter(calendar: calendar)
+        let fractionalTimestampFormatter = ISO8601DateFormatter()
+        fractionalTimestampFormatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        let timestampFormatter = ISO8601DateFormatter()
         let historyDay = dayFormatter.string(from: historyStart)
         let sevenDay = dayFormatter.string(from: sevenDayStart)
         let today = dayFormatter.string(from: todayStart)
         let monthDay = dayFormatter.string(from: monthStart)
         var cache = loadUsageCache(timeZoneIdentifier: calendar.timeZone.identifier)
-        let sourcePaths = Set(sources.map(\.rolloutPath))
-        cache.sessions = cache.sessions.filter { sourcePaths.contains($0.key) }
+        let sources = allUsageSources(indexed: sources, cache: cache)
+        let multipleRolloutThreads = Set(Dictionary(grouping: sources, by: \.threadID).filter { $0.value.count > 1 }.keys)
         var sourcesByThreadID: [String: UsageSourceRow] = [:]
         var forkParentIDByPath: [String: String] = [:]
         for source in sources {
-            sourcesByThreadID[source.threadID] = source
-            if let parentID = Self.forkParentID(at: URL(fileURLWithPath: source.rolloutPath)) {
+            if sourcesByThreadID[source.threadID] == nil { sourcesByThreadID[source.threadID] = source }
+            if let parentID = cache.sessions[source.rolloutPath]?.parentID
+                ?? autoreleasepool(invoking: { Self.forkParentID(at: URL(fileURLWithPath: source.rolloutPath)) }) {
                 forkParentIDByPath[source.rolloutPath] = parentID
             }
         }
@@ -383,21 +388,25 @@ struct LocalCodexUsageReader: Sendable {
 
         for source in sources {
             let url = URL(fileURLWithPath: source.rolloutPath)
-            guard let entry = Self.updatedUsageCacheEntry(
+            guard let entry = autoreleasepool(invoking: { Self.updatedUsageCacheEntry(
                 at: url,
                 previous: cache.sessions[source.rolloutPath],
-                collectEvents: forkEventPaths.contains(source.rolloutPath),
+                collectEvents: forkEventPaths.contains(source.rolloutPath) || multipleRolloutThreads.contains(source.threadID),
                 historyDay: historyDay,
-                dayFormatter: dayFormatter
-            ) else {
-                if source.tokensUsed > 0 {
-                    incompletePaths.append(source.rolloutPath)
+                dayFormatter: dayFormatter,
+                fractional: fractionalTimestampFormatter,
+                timestamp: timestampFormatter
+            ) }) else {
+                incompletePaths.append(source.rolloutPath)
+                if source.tokensUsed > 0, cache.sessions[source.rolloutPath]?.lifetimeUsage.total ?? 0 == 0 {
                     sqliteLifetimeFallbackPaths.insert(source.rolloutPath)
                 }
                 continue
             }
             cache.sessions[source.rolloutPath] = entry
-            if source.tokensUsed > 0, entry.latestTotal == nil {
+            cache.sessions[source.rolloutPath]?.source = source
+            cache.sessions[source.rolloutPath]?.parentID = forkParentIDByPath[source.rolloutPath]
+            if source.tokensUsed > 0, entry.lifetimeUsage.isZero {
                 incompletePaths.append(source.rolloutPath)
                 sqliteLifetimeFallbackPaths.insert(source.rolloutPath)
             }
@@ -433,19 +442,41 @@ struct LocalCodexUsageReader: Sendable {
         var monthSessionCount = 0
         var pricedMonthSessionCount = 0
         var lifetimeTokens: Int64 = 0
+        var seenResponses = Set<String>()
+        var seenLegacy: [String: Set<LegacyUsageIdentity>] = [:]
+        var fallbackThreads = Set<String>()
 
         for source in sources {
             let entry = cache.sessions[source.rolloutPath]
             let exclusion = forkExclusions[source.rolloutPath] ?? .zero
+            var duplicates = SessionTokenUsage.zero
+            var duplicateResponses = Set<String>()
+            var duplicateSequences = Set<Int>()
+            if let entry {
+                let inheritedIDs = Set(entry.events.prefix(exclusion.prefixLength).compactMap(\.responseID))
+                for (id, usage) in entry.responseUsage ?? [:] where !inheritedIDs.contains(id) {
+                    if !seenResponses.insert(id).inserted { duplicateResponses.insert(id); duplicates.add(usage) }
+                }
+                if multipleRolloutThreads.contains(source.threadID) {
+                    for event in entry.events where event.sequence >= exclusion.prefixLength && event.responseID == nil {
+                        guard let timestamp = event.timestamp else { continue }
+                        let key = LegacyUsageIdentity(timestamp: timestamp, identity: event.identity)
+                        if !seenLegacy[source.threadID, default: []].insert(key).inserted {
+                            duplicateSequences.insert(event.sequence)
+                            duplicates.add(event.usage)
+                        }
+                    }
+                }
+            }
             // SQLite 只有会话总量，没有逐日拆分；rollout 不完整时只兜底累计值，时间趋势仍使用可解析事件。
             if sqliteLifetimeFallbackPaths.contains(source.rolloutPath) {
                 if incompleteForkPaths.contains(source.rolloutPath) {
-                    lifetimeTokens += entry?.lifetimeUsage.subtracting(exclusion.lifetimeUsage).total ?? 0
-                } else {
+                    lifetimeTokens += entry?.lifetimeUsage.subtracting(exclusion.lifetimeUsage).subtracting(duplicates).total ?? 0
+                } else if fallbackThreads.insert(source.threadID).inserted {
                     lifetimeTokens += source.tokensUsed
                 }
             } else if let entry {
-                lifetimeTokens += entry.lifetimeUsage.subtracting(exclusion.lifetimeUsage).total
+                lifetimeTokens += entry.lifetimeUsage.subtracting(exclusion.lifetimeUsage).subtracting(duplicates).total
             }
             guard let entry else { continue }
             var sourceSevenDayUsage = SessionTokenUsage.zero
@@ -454,6 +485,8 @@ struct LocalCodexUsageReader: Sendable {
             var sourceMonthCost = 0.0
             var sourceMonthFullyPriced = true
             for event in entry.recentEvents where event.sequence >= exclusion.prefixLength {
+                guard !duplicateSequences.contains(event.sequence),
+                      event.responseID.map({ !duplicateResponses.contains($0) }) ?? true else { continue }
                 guard let day = event.day, day >= historyDay, day <= today else { continue }
                 daily[day, default: .zero].add(event.usage)
                 let model = event.model ?? source.model
@@ -476,7 +509,7 @@ struct LocalCodexUsageReader: Sendable {
             if sourceSevenDayUsage.total > 0 {
                 projects[source.cwd, default: .init()].add(
                     tokens: sourceSevenDayUsage.total,
-                    threadID: source.rolloutPath
+                    threadID: source.threadID
                 )
             }
             if sourceMonthUsage.total > 0 {
@@ -531,13 +564,65 @@ struct LocalCodexUsageReader: Sendable {
         )
     }
 
-    /// 读取增量缓存；损坏或时区变化时从空缓存重建，避免沿用错误日期边界。
+    /// 合并 SQLite、历史缓存和会话目录；同线程旧路径也保留，由请求身份负责去重。
+    private func allUsageSources(indexed: [UsageSourceRow], cache: LocalUsageCache) -> [UsageSourceRow] {
+        var result: [UsageSourceRow] = []
+        var paths = Set<String>()
+        for var source in indexed {
+            source.rolloutPath = Self.canonicalRolloutPath(source.rolloutPath)
+            if paths.insert(source.rolloutPath).inserted { result.append(source) }
+        }
+        var candidates = Set(cache.sessions.keys)
+        if let root = databaseURL?.deletingLastPathComponent() {
+            for directory in ["sessions", "archived_sessions"] {
+                if let files = FileManager.default.enumerator(at: root.appendingPathComponent(directory),
+                    includingPropertiesForKeys: nil, options: [.skipsHiddenFiles]) {
+                    for case let url as URL in files where url.path.hasSuffix(".jsonl") || url.path.hasSuffix(".jsonl.zst") {
+                        candidates.insert(Self.canonicalRolloutPath(url.path))
+                    }
+                }
+            }
+        }
+        let uuid = try? NSRegularExpression(pattern: "[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}")
+        for path in candidates.sorted() where paths.insert(path).inserted {
+            if var source = cache.sessions[path]?.source {
+                source.rolloutPath = path
+                result.append(source)
+                continue
+            }
+            let url = URL(fileURLWithPath: path)
+            let name = url.lastPathComponent
+            let match = uuid?.firstMatch(in: name, range: NSRange(name.startIndex..., in: name))
+            let filenameID = match.flatMap { Range($0.range, in: name).map { String(name[$0]) } }
+            let metadata = Self.rolloutMetadata(at: url)
+            let id = filenameID ?? metadata?["id"] as? String ?? path
+            let current = indexed.first { $0.threadID == id }
+            result.append(UsageSourceRow(threadID: id, rolloutPath: path,
+                cwd: metadata?["cwd"] as? String ?? current?.cwd ?? "",
+                model: current?.model ?? "", tokensUsed: 0))
+        }
+        return result
+    }
+
+    /// 升级或切换时区时逐文件重建；失败项保留旧统计，绝不先清空历史。
     private func loadUsageCache(timeZoneIdentifier: String) -> LocalUsageCache {
         guard let data = try? Data(contentsOf: usageCacheURL),
-              let cache = try? JSONDecoder().decode(LocalUsageCache.self, from: data),
-              cache.version == LocalUsageCache.currentVersion,
-              cache.timeZoneIdentifier == timeZoneIdentifier
+              var cache = try? JSONDecoder().decode(LocalUsageCache.self, from: data)
         else { return LocalUsageCache(timeZoneIdentifier: timeZoneIdentifier) }
+        var sessions: [String: SessionUsageCache] = [:]
+        for (path, entry) in cache.sessions {
+            let canonical = Self.canonicalRolloutPath(path)
+            if let previous = sessions[canonical], previous.readOffset >= entry.readOffset { continue }
+            sessions[canonical] = entry
+        }
+        cache.sessions = sessions
+        if cache.version != LocalUsageCache.currentVersion || cache.timeZoneIdentifier != timeZoneIdentifier {
+            let backup = usageCacheURL.appendingPathExtension("v\(cache.version)-before-migration")
+            if !FileManager.default.fileExists(atPath: backup.path) { try? data.write(to: backup, options: .atomic) }
+            for key in cache.sessions.keys { cache.sessions[key]?.parserVersion = nil }
+            cache.version = LocalUsageCache.currentVersion
+            cache.timeZoneIdentifier = timeZoneIdentifier
+        }
         return cache
     }
 
@@ -555,77 +640,119 @@ struct LocalCodexUsageReader: Sendable {
         }
     }
 
-    /// 从上次完整换行偏移继续解析 JSONL；文件被截断时自动重建该会话缓存。
+    /// 增量读取普通日志或原生解压 zstd；读取失败时不交付半份重建结果。
     private static func updatedUsageCacheEntry(
         at url: URL,
         previous: SessionUsageCache?,
         collectEvents: Bool,
         historyDay: String,
-        dayFormatter: DateFormatter
+        dayFormatter: DateFormatter,
+        fractional: ISO8601DateFormatter,
+        timestamp: ISO8601DateFormatter
     ) -> SessionUsageCache? {
-        guard let handle = try? FileHandle(forReadingFrom: url) else { return nil }
-        defer { try? handle.close() }
-        guard let fileSize = try? handle.seekToEnd() else { return nil }
+        let actual = rolloutURL(url)
+        guard let attributes = try? FileManager.default.attributesOfItem(atPath: actual.path),
+              let size = attributes[.size] as? NSNumber else { return nil }
+        let compressed = actual.pathExtension == "zst"
+        let fingerprint = compressed ? "\(size)-\(attributes[.modificationDate] ?? "")" : nil
         var entry = previous ?? SessionUsageCache(collectsEvents: collectEvents)
-        if collectEvents, !entry.collectsEvents {
-            entry = SessionUsageCache(collectsEvents: true)
-        }
-        // ponytail: Codex rollout 当前为追加写；若未来支持同路径原地改写，应增加文件标识并强制重建缓存。
-        if entry.readOffset > fileSize { entry = SessionUsageCache(collectsEvents: collectEvents) }
-        guard entry.readOffset < fileSize else {
-            entry.recentEvents = entry.recentEvents.filter { $0.day.map { $0 >= historyDay } == true }
-            return entry
-        }
-        guard (try? handle.seek(toOffset: entry.readOffset)) != nil else { return nil }
-
-        let fractionalTimestampFormatter = ISO8601DateFormatter()
-        fractionalTimestampFormatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        let timestampFormatter = ISO8601DateFormatter()
+        if entry.parserVersion != LocalUsageCache.currentVersion
+            || (collectEvents && !entry.collectsEvents)
+            || entry.compressedFingerprint != fingerprint
+            || (!compressed && entry.readOffset > size.uint64Value) {
+            entry = SessionUsageCache(collectsEvents: collectEvents)
+        } else if compressed || entry.readOffset == size.uint64Value { return entry }
         var pending = Data()
         var committedOffset = entry.readOffset
-        while let chunk = try? handle.read(upToCount: 1_048_576), !chunk.isEmpty {
-            pending.append(chunk)
-            var lineStart = pending.startIndex
-            while lineStart < pending.endIndex,
-                  let newline = pending[lineStart...].firstIndex(of: 0x0A)
-            {
-                if newline > lineStart {
-                    let line = pending[lineStart..<newline]
+        let newlineByte = Data([10])
+        let usageKey = Data("\"usage\"".utf8)
+        do {
+            try readRollout(actual, offset: entry.readOffset) { chunk in
+                pending.append(chunk)
+                var start = pending.startIndex
+                // Foundation 的字节搜索避免在多 GB 压缩历史上逐字节调用 Swift 下标。
+                while let newline = pending.range(of: newlineByte, in: start..<pending.endIndex)?.lowerBound {
+                    let line = pending[start..<newline]
                     let prefix = String(decoding: line.prefix(512), as: UTF8.self)
-                    if prefix.contains("\"token_count\"") || prefix.contains("\"turn_context\"")
-                        || String(decoding: line, as: UTF8.self).contains("\"usage\"") {
-                        parseUsageLine(
-                            Data(line),
-                            entry: &entry,
-                            historyDay: historyDay,
-                            dayFormatter: dayFormatter,
-                            fractionalTimestampFormatter: fractionalTimestampFormatter,
-                            timestampFormatter: timestampFormatter
-                        )
+                    if prefix.contains("token_count") || prefix.contains("turn_context")
+                        || prefix.contains("thread_settings_applied") || prefix.contains("token_usage_record")
+                        || line.range(of: usageKey) != nil {
+                        autoreleasepool {
+                            parseUsageLine(Data(line), entry: &entry, historyDay: historyDay,
+                                dayFormatter: dayFormatter, fractionalTimestampFormatter: fractional, timestampFormatter: timestamp)
+                        }
                     }
+                    committedOffset += UInt64(pending.distance(from: start, to: newline) + 1)
+                    start = pending.index(after: newline)
                 }
-                committedOffset += UInt64(pending.distance(from: lineStart, to: newline) + 1)
-                lineStart = pending.index(after: newline)
+                if start > pending.startIndex { pending.removeSubrange(..<start) }
+                return true
             }
-            if lineStart > pending.startIndex { pending.removeSubrange(..<lineStart) }
-        }
+        } catch { return nil }
         if !pending.isEmpty, (try? JSONSerialization.jsonObject(with: pending)) != nil {
-            parseUsageLine(
-                pending,
-                entry: &entry,
-                historyDay: historyDay,
-                dayFormatter: dayFormatter,
-                fractionalTimestampFormatter: fractionalTimestampFormatter,
-                timestampFormatter: timestampFormatter
-            )
+            parseUsageLine(pending, entry: &entry, historyDay: historyDay,
+                dayFormatter: dayFormatter, fractionalTimestampFormatter: fractional, timestampFormatter: timestamp)
             committedOffset += UInt64(pending.count)
         }
         entry.readOffset = committedOffset
-        entry.recentEvents = entry.recentEvents.filter { $0.day.map { $0 >= historyDay } == true }
+        entry.parserVersion = LocalUsageCache.currentVersion
+        entry.compressedFingerprint = fingerprint
+        entry.recentEvents.removeAll { $0.day.map { $0 < historyDay } ?? true }
         return entry
     }
 
-    /// 解析模型上下文、token_count 和无事件包装的 usage；每个增量绑定当时模型。
+    /// 统一压缩后缀及符号链接别名，避免 /var 与 /private/var 等路径被当成两份日志。
+    private static func canonicalRolloutPath(_ path: String) -> String {
+        let url = URL(fileURLWithPath: path)
+        let logical = url.pathExtension == "zst" ? url.deletingPathExtension() : url
+        let resolved = logical.resolvingSymlinksInPath()
+        // 压缩后 .jsonl 已不存在，必须单独解析仍然存在的父目录。
+        return resolved.deletingLastPathComponent().resolvingSymlinksInPath()
+            .appendingPathComponent(resolved.lastPathComponent).standardizedFileURL.path
+    }
+
+    /// SQLite 可能仍指向压缩前路径；同一路径的原文件与压缩副本只选一个。
+    private static func rolloutURL(_ url: URL) -> URL {
+        FileManager.default.fileExists(atPath: url.path) ? url : url.appendingPathExtension("zst")
+    }
+
+    /// 按块读取日志，回调返回 false 可提前结束元信息读取；坏帧或截断抛错。
+    private static func readRollout(_ url: URL, offset: UInt64 = 0, consume: (Data) throws -> Bool) throws {
+        let handle = try FileHandle(forReadingFrom: url)
+        defer { try? handle.close() }
+        if url.pathExtension != "zst" {
+            try handle.seek(toOffset: offset)
+            while let chunk = try handle.read(upToCount: 1_048_576), !chunk.isEmpty {
+                if try !autoreleasepool(invoking: { try consume(chunk) }) { return }
+            }
+            return
+        }
+        guard let stream = ZSTD_createDStream() else { throw CocoaError(.fileReadUnknown) }
+        defer { ZSTD_freeDStream(stream) }
+        guard ZSTD_isError(ZSTD_initDStream(stream)) == 0 else { throw CocoaError(.fileReadCorruptFile) }
+        var output = [UInt8](repeating: 0, count: Int(ZSTD_DStreamOutSize()))
+        var remaining = 1
+        while let chunk = try handle.read(upToCount: Int(ZSTD_DStreamInSize())), !chunk.isEmpty {
+            let keepReading = try chunk.withUnsafeBytes { bytes -> Bool in
+                var input = ZSTD_inBuffer(src: bytes.baseAddress, size: bytes.count, pos: 0)
+                while input.pos < input.size {
+                    let decoded = try output.withUnsafeMutableBytes { buffer -> Data in
+                        var out = ZSTD_outBuffer(dst: buffer.baseAddress, size: buffer.count, pos: 0)
+                        remaining = ZSTD_decompressStream(stream, &out, &input)
+                        guard ZSTD_isError(remaining) == 0 else { throw CocoaError(.fileReadCorruptFile) }
+                        return Data(buffer.prefix(out.pos))
+                    }
+                    // 每块释放 Foundation 临时对象，避免全历史扫描将数 GB 临时数据留到任务结束。
+                    if !decoded.isEmpty, try !autoreleasepool(invoking: { try consume(decoded) }) { return false }
+                }
+                return true
+            }
+            if !keepReading { return }
+        }
+        guard remaining == 0 else { throw CocoaError(.fileReadCorruptFile) }
+    }
+
+    /// 优先采用请求账本，token_count 仅兼容旧日志；同一请求的两种记录只计一次。
     private static func parseUsageLine(
         _ data: Data,
         entry: inout SessionUsageCache,
@@ -636,59 +763,93 @@ struct LocalCodexUsageReader: Sendable {
     ) {
         guard let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return }
         let payload = object["payload"] as? [String: Any]
-        if object["type"] as? String == "turn_context" {
-            entry.activeModel = (payload?["model"] as? String).flatMap(normalizedModelName)
-            entry.activeServiceTier = payload?["service_tier"] as? String
+        let type = object["type"] as? String
+        if type == "event_msg", payload?["type"] as? String == "thread_settings_applied",
+           let settings = payload?["thread_settings"] as? [String: Any] {
+            entry.settingsServiceTier = settings["service_tier"] as? String
+            entry.activeServiceTier = entry.settingsServiceTier
             return
         }
-        let timestamp: String?
-        let cumulative: SessionTokenSample?
+        if type == "turn_context" {
+            entry.activeModel = (payload?["model"] as? String).flatMap(normalizedModelName)
+            entry.activeServiceTier = payload?["service_tier"] as? String ?? entry.settingsServiceTier
+            entry.activeTurnID = payload?["turn_id"] as? String
+            entry.pendingLedgerUsage = nil
+            entry.pendingLedgerSequence = nil
+            return
+        }
+        let timestamp = object["timestamp"] as? String
+        var responseID: String?
+        var cumulative: SessionTokenSample?
         let lastUsage: SessionTokenSample?
-        let eventModel: String?
-        let responseTier: String?
-        if object["type"] as? String == "event_msg",
-           payload?["type"] as? String == "token_count",
-           let info = payload?["info"] as? [String: Any],
-           let eventTimestamp = object["timestamp"] as? String
-        {
-            timestamp = eventTimestamp
+        var eventModel = entry.activeModel
+        var responseTier: String?
+        let ledger = type == "token_usage_record"
+        if ledger, let usage = payload?["usage"] as? [String: Any],
+           let id = payload?["response_id"] as? String, !id.isEmpty {
+            responseID = id
+            lastUsage = SessionTokenSample(json: usage)
+            eventModel = (payload?["model"] as? String).flatMap(normalizedModelName) ?? eventModel
+        } else if type == "event_msg", payload?["type"] as? String == "token_count",
+                  let info = payload?["info"] as? [String: Any] {
             cumulative = (info["total_token_usage"] as? [String: Any]).map(SessionTokenSample.init(json:))
             lastUsage = (info["last_token_usage"] as? [String: Any]).map(SessionTokenSample.init(json:))
-            eventModel = entry.activeModel
-            responseTier = nil
-        } else if object["type"] == nil, let bareUsage = bareUsage(in: object) {
-            timestamp = object["timestamp"] as? String
-            cumulative = nil
-            lastUsage = bareUsage.sample
-            eventModel = bareUsage.model ?? entry.activeModel
-            responseTier = bareUsage.serviceTier
-        } else {
-            return
-        }
+        } else if type == nil, let bare = bareUsage(in: object) {
+            lastUsage = bare.sample
+            eventModel = bare.model ?? eventModel
+            responseTier = bare.serviceTier
+        } else { return }
         let identity = SessionTokenEventIdentity(cumulative: cumulative, lastUsage: lastUsage)
-        guard let delta = normalizedDelta(
-            cumulative: cumulative,
-            lastUsage: lastUsage,
-            latestTotal: &entry.latestTotal
-        ) else { return }
+        let delta: SessionTokenUsage?
+        if ledger {
+            guard let lastUsage, !lastUsage.hasNegativeValue else { return }
+            delta = lastUsage.snapshot().nonzero
+        } else {
+            delta = normalizedDelta(cumulative: cumulative, lastUsage: lastUsage, latestTotal: &entry.latestTotal)
+            // 即使累计没有变化，也更新镜像的身份供 fork 前缀匹配，避免账本和兼容事件双计。
+            if let lastUsage, lastUsage.snapshot() == entry.pendingLedgerUsage {
+                if let sequence = entry.pendingLedgerSequence {
+                    if let index = entry.recentEvents.lastIndex(where: { $0.sequence == sequence }) { entry.recentEvents[index].identity = identity }
+                    if let index = entry.events.lastIndex(where: { $0.sequence == sequence }) { entry.events[index].identity = identity }
+                }
+                entry.pendingLedgerUsage = nil
+                entry.pendingLedgerSequence = nil
+                return
+            }
+        }
+        guard let delta else { return }
+        if let responseID {
+            entry.pendingLedgerUsage = delta
+            entry.pendingLedgerSequence = nil
+            guard entry.responseUsage?[responseID] == nil else { return }
+            if entry.responseUsage == nil { entry.responseUsage = [:] }
+            entry.responseUsage?[responseID] = delta
+            // 兼容先写 token_count 后写账本的旧顺序；只升级紧邻且属于同一轮的事件。
+            if let previous = entry.recentEvents.last, previous.responseID == nil,
+               previous.sequence == entry.nextEventSequence - 1,
+               previous.turnID == entry.activeTurnID, previous.usage == delta,
+               previous.timestamp == timestamp {
+                entry.recentEvents[entry.recentEvents.count - 1].responseID = responseID
+                if entry.collectsEvents, !entry.events.isEmpty { entry.events[entry.events.count - 1].responseID = responseID }
+                return
+            }
+            entry.pendingLedgerSequence = entry.nextEventSequence
+        }
         entry.lifetimeUsage.add(delta)
+        // 原生日历策略避免旧 ISO8601DateFormatter 为每个历史文件重复加载 ICU 符号。
         let date = timestamp.flatMap {
-            fractionalTimestampFormatter.date(from: $0) ?? timestampFormatter.date(from: $0)
+            (try? Date.ISO8601FormatStyle(includingFractionalSeconds: true).parse($0))
+                ?? (try? Date.ISO8601FormatStyle().parse($0))
+                ?? fractionalTimestampFormatter.date(from: $0) ?? timestampFormatter.date(from: $0)
         }
         let day = date.map(dayFormatter.string(from:)) ?? entry.recentEvents.last?.day
-        let event = SessionUsageEvent(
-            identity: identity,
-            day: day,
-            model: eventModel,
-            usage: delta,
+        let event = SessionUsageEvent(identity: identity, day: day, model: eventModel, usage: delta,
             sequence: entry.nextEventSequence,
             serviceTier: responseTier ?? (payload?["service_tier"] as? String)
-                ?? (object["service_tier"] as? String) ?? entry.activeServiceTier
-        )
+                ?? (object["service_tier"] as? String) ?? entry.activeServiceTier,
+            responseID: responseID, timestamp: timestamp, turnID: entry.activeTurnID)
         entry.nextEventSequence += 1
-        if entry.collectsEvents {
-            entry.events.append(event)
-        }
+        if entry.collectsEvents { entry.events.append(event) }
         if day.map({ $0 >= historyDay }) == true { entry.recentEvents.append(event) }
     }
 
@@ -752,31 +913,25 @@ struct LocalCodexUsageReader: Sendable {
 
     /// 从 rollout 首个 session_meta 读取父会话；兼容直接 fork 字段和旧版子任务 source 结构。
     private static func forkParentID(at url: URL) -> String? {
-        guard let handle = try? FileHandle(forReadingFrom: url) else { return nil }
-        defer { try? handle.close() }
-        var pending = Data()
-        let maximumHeaderBytes = 8 * 1_024 * 1_024
-        while pending.count < maximumHeaderBytes,
-              let chunk = try? handle.read(upToCount: 65_536),
-              !chunk.isEmpty
-        {
-            pending.append(chunk)
-            guard let newline = pending.firstIndex(of: 0x0A) else { continue }
-            let line = pending[..<newline]
-            guard let object = try? JSONSerialization.jsonObject(with: line) as? [String: Any],
-                  object["type"] as? String == "session_meta",
-                  let payload = object["payload"] as? [String: Any]
-            else { return nil }
-            if let directParentID = payload["forked_from_id"] as? String, !directParentID.isEmpty {
-                return directParentID
-            }
-            let source = payload["source"] as? [String: Any]
-            let subagent = source?["subagent"] as? [String: Any]
-            let spawn = subagent?["thread_spawn"] as? [String: Any]
-            return (spawn?["parent_thread_id"] as? String).flatMap { $0.isEmpty ? nil : $0 }
+        guard let payload = rolloutMetadata(at: url) else { return nil }
+        if let parent = payload["forked_from_id"] as? String, !parent.isEmpty { return parent }
+        let source = payload["source"] as? [String: Any]
+        let subagent = source?["subagent"] as? [String: Any]
+        let spawn = subagent?["thread_spawn"] as? [String: Any]
+        return spawn?["parent_thread_id"] as? String
+    }
+
+    /// 只读取日志首行的会话元信息，不读取提示词；支持压缩文件。
+    private static func rolloutMetadata(at url: URL) -> [String: Any]? {
+        var data = Data()
+        try? readRollout(rolloutURL(url)) { chunk in
+            data.append(chunk)
+            if let newline = data.firstIndex(of: 10) { data = Data(data[..<newline]); return false }
+            return data.count < 8 * 1_024 * 1_024
         }
-        // ponytail: session_meta 超过 8 MB 时按非 fork 处理；出现真实样本后再改成无上限流式解码。
-        return nil
+        guard let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              object["type"] as? String == "session_meta" else { return nil }
+        return object["payload"] as? [String: Any]
     }
 
     /// 在归一化事件序列上匹配子会话继承前缀，并返回需要排除的分日与累计用量。
@@ -808,12 +963,17 @@ struct LocalCodexUsageReader: Sendable {
         parent: [SessionUsageEvent]
     ) -> Int {
         guard let firstChildEvent = child.first else { return 0 }
+        // 有请求 ID 时不能仅凭相同 token 数量认定继承，否则独立请求会被误扣。
+        func matches(_ lhs: SessionUsageEvent, _ rhs: SessionUsageEvent) -> Bool {
+            if let left = lhs.responseID, let right = rhs.responseID { return left == right }
+            return lhs.identity == rhs.identity
+        }
         var longest = 0
-        for parentStart in parent.indices where parent[parentStart].identity == firstChildEvent.identity {
+        for parentStart in parent.indices where matches(parent[parentStart], firstChildEvent) {
             var length = 0
             while length < child.count,
                   parentStart + length < parent.count,
-                  child[length].identity == parent[parentStart + length].identity
+                  matches(child[length], parent[parentStart + length])
             {
                 length += 1
             }
@@ -848,17 +1008,20 @@ struct LocalCodexUsageReader: Sendable {
         let writeRate = long ? price.cacheWriteAboveThreshold : price.cacheWritePerMillion
         let outputRate = long ? price.outputAboveThreshold ?? price.outputPerMillion : price.outputPerMillion
         guard cached == 0 || cachedRate != nil, writes == 0 || writeRate != nil else { return nil }
+        let modern = ["gpt-6-astra", "gpt-6-sol", "gpt-6.1-sol", "gpt-6-luna"].contains(LocalCodexPricingCatalog.key(model))
         let multiplier: Double
         switch serviceTier?.lowercased() {
         case nil, "", "default", "standard", "auto": multiplier = 1
         case "priority", "fast":
             let normalized = LocalCodexPricingCatalog.key(model)
-            guard ["gpt-6-astra", "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"].contains(normalized),
-                  !long || normalized == "gpt-6-astra" else { return nil }
+            guard modern || (["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"].contains(normalized) && !long) else { return nil }
             multiplier = 2
         case "flex", "batch":
-            guard LocalCodexPricingCatalog.key(model) == "gpt-6-astra" else { return nil }
+            guard modern else { return nil }
             multiplier = 0.5
+        case "ultrafast":
+            guard ["gpt-6.1-sol", "gpt-6-astra"].contains(LocalCodexPricingCatalog.key(model)) else { return nil }
+            multiplier = 6
         default: return nil
         }
         let cost = (Double(uncached) * inputRate + Double(cached) * (cachedRate ?? 0)
@@ -1170,9 +1333,9 @@ private struct ProjectRow: Decodable {
 }
 
 /// SQLite 中供 rollout 增量聚合使用的线程索引。
-private struct UsageSourceRow: Decodable {
+private struct UsageSourceRow: Codable, Sendable {
     let threadID: String
-    let rolloutPath: String
+    var rolloutPath: String
     let cwd: String
     let model: String
     let tokensUsed: Int64
@@ -1207,7 +1370,7 @@ private struct DailyUsageRow {
 }
 
 /// 保留 token_count 原始可选计数，用于识别负值、累计重置和 fork 事件身份。
-private struct SessionTokenSample: Codable, Equatable, Sendable {
+private struct SessionTokenSample: Codable, Hashable, Sendable {
     let input: Int64?
     let cachedInput: Int64?
     let cacheWriteInput: Int64?
@@ -1297,23 +1460,32 @@ private struct SessionTokenSample: Codable, Equatable, Sendable {
 }
 
 /// 使用原始累计与单次计数组成 fork 前缀事件身份；时间戳不参与继承判断。
-private struct SessionTokenEventIdentity: Codable, Equatable, Sendable {
+private struct SessionTokenEventIdentity: Codable, Hashable, Sendable {
     let cumulative: SessionTokenSample?
     let lastUsage: SessionTokenSample?
 }
 
-/// 保存需要参与 fork 去重的归一化事件；只为 fork 子会话及其父会话持久化。
-private struct SessionUsageEvent: Codable, Sendable {
+/// 旧日志没有请求 ID 时，仅在同线程不同路径中按原始时间和计数去重。
+private struct LegacyUsageIdentity: Hashable {
+    let timestamp: String
     let identity: SessionTokenEventIdentity
+}
+
+/// 保留请求身份、当时模型和档位；fork 及多路径线程额外保存全量事件。
+private struct SessionUsageEvent: Codable, Sendable {
+    var identity: SessionTokenEventIdentity
     let day: String?
     let model: String?
     let usage: SessionTokenUsage
     let sequence: Int
     let serviceTier: String?
+    var responseID: String? = nil
+    var timestamp: String? = nil
+    var turnID: String? = nil
 }
 
 /// 描述单个事件或时间段的 token 拆分；总量优先采用事件规范字段，旧日志缺失时回退为输入加输出。
-private struct SessionTokenUsage: Codable, Sendable {
+private struct SessionTokenUsage: Codable, Equatable, Sendable {
     let input: Int64
     let cachedInput: Int64
     let cacheWriteInput: Int64
@@ -1413,6 +1585,15 @@ private struct SessionUsageCache: Codable, Sendable {
     var lifetimeUsage = SessionTokenUsage.zero
     var activeModel: String?
     var activeServiceTier: String?
+    var settingsServiceTier: String?
+    var activeTurnID: String?
+    var pendingLedgerUsage: SessionTokenUsage?
+    var pendingLedgerSequence: Int?
+    var responseUsage: [String: SessionTokenUsage]?
+    var parserVersion: Int?
+    var compressedFingerprint: String?
+    var source: UsageSourceRow?
+    var parentID: String?
     var nextEventSequence = 0
     var recentEvents: [SessionUsageEvent] = []
     var collectsEvents: Bool
@@ -1424,13 +1605,13 @@ private struct SessionUsageCache: Codable, Sendable {
     }
 }
 
-/// 所有 rollout 的持久化增量缓存；时区改变时必须整体重建日期键。
+/// 保存所有历史 rollout；日期边界变化逐项迁移，未能重读的记录继续保留。
 private struct LocalUsageCache: Codable, Sendable {
     // 服务档位解析修正后重读旧事件，避免继续沿用标准价。
-    static let currentVersion = 8
+    static let currentVersion = 9
 
     var version = currentVersion
-    let timeZoneIdentifier: String
+    var timeZoneIdentifier: String
     var sessions: [String: SessionUsageCache] = [:]
 }
 

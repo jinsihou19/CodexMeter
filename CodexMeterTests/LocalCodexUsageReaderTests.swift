@@ -1,6 +1,7 @@
 // 本文件验证本机 Codex SQLite 汇总、任务分类和失败降级行为。
 
 import XCTest
+import libzstd
 @testable import CodexMeterShared
 
 final class LocalCodexUsageReaderTests: XCTestCase {
@@ -639,7 +640,7 @@ final class LocalCodexPricingTests: XCTestCase {
         let unpriced = await Self.reader(root: root, session: session, database: database, now: now).load()
         XCTAssertNil(unpriced?.summary.monthCost)
         XCTAssertEqual(unpriced?.summary.pricingStatus?.unpricedModels, ["test-model"])
-        let cacheURL = root.appendingPathComponent("usage.json")
+        let cacheURL = root.appendingPathComponent(session.lastPathComponent + ".usage.json")
         let saved = try Data(contentsOf: cacheURL)
         let store = LocalCodexPricingStore(cacheURL: root.appendingPathComponent("pricing.json")) { Self.catalog(input: 9) }
         let priced = await Self.reader(root: root, session: session, database: database, now: now, pricing: store).load()
@@ -656,7 +657,7 @@ final class LocalCodexPricingTests: XCTestCase {
                                pricing: LocalCodexPricingStore? = nil) -> LocalCodexUsageReader {
         LocalCodexUsageReader(now: { now }, databaseURL: database, automationFiles: [],
             diagnostics: AppDiagnosticLog(fileURL: root.appendingPathComponent("test.log")),
-            usageCacheURL: root.appendingPathComponent("usage.json"), pricingStore: pricing,
+            usageCacheURL: root.appendingPathComponent(session.lastPathComponent + ".usage.json"), pricingStore: pricing,
             query: { _, sql in
                 if sql.contains("AS threadCount") { return Data(#"[{"threadCount":1,"lastUpdatedAt":0}]"#.utf8) }
                 if sql.contains("AS rolloutPath") {
@@ -691,4 +692,207 @@ private actor PricingFetchCounter {
     var value = 0
     /// 原子递增并返回本次尝试序号。
     func next() -> Int { value += 1; return value }
+}
+
+
+/// 覆盖历史缓存迁移、压缩日志、旧路径去重和真实请求档位，避免修复后金额再次缩水。
+final class LocalCodexReconciliationTests: XCTestCase {
+    /// 压缩旧文件与当前文件的同一请求仅计一次，独有请求及压缩上下文费用均保留。
+    func testCompressedOldRolloutsAndRequestIdentity() async throws {
+        let root = try fixtureRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let id = "11111111-1111-1111-1111-111111111111"
+        let current = root.appendingPathComponent("sessions/rollout-current-\(id).jsonl")
+        let old = root.appendingPathComponent("sessions/rollout-old-\(id).jsonl")
+        let rows = context(id: id, model: "gpt-6-sol", tier: "priority")
+        let shared = request(id: "shared", input: 1000, output: 100)
+        let compact = request(id: "compact", input: 2000, output: 200)
+        let oldOnly = request(id: "old-only", input: 3000, output: 300)
+        try jsonl(rows + [shared, mirror(input: 1000, output: 100), shared,
+                          mirror(input: 1000, output: 100), compact]).write(to: current)
+        let compressed = try compress(jsonl(rows + [shared, oldOnly]))
+        try compressed.write(to: old.appendingPathExtension("zst"))
+        // 相同文件的压缩副本不能成为第二个数据源。
+        try compress(Data(contentsOf: current)).write(to: current.appendingPathExtension("zst"))
+        let reader = reader(root: root, path: current, id: id)
+        let first = try await snapshot(reader)
+        XCTAssertEqual(first.summary.todayTokens, 6600)
+        XCTAssertEqual(first.summary.lifetimeTokens, 6600)
+        XCTAssertEqual(try XCTUnwrap(first.summary.monthCost?.estimatedCostUSD), 0.036, accuracy: 1e-10)
+        let warm = try await snapshot(reader)
+        XCTAssertEqual(warm.summary.monthCost, first.summary.monthCost)
+        XCTAssertEqual(warm.summary.lifetimeTokens, 6600)
+        let persisted = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: root.appendingPathComponent("usage.json"))) as? [String: Any])
+        XCTAssertEqual((persisted["sessions"] as? [String: Any])?.count, 2)
+        // 解压失败不可覆盖旧文件已经验证的统计。
+        try compressed.dropLast(8).write(to: old.appendingPathExtension("zst"))
+        let damaged = try await snapshot(reader)
+        XCTAssertEqual(damaged.summary.monthCost, first.summary.monthCost)
+        XCTAssertEqual(damaged.summary.lifetimeTokens, 6600)
+        XCTAssertEqual(damaged.summary.hasIncompleteUsage, true)
+    }
+
+    /// fork 中相同 token 数但不同请求 ID 的独立请求不可当作继承历史扣除。
+    func testForkUsesResponseIdentityBeforeTokenCounts() async throws {
+        let root = try fixtureRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let parent = root.appendingPathComponent("sessions/parent.jsonl")
+        let child = root.appendingPathComponent("sessions/child.jsonl")
+        try jsonl(context(id: "parent", model: "gpt-6-sol", tier: "standard")
+            + [request(id: "parent-response", input: 1000, output: 100)]).write(to: parent)
+        var rows = context(id: "child", model: "gpt-6-sol", tier: "standard")
+        rows[0] = ["type": "session_meta", "payload": ["id": "child", "forked_from_id": "parent"]]
+        try compress(jsonl(rows + [request(id: "child-response", input: 1000, output: 100)]))
+            .write(to: child.appendingPathExtension("zst"))
+        let result = try await snapshot(reader(root: root, path: parent, id: "parent"))
+        XCTAssertEqual(result.summary.lifetimeTokens, 2200)
+        XCTAssertEqual(result.summary.todayTokens, 2200)
+    }
+
+    /// 时区或缓存版本改变后，原日志缺失的历史仍保留，可读压缩日志正常迁移。
+    func testMigrationRetainsMissingHistory() async throws {
+        let root = try fixtureRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let path = root.appendingPathComponent("sessions/history.jsonl")
+        try jsonl(context(id: "history", model: "gpt-6.1-sol", tier: "standard")
+            + [request(id: "history", input: 1000, output: 100)]).write(to: path)
+        let source = reader(root: root, path: path, id: "history")
+        let first = try await snapshot(source)
+        let cacheURL = root.appendingPathComponent("usage.json")
+        var cache = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: cacheURL)) as? [String: Any])
+        cache["version"] = 8
+        cache["timeZoneIdentifier"] = "Pacific/Honolulu"
+        var sessions = cache["sessions"] as! [String: [String: Any]]
+        sessions[path.path]?["parserVersion"] = nil
+        cache["sessions"] = sessions
+        try JSONSerialization.data(withJSONObject: cache).write(to: cacheURL)
+        try FileManager.default.removeItem(at: path)
+        let migrated = try await snapshot(source)
+        XCTAssertEqual(migrated.summary.monthCost, first.summary.monthCost)
+        XCTAssertEqual(migrated.summary.lifetimeTokens, first.summary.lifetimeTokens)
+        XCTAssertEqual(migrated.summary.hasIncompleteUsage, true)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: cacheURL.appendingPathExtension("v8-before-migration").path))
+    }
+
+    /// 单次 272K 输入边界与服务档位叠加；线程设置档位继承，但实际模型以 turn_context 为准。
+    func testNewModelTiersAndLongContext() async throws {
+        for (model, inputRate, cachedRate, outputRate) in [
+            ("gpt-6.1-sol", 2.0, 0.1, 10.0), ("gpt-6-sol", 2, 0.2, 10),
+            ("gpt-6-luna", 0.1, 0.01, 0.5), ("gpt-6-astra", 10, 1, 50)
+        ] {
+            for input in [272_000, 272_001] {
+                for (tier, multiplier) in [("standard", 1.0), ("priority", 2.0), ("flex", 0.5), ("batch", 0.5), ("ultrafast", 6.0)] {
+                    let root = try fixtureRoot()
+                    defer { try? FileManager.default.removeItem(at: root) }
+                    let path = root.appendingPathComponent("sessions/test.jsonl")
+                    var usage = request(id: "priced", input: input, output: 1000)
+                    var payload = usage["payload"] as! [String: Any]
+                    var tokens = payload["usage"] as! [String: Int]
+                    tokens["cached_input_tokens"] = 100_000
+                    tokens["cache_write_input_tokens"] = 100_000
+                    payload["usage"] = tokens; usage["payload"] = payload
+                    try jsonl(context(id: "test", model: model, tier: tier) + [usage]).write(to: path)
+                    let result = try await snapshot(reader(root: root, path: path, id: "test"))
+                    if tier == "ultrafast" && !["gpt-6.1-sol", "gpt-6-astra"].contains(model) {
+                        XCTAssertNil(result.summary.monthCost)
+                    } else {
+                        let expected = ((Double(input - 200_000) * inputRate + 100_000 * cachedRate + 125_000 * inputRate)
+                            * (input > 272_000 ? 2 : 1) + 1000 * outputRate * (input > 272_000 ? 1.5 : 1)) / 1_000_000 * multiplier
+                        XCTAssertEqual(try XCTUnwrap(result.summary.monthCost?.estimatedCostUSD), expected, accuracy: 1e-10, "\(model) \(tier) \(input)")
+                    }
+                }
+            }
+        }
+    }
+
+    /// 可选的本机冻结账本验收；未显式提供夹具时不触碰真实用户数据。
+    func testFrozenLedgerReplay() async throws {
+        guard let path = ProcessInfo.processInfo.environment["CODEXMETER_REPLAY_ROOT"] else { throw XCTSkip("未提供冻结账本夹具") }
+        let root = URL(fileURLWithPath: path)
+        let date = ISO8601DateFormatter().date(from: "2026-10-23T07:49:22Z")!
+        let store = LocalCodexPricingStore(cacheURL: root.appendingPathComponent("prices.json")) { throw URLError(.notConnectedToInternet) }
+        let reader = LocalCodexUsageReader(now: { date }, databaseURL: root.appendingPathComponent("state.sqlite"),
+            automationFiles: [], diagnostics: AppDiagnosticLog(fileURL: root.appendingPathComponent("replay.log")),
+            usageCacheURL: root.appendingPathComponent("usage.json"), pricingStore: store,
+            query: { _, sql in
+                if sql.contains("AS threadCount") { return try? Data(contentsOf: root.appendingPathComponent("totals.json")) }
+                if sql.contains("AS rolloutPath") { return try? Data(contentsOf: root.appendingPathComponent("sources.json")) }
+                return Data("[]".utf8)
+            })
+        let result = try await snapshot(reader)
+        XCTAssertEqual(try XCTUnwrap(result.summary.monthCost?.estimatedCostUSD), 1411.8278732, accuracy: 0.000001)
+        XCTAssertEqual(result.summary.monthCost?.inputTokens, 1894720696)
+        XCTAssertEqual(result.summary.monthCost?.outputTokens, 7264407)
+        try JSONEncoder().encode(result.summary).write(to: root.appendingPathComponent("summary.json"))
+        let warm = try await snapshot(reader)
+        XCTAssertEqual(warm.summary.monthCost, result.summary.monthCost)
+        XCTAssertEqual(warm.summary.lifetimeTokens, result.summary.lifetimeTokens)
+    }
+
+    /// 创建独立状态库和会话目录，禁止测试读写用户的日志。
+    private func fixtureRoot() throws -> URL {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: root.appendingPathComponent("sessions"), withIntermediateDirectories: true)
+        try Data().write(to: root.appendingPathComponent("state.sqlite"))
+        return root
+    }
+
+    /// 注入单条 SQLite 索引；旧路径由真实目录扫描发现。
+    private func reader(root: URL, path: URL, id: String) -> LocalCodexUsageReader {
+        let date = ISO8601DateFormatter().date(from: "2026-10-23T07:00:00Z")!
+        return LocalCodexUsageReader(now: { date }, databaseURL: root.appendingPathComponent("state.sqlite"),
+            automationFiles: [], diagnostics: AppDiagnosticLog(fileURL: root.appendingPathComponent("test.log")),
+            usageCacheURL: root.appendingPathComponent("usage.json"), query: { _, sql in
+                if sql.contains("AS threadCount") { return Data("[{\"threadCount\":1,\"lastUpdatedAt\":0}]".utf8) }
+                if sql.contains("AS rolloutPath") {
+                    return try? JSONSerialization.data(withJSONObject: [["threadID": id, "rolloutPath": path.path,
+                        "cwd": "/test", "model": "gpt-6-sol", "tokensUsed": 1]])
+                }
+                return Data("[]".utf8)
+            })
+    }
+
+    /// 解包异步读取结果，保证失败不会被可选值比较隐藏。
+    private func snapshot(_ reader: LocalCodexUsageReader) async throws -> LocalCodexUsageSnapshot {
+        let result = await reader.load()
+        return try XCTUnwrap(result)
+    }
+
+    /// 模拟设置事件模型与实际请求模型不同的真实日志形状。
+    private func context(id: String, model: String, tier: String) -> [[String: Any]] {
+        [["type": "session_meta", "payload": ["id": id, "cwd": "/test"]],
+         ["type": "event_msg", "payload": ["type": "thread_settings_applied", "thread_settings": ["service_tier": tier, "model": "gpt-5.6-sol"]]],
+         ["type": "turn_context", "payload": ["model": model, "turn_id": "turn"]]]
+    }
+
+    /// 构造包含请求 ID 的账本记录，压缩上下文也使用相同用量格式。
+    private func request(id: String, input: Int, output: Int) -> [String: Any] {
+        ["timestamp": "2026-10-23T07:00:00Z", "type": "token_usage_record",
+         "payload": ["response_id": id, "turn_id": "turn", "usage": ["input_tokens": input,
+             "output_tokens": output, "total_tokens": input + output]]]
+    }
+
+    /// 构造账本的兼容镜像，验证重复累计不会导致重复费用。
+    private func mirror(input: Int, output: Int) -> [String: Any] {
+        let usage = ["input_tokens": input, "output_tokens": output, "total_tokens": input + output]
+        return ["timestamp": "2026-10-23T07:00:00Z", "type": "event_msg", "payload": ["type": "token_count",
+            "info": ["total_token_usage": usage, "last_token_usage": usage]]]
+    }
+
+    /// 编码真正的 JSONL 文件，覆盖流式读入而非直接调用解析器。
+    private func jsonl(_ rows: [[String: Any]]) throws -> Data {
+        var result = Data()
+        for row in rows { result.append(try JSONSerialization.data(withJSONObject: row)); result.append(10) }
+        return result
+    }
+
+    /// 使用应用内相同的原生库生成压缩夹具，不依赖机器安装 zstd 命令。
+    private func compress(_ data: Data) throws -> Data {
+        var output = Data(count: ZSTD_compressBound(data.count))
+        let size = output.withUnsafeMutableBytes { target in
+            data.withUnsafeBytes { source in ZSTD_compress(target.baseAddress, target.count, source.baseAddress, source.count, 1) }
+        }
+        guard ZSTD_isError(size) == 0 else { throw CocoaError(.fileWriteUnknown) }
+        return output.prefix(size)
+    }
 }

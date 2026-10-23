@@ -7,6 +7,9 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		A61000000000000000000006 /* ThirdPartyNotices.txt in Resources */ = {isa = PBXBuildFile; fileRef = A61000000000000000000007; };
+		A61000000000000000000001 /* libzstd in Frameworks */ = {isa = PBXBuildFile; productRef = A61000000000000000000003 /* libzstd */; };
+		A61000000000000000000002 /* libzstd in Frameworks */ = {isa = PBXBuildFile; productRef = A61000000000000000000004 /* libzstd */; };
 		A50000000000000000000001 /* CodexActivityHook.swift in Sources */ = {isa = PBXBuildFile; fileRef = A50000000000000000000004 /* CodexActivityHook.swift */; };
 		A50000000000000000000002 /* CodexActivityHook.swift in Sources */ = {isa = PBXBuildFile; fileRef = A50000000000000000000004 /* CodexActivityHook.swift */; };
 		A50000000000000000000003 /* CodexActivityHookTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A50000000000000000000005 /* CodexActivityHookTests.swift */; };
@@ -148,6 +151,7 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
+		A61000000000000000000007 /* ThirdPartyNotices.txt */ = {isa = PBXFileReference; lastKnownFileType = text; path = CodexMeter/ThirdPartyNotices.txt; sourceTree = SOURCE_ROOT; };
 		A50000000000000000000004 /* CodexActivityHook.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CodexActivityHook.swift; sourceTree = "<group>"; };
 		A50000000000000000000005 /* CodexActivityHookTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CodexActivityHookTests.swift; sourceTree = "<group>"; };
         A40000000000000000000001 /* QuotaWindowView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QuotaWindowView.swift; sourceTree = "<group>"; };
@@ -216,6 +220,7 @@
 			files = (
 				100000000000000000000003 /* CodexMeterShared.framework in Frameworks */,
 				200000000000000000000004 /* Sparkle in Frameworks */,
+				A61000000000000000000002 /* libzstd in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -225,6 +230,7 @@
 			files = (
 				10000000000000000000000F /* CodexMeterShared.framework in Frameworks */,
 				200000000000000000000001 /* Sparkle in Frameworks */,
+				A61000000000000000000001 /* libzstd in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -371,6 +377,7 @@
 			name = CodexMeterTests;
 			packageProductDependencies = (
 				200000000000000000000005 /* Sparkle */,
+				A61000000000000000000004 /* libzstd */,
 			);
 			productName = CodexMeterTests;
 			productReference = 100000000000000000000022 /* CodexMeterTests.xctest */;
@@ -395,6 +402,7 @@
 			name = CodexMeter;
 			packageProductDependencies = (
 				200000000000000000000003 /* Sparkle */,
+				A61000000000000000000003 /* libzstd */,
 			);
 			productName = CodexMeter;
 			productReference = 100000000000000000000023 /* CodexMeter.app */;
@@ -466,6 +474,7 @@
 			mainGroup = 100000000000000000000071;
 			packageReferences = (
 				200000000000000000000002 /* XCRemoteSwiftPackageReference "Sparkle" */,
+				A61000000000000000000005 /* XCRemoteSwiftPackageReference "zstd" */,
 			);
 			productRefGroup = 100000000000000000000074 /* Products */;
 			projectDirPath = "";
@@ -485,6 +494,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				100000000000000000000B06 /* Assets.xcassets in Resources */,
+				A61000000000000000000006 /* ThirdPartyNotices.txt in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -498,6 +508,11 @@
 /* End PBXResourcesBuildPhase section */
 
 /* Begin XCRemoteSwiftPackageReference section */
+		A61000000000000000000005 /* XCRemoteSwiftPackageReference "zstd" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/facebook/zstd.git";
+			requirement = {kind = exactVersion; version = 1.5.7; };
+		};
 		200000000000000000000002 /* XCRemoteSwiftPackageReference "Sparkle" */ = {
 			isa = XCRemoteSwiftPackageReference;
 			repositoryURL = "https://github.com/sparkle-project/Sparkle";
@@ -509,6 +524,8 @@
 /* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
+		A61000000000000000000003 /* libzstd */ = {isa = XCSwiftPackageProductDependency; package = A61000000000000000000005; productName = libzstd; };
+		A61000000000000000000004 /* libzstd */ = {isa = XCSwiftPackageProductDependency; package = A61000000000000000000005; productName = libzstd; };
 		200000000000000000000003 /* Sparkle */ = {
 			isa = XCSwiftPackageProductDependency;
 			package = 200000000000000000000002 /* XCRemoteSwiftPackageReference "Sparkle" */;
