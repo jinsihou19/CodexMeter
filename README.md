@@ -202,10 +202,7 @@ bash script/package_release.sh
 
 为兼容更名前的安装，应用在系统允许访问时也读取旧版 App Group 目录的活动文件，按会话取新旧文件中最新事件，避免同一回合重复显示。旧目录被系统拒绝时，使用内置全局 Hook 写入新的用户支持目录即可恢复活动显示。
 
-仓库保留可选的项目级桥接，它只转交已安装的原生处理器，所有入口共用同一把写入锁；不再由 Python 独立写状态。已使用全局入口的项目无需重复配置：
-
-- `.codex/hooks.json`
-- `.codex/hooks/codex_activity.py`
+活动指示统一使用用户级全局 Hook，覆盖当前用户的所有本机项目。仓库不再提供项目级活动配置或 Python 转发脚本，避免同一事件重复调用和额外的信任审核。
 
 活动状态写入 `~/Library/Application Support/CodexMeter/codex-activity.json`，应用聚合显示当前 Codex 会话状态。这份文件只供菜单栏使用，采用主应用自己的用户目录，避免 ad-hoc 主进程因没有 App Group 授权而无法读取 Hook 写入的状态。现有原生 Hook 的命令保持不变，升级 App 即可使用新目录。它是本地会话活动指示，不是 OpenAI 账单或计费接口。
 
