@@ -79,11 +79,13 @@ enum LocalUsageHeatmapMode: String, CaseIterable, Identifiable {
     }
 }
 
+/// 组合各供应商的下拉面板卡片；观察 Go 显示偏好，让隐藏与恢复立即更新面板布局。
 struct MenuBarView: View {
     @Environment(\.colorScheme) private var systemColorScheme
     @ObservedObject var viewModel: UsageViewModel
     @ObservedObject var radarStore: CodexRadarStore
     @ObservedObject var updater: AppUpdater
+    @ObservedObject private var openCodeGoStore = OpenCodeGoStore.shared
     let onSizeChange: ((CGSize) -> Void)?
     let onColorSchemeChange: ((ColorScheme) -> Void)?
     @State private var activityMode = TokenActivityMode.daily
@@ -414,7 +416,7 @@ struct MenuBarView: View {
         .foregroundStyle(.secondary)
     }
 
-    /// 汇总各供应商独立卡片；Go 自行观察启用与刷新状态，不依赖 Codex 快照存在。
+    /// 按供应商启用与显示偏好汇总独立卡片；Go 不依赖 Codex 快照，隐藏后不占布局。
     @ViewBuilder private var scrollContent: some View {
         VStack(alignment: .leading, spacing: 6) {
             if let snapshot = viewModel.snapshot {
@@ -440,11 +442,14 @@ struct MenuBarView: View {
                 }
             }
 
-            OpenCodeGoSection(
-                displaySettings: settings,
-                popoverSettings: popoverSettings,
-                onPaceMarkerHoverChange: updateActivePaceHelpText
-            )
+            if openCodeGoStore.isEnabled, openCodeGoStore.showsInPopover {
+                OpenCodeGoSection(
+                    store: openCodeGoStore,
+                    displaySettings: settings,
+                    popoverSettings: popoverSettings,
+                    onPaceMarkerHoverChange: updateActivePaceHelpText
+                )
+            }
 
             if geminiSettings.isEnabled, geminiSettings.showsInPopover {
                 GeminiModelsSection(

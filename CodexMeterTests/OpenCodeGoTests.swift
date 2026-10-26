@@ -2,8 +2,32 @@
 import XCTest
 import CodexMeterShared
 
-/// 使用真实解析器和 URLSession 替身验证请求，避免测试依赖用户账户或收费调用。
+/// 使用真实解析器和替身验证请求、刷新及显示偏好，避免依赖用户账户或收费调用。
 final class OpenCodeGoTests: XCTestCase {
+    /// 默认保持原有卡片可见；隐藏偏好可持久保存，且不会禁用供应商或清空已读取额度。
+    @MainActor func testPopoverVisibilityPersistsWithoutChangingUsage() async throws {
+        let name = UUID().uuidString
+        let defaults = UserDefaults(suiteName: name)!
+        defer { defaults.removePersistentDomain(forName: name) }
+        defaults.set("manual", forKey: AppBehaviorPreferenceKeys.refreshCadence)
+        let expected = try OpenCodeGoClient.parse(data: Data(#"{"usage":{"rolling":{"percent":25}}}"#.utf8))
+        let store = OpenCodeGoStore(defaults: defaults, keyProvider: { "test-go" }, fetcher: { _ in expected })
+        XCTAssertTrue(store.showsInPopover)
+        store.isEnabled = true
+        await store.refresh()
+
+        store.showsInPopover = false
+        XCTAssertFalse(defaults.bool(forKey: "openCodeGo.showsInPopover"))
+        XCTAssertTrue(store.isEnabled)
+        XCTAssertEqual(store.snapshot, expected)
+        let reloaded = OpenCodeGoStore(defaults: defaults, keyProvider: { "test-go" }, fetcher: { _ in expected })
+        XCTAssertFalse(reloaded.showsInPopover)
+
+        store.showsInPopover = true
+        XCTAssertTrue(defaults.bool(forKey: "openCodeGo.showsInPopover"))
+        XCTAssertEqual(store.snapshot, expected)
+    }
+
     /// Go 与 Codex 共用布局保存、图标拆分、双行堆叠、宽度和禁用过滤，缺失窗口不补假值。
     func testGoTokensParticipateInSharedMenuBarLayout() throws {
         let layout = MenuBarLayout(items: [

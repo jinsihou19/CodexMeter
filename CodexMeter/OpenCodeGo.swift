@@ -174,7 +174,7 @@ enum OpenCodeGoCredentials {
     }
 }
 
-/// 独立于 Codex 登录与网络状态刷新 Go 额度；关闭或换凭据时丢弃在途结果和旧账号快照。
+/// 独立管理 Go 额度刷新与显示偏好；隐藏卡片不影响后台刷新，关闭或换凭据时丢弃旧账号状态。
 @MainActor
 final class OpenCodeGoStore: ObservableObject {
     static let shared = OpenCodeGoStore()
@@ -182,6 +182,8 @@ final class OpenCodeGoStore: ObservableObject {
     @Published private(set) var errorMessage: String?
     @Published private(set) var isRefreshing = false
     @Published var isEnabled: Bool { didSet { defaults.set(isEnabled, forKey: "openCodeGo.enabled"); restart(clear: true) } }
+    /// 仅控制下拉面板中的卡片，保留设置预览、菜单栏项目和当前额度状态。
+    @Published var showsInPopover: Bool { didSet { defaults.set(showsInPopover, forKey: "openCodeGo.showsInPopover") } }
     private let defaults: UserDefaults
     private let keyProvider: () throws -> String
     private let fetcher: (String) async throws -> OpenCodeGoSnapshot
@@ -192,7 +194,7 @@ final class OpenCodeGoStore: ObservableObject {
     private var generation = 0
     private var activeKey: String?
 
-    /// 默认使用真实客户端；测试注入凭据和请求函数，避免访问用户钥匙串或网络。
+    /// 未保存显示偏好时沿用显示卡片的行为；测试可注入凭据和请求函数以隔离钥匙串与网络。
     init(defaults: UserDefaults = MenuBarDisplaySettings.sharedDefaults,
          keyProvider: @escaping () throws -> String = { try OpenCodeGoCredentials.load() },
          fetcher: @escaping (String) async throws -> OpenCodeGoSnapshot = { try await OpenCodeGoClient().fetch(apiKey: $0) }) {
@@ -200,6 +202,7 @@ final class OpenCodeGoStore: ObservableObject {
         self.keyProvider = keyProvider
         self.fetcher = fetcher
         isEnabled = defaults.bool(forKey: "openCodeGo.enabled")
+        showsInPopover = defaults.object(forKey: "openCodeGo.showsInPopover") as? Bool ?? true
     }
 
     /// 随所有者释放取消后台任务并注销偏好监听。

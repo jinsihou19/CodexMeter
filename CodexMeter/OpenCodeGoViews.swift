@@ -2,50 +2,23 @@
 import CodexMeterShared
 import SwiftUI
 
-/// 设置页只在用户保存时写入钥匙串；输入框不回显已保存的密钥。
+/// 设置页管理 Go 启用和卡片显示并保留额度预览；手动凭据在底部折叠且不回显密钥。
 struct OpenCodeGoSettingsView: View {
     @ObservedObject var store = OpenCodeGoStore.shared
     @State private var apiKey = ""
     @State private var message: String?
     @State private var showsAPIKeyHelp = false
 
-    /// 展示启用选项、凭据操作与真实额度预览，自动读取与手动覆盖均可用。
+    /// 显示开关仅控制下拉面板；预览仍可见，手动 Key 默认折叠供按需配置。
     var body: some View {
         Form {
             Section {
                 Toggle("启用 OpenCode Go", isOn: $store.isEnabled)
-            }
-            Section {
-                SecureField("输入 OpenCode Go API Key", text: $apiKey)
-                    .textFieldStyle(.roundedBorder)
-                HStack {
-                    Button("保存到钥匙串") { save(apiKey) }
-                        .disabled(apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                    Button("恢复自动读取") { save("") }
-                }
-                if let message { Text(message).font(.caption).textSelection(.enabled) }
-                Link("打开 OpenCode Go 控制台", destination: URL(string: "https://opencode.ai/console")!)
-            } header: {
-                HStack(spacing: 6) {
-                    Text("API Key")
-                    Button { showsAPIKeyHelp = true } label: {
-                        Image(systemName: "questionmark.circle")
-                            .foregroundStyle(.secondary)
-                            .frame(width: 24, height: 24)
-                            .contentShape(Rectangle())
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel("API Key 读取说明")
-                    // 显式响应悬停，避免分组标题里的系统 help 不触发或长时间等待。
-                    .onHover { showsAPIKeyHelp = $0 }
-                    .popover(isPresented: $showsAPIKeyHelp, arrowEdge: .bottom) {
-                        Text("默认读取 OPENCODE_API_KEY 或本机 OpenCode 的 opencode-go 登录凭据。手动保存的 Key 优先，仅保存在系统钥匙串。")
-                            .font(.callout)
-                            .frame(width: 320, alignment: .leading)
-                            .fixedSize(horizontal: false, vertical: true)
-                            .padding(12)
-                    }
-                }
+                SettingsToggleRow(
+                    title: "显示在下拉面板",
+                    subtitle: "在下拉面板中展示 OpenCode Go 额度卡片。",
+                    isOn: $store.showsInPopover
+                )
             }
             if store.isEnabled {
                 Section {
@@ -54,6 +27,43 @@ struct OpenCodeGoSettingsView: View {
                         displaySettings: MenuBarDisplaySettings(defaults: MenuBarDisplaySettings.sharedDefaults),
                         popoverSettings: PopoverDisplaySettings(defaults: MenuBarDisplaySettings.sharedDefaults)
                     )
+                }
+            }
+            Section {
+                DisclosureGroup {
+                    Text("默认自动读取本机凭据，仅在无法自动读取或需要覆盖时手动配置。")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    SecureField("输入 OpenCode Go API Key", text: $apiKey)
+                        .textFieldStyle(.roundedBorder)
+                    HStack {
+                        Button("保存到钥匙串") { save(apiKey) }
+                            .disabled(apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                        Button("恢复自动读取") { save("") }
+                    }
+                    if let message { Text(message).font(.caption).textSelection(.enabled) }
+                    Link("打开 OpenCode Go 控制台", destination: URL(string: "https://opencode.ai/console")!)
+                } label: {
+                    HStack(spacing: 6) {
+                        Text("API Key（按需配置）")
+                        Button { showsAPIKeyHelp = true } label: {
+                            Image(systemName: "questionmark.circle")
+                                .foregroundStyle(.secondary)
+                                .frame(width: 24, height: 24)
+                                .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel("API Key 读取说明")
+                        // 显式响应悬停，避免分组标题里的系统 help 不触发或长时间等待。
+                        .onHover { showsAPIKeyHelp = $0 }
+                        .popover(isPresented: $showsAPIKeyHelp, arrowEdge: .bottom) {
+                            Text("默认读取 OPENCODE_API_KEY 或本机 OpenCode 的 opencode-go 登录凭据。手动保存的 Key 优先，仅保存在系统钥匙串。")
+                                .font(.callout)
+                                .frame(width: 320, alignment: .leading)
+                                .fixedSize(horizontal: false, vertical: true)
+                                .padding(12)
+                        }
+                    }
                 }
             }
         }
