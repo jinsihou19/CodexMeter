@@ -1,3 +1,4 @@
+// 用量展示格式器：统一日期、数量和余额文案，保留快照中的原始数值。
 import Foundation
 
 public struct UsageFormatter: Sendable {
@@ -112,6 +113,18 @@ public struct UsageFormatter: Sendable {
         return window.remainingPercentText
     }
 
+    /// 将接口的十进制余额四舍五入为整数文本；缺失或不可解析的值原样保留，不修改快照。
+    public func creditsBalance(_ balance: String?) -> String? {
+        // 先严格校验数值，避免 Decimal 将占位符或部分可解析的文本误当作余额。
+        guard let balance,
+              Double(balance)?.isFinite == true,
+              var value = Decimal(string: balance, locale: Locale(identifier: "en_US_POSIX")) else { return balance }
+        var rounded = Decimal()
+        NSDecimalRound(&rounded, &value, 0, .plain)
+        return NSDecimalNumber(decimal: rounded).stringValue
+    }
+
+    /// 生成点数状态文案；有限余额使用统一的整数格式，无限及缺失状态保持独立语义。
     public func creditsStatus(_ credits: CreditsSnapshot?) -> String {
         guard let credits else {
             return AppLocalization.usesEnglish(language: language) ? "No credits information" : "无 credits 信息"
@@ -119,7 +132,7 @@ public struct UsageFormatter: Sendable {
         if credits.unlimited {
             return AppLocalization.usesEnglish(language: language) ? "Unlimited credits" : "无限 credits"
         }
-        if credits.hasCredits, let balance = credits.balance {
+        if credits.hasCredits, let balance = creditsBalance(credits.balance) {
             return AppLocalization.usesEnglish(language: language) ? "Credits balance \(balance)" : "credits 余额 \(balance)"
         }
         if credits.hasCredits {

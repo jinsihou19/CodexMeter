@@ -1291,7 +1291,7 @@ private struct CreditsBalanceSection: View {
             Text(
                 credits.unlimited
                     ? (AppLocalization.usesEnglish() ? "Unlimited" : "无限")
-                    : (credits.balance ?? "--")
+                    : (UsageFormatter().creditsBalance(credits.balance) ?? "--")
             )
             .font(.system(.body, design: .rounded).weight(.semibold))
             .monospacedDigit()

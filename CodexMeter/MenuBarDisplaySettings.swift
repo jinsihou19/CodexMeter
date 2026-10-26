@@ -961,7 +961,7 @@ extension StatusLineDisplay {
                 return textLine(id: "balance", value: "无限")
             }
             guard credits.hasCredits else { return nil }
-            return textLine(id: "balance", value: credits.balance)
+            return textLine(id: "balance", value: formatter.creditsBalance(credits.balance))
         case .todayCost:
             return estimatedCostLine(
                 id: "today-cost",

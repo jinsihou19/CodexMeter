@@ -1,3 +1,4 @@
+// 用量格式回归测试：覆盖日期、数量、余额及多语言文案。
 import XCTest
 @testable import CodexMeterShared
 
@@ -78,11 +79,28 @@ final class UsageFormatterTests: XCTestCase {
         XCTAssertEqual(formatter.tokenCount(100_000_000), "1.00亿")
     }
 
+    /// 验证点数只在展示时四舍五入，半点进位且无效或缺失值维持原有占位语义。
+    func testCreditsBalanceRoundsToInteger() {
+        let formatter = UsageFormatter(locale: Locale(identifier: "en_US_POSIX"), timeZone: .gmt)
+
+        XCTAssertEqual(formatter.creditsBalance("62625.7394250000"), "62626")
+        XCTAssertEqual(formatter.creditsBalance("12.5"), "13")
+        XCTAssertEqual(formatter.creditsBalance("12.499999999999999999"), "12")
+        XCTAssertEqual(formatter.creditsBalance("12"), "12")
+        XCTAssertEqual(formatter.creditsBalance("0.49"), "0")
+        XCTAssertEqual(formatter.creditsBalance("$12.34"), "$12.34")
+        XCTAssertEqual(formatter.creditsBalance("--"), "--")
+        XCTAssertEqual(formatter.creditsBalance("12oops"), "12oops")
+        XCTAssertEqual(formatter.creditsBalance("nan"), "nan")
+        XCTAssertNil(formatter.creditsBalance(nil))
+    }
+
+    /// 验证余额状态复用整数格式，并保留无限、无点数和信息缺失的提示。
     func testCreditsStatusCoversUnlimitedBalanceAndNoCredits() {
         let formatter = UsageFormatter(locale: Locale(identifier: "en_US_POSIX"), timeZone: .gmt)
 
         XCTAssertEqual(formatter.creditsStatus(CreditsSnapshot(hasCredits: true, unlimited: true, balance: nil)), "无限 credits")
-        XCTAssertEqual(formatter.creditsStatus(CreditsSnapshot(hasCredits: true, unlimited: false, balance: "12.5")), "credits 余额 12.5")
+        XCTAssertEqual(formatter.creditsStatus(CreditsSnapshot(hasCredits: true, unlimited: false, balance: "12.5")), "credits 余额 13")
         XCTAssertEqual(formatter.creditsStatus(CreditsSnapshot(hasCredits: false, unlimited: false, balance: "0")), "无 credits")
         XCTAssertEqual(formatter.creditsStatus(nil), "无 credits 信息")
     }
