@@ -532,7 +532,7 @@ final class UsageViewModelTests: XCTestCase {
         XCTAssertEqual(AppLocalization.string("通用", language: .chineseSimplified), "通用")
     }
 
-    /// 验证设置窗口提供独立“关于”页面，并在其中承载自动更新、手动检查与项目链接。
+    /// 验证关于页沿用其他页面的分组表单，并保留更新控件与项目链接。
     func testSettingsIncludesAboutAndUpdateControls() throws {
         let testFileURL = URL(fileURLWithPath: #filePath)
         let projectRoot = testFileURL
@@ -549,11 +549,13 @@ final class UsageViewModelTests: XCTestCase {
         let aboutStart = try XCTUnwrap(source.range(of: "private var aboutPane: some View"))
         let aboutEnd = try XCTUnwrap(source.range(of: "private var automaticallyChecksForUpdatesBinding"))
         let aboutSource = source[aboutStart.lowerBound..<aboutEnd.lowerBound]
-        XCTAssertTrue(aboutSource.contains("ScrollView"))
+        XCTAssertTrue(aboutSource.contains("Form {"))
+        XCTAssertTrue(aboutSource.contains(".formStyle(.grouped)"))
+        XCTAssertTrue(aboutSource.contains(".scrollContentBackground(.hidden)"))
         XCTAssertTrue(aboutSource.contains("SettingsToggleRow("))
         XCTAssertTrue(aboutSource.contains("subtitle: \"\""))
         XCTAssertFalse(aboutSource.contains("subtitle: automaticUpdateHelpText"))
-        XCTAssertFalse(aboutSource.contains("Form {"))
+        XCTAssertFalse(aboutSource.contains("ScrollView"))
     }
 
     /// 验证更新委托和通知查询不依赖 Swift 6.2 或新 SDK 的并发标注，并保持通知回调脱离主 actor。

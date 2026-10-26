@@ -583,10 +583,10 @@ struct SettingsView: View {
         .scrollContentBackground(.hidden)
     }
 
-    /// 关于页以紧凑分组展示产品身份、更新开关和官方项目入口。
+    /// 关于页沿用系统分组表单，让窗口缩放时的内容宽度与其他设置页一致。
     private var aboutPane: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 16) {
+        Form {
+            Section {
                 HStack(spacing: 16) {
                     Image(nsImage: settingsApplicationIcon)
                         .resizable()
@@ -605,57 +605,47 @@ struct SettingsView: View {
                     }
                 }
 
-                GroupBox(AppLocalization.string("更新")) {
-                    VStack(spacing: 10) {
-                        SettingsToggleRow(
-                            title: "自动检查更新",
-                            subtitle: "",
-                            isOn: automaticallyChecksForUpdatesBinding
-                        )
+            }
+            .listRowBackground(Color.clear)
 
-                        Divider()
+            Section(AppLocalization.string("更新")) {
+                SettingsToggleRow(
+                    title: "自动检查更新",
+                    subtitle: "",
+                    isOn: automaticallyChecksForUpdatesBinding
+                )
 
-                        HStack(spacing: 12) {
-                            Text(updateStatusText)
-                                .font(.callout)
-                                .foregroundStyle(.secondary)
-                            Spacer()
-                            CheckForUpdatesView(updater: updater)
-                        }
-                    }
-                    .padding(4)
-                }
-
-                GroupBox(AppLocalization.string("链接")) {
-                    VStack(spacing: 8) {
-                        Link(destination: URL(string: "https://github.com/jinsihou19/CodexMeter")!) {
-                            Label(AppLocalization.string("GitHub 项目主页"), systemImage: "chevron.left.forwardslash.chevron.right")
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                        }
-                        .buttonStyle(.plain)
-
-                        Divider()
-
-                        Link(destination: URL(string: "https://github.com/jinsihou19/CodexMeter/releases")!) {
-                            Label(AppLocalization.string("版本发布记录"), systemImage: "shippingbox")
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                        }
-                        .buttonStyle(.plain)
-
-                        Divider()
-
-                        Link(destination: URL(string: "https://github.com/jinsihou19/CodexMeter/issues")!) {
-                            Label(AppLocalization.string("反馈问题"), systemImage: "exclamationmark.bubble")
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                        }
-                        .buttonStyle(.plain)
-                    }
-                    .padding(4)
+                HStack(spacing: 12) {
+                    Text(updateStatusText)
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                    CheckForUpdatesView(updater: updater)
                 }
             }
-            .padding(20)
-            .frame(maxWidth: .infinity, alignment: .topLeading)
+
+            Section(AppLocalization.string("链接")) {
+                Link(destination: URL(string: "https://github.com/jinsihou19/CodexMeter")!) {
+                    Label(AppLocalization.string("GitHub 项目主页"), systemImage: "chevron.left.forwardslash.chevron.right")
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .buttonStyle(.plain)
+
+                Link(destination: URL(string: "https://github.com/jinsihou19/CodexMeter/releases")!) {
+                    Label(AppLocalization.string("版本发布记录"), systemImage: "shippingbox")
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .buttonStyle(.plain)
+
+                Link(destination: URL(string: "https://github.com/jinsihou19/CodexMeter/issues")!) {
+                    Label(AppLocalization.string("反馈问题"), systemImage: "exclamationmark.bubble")
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .buttonStyle(.plain)
+            }
         }
+        .formStyle(.grouped)
+        .scrollContentBackground(.hidden)
     }
 
     /// 把 Sparkle 的自动检查设置直接桥接到开关，沿用其持久化和更新周期管理。
