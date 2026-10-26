@@ -3,7 +3,8 @@ import AppKit
 import CodexMeterShared
 import SwiftUI
 
-private enum TokenActivityMode: String, CaseIterable, Identifiable {
+/// 云端活动图的统计口径，供下拉面板与 Codex 页面共同使用。
+enum TokenActivityMode: String, CaseIterable, Identifiable {
     case daily
     case weekly
     case cumulative
@@ -62,7 +63,7 @@ private enum CodexAnalyticsMode: String, CaseIterable, Identifiable {
 }
 
 /// 定义本机热力图的聚合口径，三种模式共享同一份逐日本机数据。
-private enum LocalUsageHeatmapMode: String, CaseIterable, Identifiable {
+enum LocalUsageHeatmapMode: String, CaseIterable, Identifiable {
     case daily
     case weekly
     case cumulative
@@ -539,7 +540,8 @@ private struct MenuBarAccountSummary: View {
     }
 }
 
-private struct QuotaSummaryGrid: View {
+/// 复用官方额度窗口的展示与节奏计算，供下拉面板和 Codex 页面使用。
+struct QuotaSummaryGrid: View {
     let snapshot: RateLimitSnapshot
     let formatter: UsageFormatter
     let settings: MenuBarDisplaySettings
@@ -897,9 +899,9 @@ private struct LocalCodexUsageSection: View {
                 buckets: snapshot.summary.dailyBuckets ?? [],
                 fetchedAt: snapshot.summary.fetchedAt,
                 mode: heatmapMode,
-                formatter: formatter
+                formatter: formatter,
+                weekCount: 26
             )
-            .frame(height: 82)
         }
     }
 
@@ -1061,14 +1063,17 @@ private struct LocalCodexUsageSection: View {
     }
 }
 
-/// 在下拉框内展示可悬停的 26 周热力图，并按选择改变聚合口径。
-private struct LocalMenuUsageHeatmap: View {
+/// 设置页展示 52 周、窄下拉面板展示 26 周，方格随宽度等比排列，月份与周列对齐。
+/// 复用本地逐日数据和聚合口径，不触发日志扫描或更改缓存。
+struct LocalMenuUsageHeatmap: View {
     let buckets: [LocalCodexDailyUsageBucket]
     let fetchedAt: Date
     let mode: LocalUsageHeatmapMode
     let formatter: UsageFormatter
+    let weekCount: Int
     @State private var hoveredBucketID: String?
 
+    /// 按可用宽度保持方格比例，悬停坐标与绘制使用同一尺寸，避免宽窗口中被拉扁。
     var body: some View {
         let colorValues = paddedBuckets()
         let detailValues = displayedBuckets(from: colorValues)
@@ -1076,7 +1081,7 @@ private struct LocalMenuUsageHeatmap: View {
         let activeBucket = detailValues.compactMap(\.self).first { $0.id == hoveredBucketID }
             ?? detailValues.compactMap(\.self).last
 
-        VStack(alignment: .leading, spacing: 4) {
+        VStack(alignment: .leading, spacing: 8) {
             if let activeBucket {
                 HStack(spacing: 6) {
                     Text(activeBucket.label).foregroundStyle(.secondary)
@@ -1091,26 +1096,25 @@ private struct LocalMenuUsageHeatmap: View {
             }
 
             GeometryReader { geometry in
-                let spacing: CGFloat = 2
-                let cellWidth = max(3, (geometry.size.width - spacing * 25) / 26)
+                let spacing: CGFloat = 3
+                let cellSize = max(3, (geometry.size.width - spacing * CGFloat(weekCount - 1)) / CGFloat(weekCount))
                 let rowCount = 7
-                let cellHeight = max(3, (geometry.size.height - spacing * CGFloat(rowCount - 1)) / CGFloat(rowCount))
                 HStack(spacing: spacing) {
-                    ForEach(0..<26, id: \.self) { column in
+                    ForEach(0..<weekCount, id: \.self) { column in
                         VStack(spacing: spacing) {
                             ForEach(0..<rowCount, id: \.self) { row in
                                 let index = column * rowCount + row
                                 let colorBucket = colorValues[index]
                                 let detailBucket = detailValues[index]
-                                RoundedRectangle(cornerRadius: min(2, cellWidth / 3))
+                                RoundedRectangle(cornerRadius: min(3, cellSize / 3))
                                     .fill(CodexMeterChartPalette.heatmapColor(value: colorBucket?.tokens ?? 0, maximum: maximum))
                                     .overlay {
                                         if detailBucket?.id == activeBucket?.id {
-                                            RoundedRectangle(cornerRadius: min(2, cellWidth / 3))
+                                            RoundedRectangle(cornerRadius: min(3, cellSize / 3))
                                                 .stroke(Color.primary.opacity(0.75), lineWidth: 1)
                                         }
                                     }
-                                    .frame(width: cellWidth, height: cellHeight)
+                                    .frame(width: cellSize, height: cellSize)
                             }
                         }
                     }
@@ -1119,14 +1123,44 @@ private struct LocalMenuUsageHeatmap: View {
                 .onContinuousHover { phase in
                     switch phase {
                     case let .active(location):
-                        let column = min(25, max(0, Int(location.x / (cellWidth + spacing))))
-                        let row = min(6, max(0, Int(location.y / (cellHeight + spacing))))
+                        let column = min(weekCount - 1, max(0, Int(location.x / (cellSize + spacing))))
+                        let row = min(6, max(0, Int(location.y / (cellSize + spacing))))
                         hoveredBucketID = detailValues[column * rowCount + row]?.id
                     case .ended:
                         hoveredBucketID = nil
                     }
                 }
             }
+            .aspectRatio(Double(weekCount) / 7.0, contentMode: .fit)
+
+            GeometryReader { geometry in
+                let step = (geometry.size.width + 3) / CGFloat(weekCount)
+                ForEach(Self.monthMarkers(endingAt: fetchedAt, weekCount: weekCount), id: \.column) { marker in
+                    Text(marker.date, format: .dateTime.month(.abbreviated))
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .fixedSize()
+                        .offset(x: min(CGFloat(marker.column) * step, max(0, geometry.size.width - 28)))
+                }
+            }
+            .frame(height: 16)
+        }
+    }
+
+    /// 为包含月初的周列生成刻度；最后一列只看已发生日期，避免提前显示下个月。
+    static func monthMarkers(endingAt date: Date, weekCount: Int, calendar: Calendar = .current) -> [(column: Int, date: Date)] {
+        let end = calendar.startOfDay(for: date)
+        guard let first = calendar.date(byAdding: .day, value: 1 - calendar.component(.weekday, from: end) - (weekCount - 1) * 7, to: end) else {
+            return []
+        }
+        var previousMonth: Int?
+        return (0..<weekCount).compactMap { column in
+            guard let weekEnd = calendar.date(byAdding: .day, value: column * 7 + 6, to: first) else { return nil }
+            let labelDate = min(weekEnd, end)
+            let month = calendar.component(.month, from: labelDate)
+            guard month != previousMonth else { return nil }
+            previousMonth = month
+            return (column, labelDate)
         }
     }
 
@@ -1184,10 +1218,10 @@ private struct LocalMenuUsageHeatmap: View {
         String(format: "$%.2f", value)
     }
 
-    /// 按当前星期对齐 26 周，并用 nil 表示未来日期。
+    /// 按当前星期对齐指定周数，并用 nil 表示未来日期。
     private func paddedBuckets(calendar: Calendar = .current) -> [LocalCodexDailyUsageBucket?] {
         let trailingDays = 7 - calendar.component(.weekday, from: fetchedAt)
-        let historyCount = 182 - trailingDays
+        let historyCount = weekCount * 7 - trailingDays
         let history = Array(buckets.suffix(historyCount)).map(Optional.some)
         let leading = Array<LocalCodexDailyUsageBucket?>(repeating: nil, count: max(0, historyCount - history.count))
         let trailing = Array<LocalCodexDailyUsageBucket?>(repeating: nil, count: trailingDays)
@@ -1569,7 +1603,8 @@ private struct CodexAnalyticsChart: View {
     }
 }
 
-private struct ProfileStatsSection: View {
+/// 展示官方云端统计；由所在页面决定显示栏目，不与本地用量相加。
+struct ProfileStatsSection: View {
     let stats: CodexProfileStats
     @Binding var activityMode: TokenActivityMode
     let formatter: UsageFormatter

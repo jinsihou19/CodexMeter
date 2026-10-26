@@ -7,6 +7,11 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+        A62000000000000000000006 /* MenuBarView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 10000000000000000000001C; };
+        A62000000000000000000007 /* CodexRadarView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 100000000000000000001005; };
+        A62000000000000000000002 /* CodexDashboardView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A62000000000000000000001; };
+        A62000000000000000000003 /* CodexDashboardView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A62000000000000000000001; };
+        A62000000000000000000005 /* CodexDashboardTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A62000000000000000000004; };
 		A61000000000000000000006 /* ThirdPartyNotices.txt in Resources */ = {isa = PBXBuildFile; fileRef = A61000000000000000000007; };
 		A61000000000000000000001 /* libzstd in Frameworks */ = {isa = PBXBuildFile; productRef = A61000000000000000000003 /* libzstd */; };
 		A61000000000000000000002 /* libzstd in Frameworks */ = {isa = PBXBuildFile; productRef = A61000000000000000000004 /* libzstd */; };
@@ -151,6 +156,8 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
+        A62000000000000000000001 /* CodexDashboardView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CodexDashboardView.swift; sourceTree = "<group>"; };
+        A62000000000000000000004 /* CodexDashboardTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CodexDashboardTests.swift; sourceTree = "<group>"; };
 		A61000000000000000000007 /* ThirdPartyNotices.txt */ = {isa = PBXFileReference; lastKnownFileType = text; path = CodexMeter/ThirdPartyNotices.txt; sourceTree = SOURCE_ROOT; };
 		A50000000000000000000004 /* CodexActivityHook.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CodexActivityHook.swift; sourceTree = "<group>"; };
 		A50000000000000000000005 /* CodexActivityHookTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CodexActivityHookTests.swift; sourceTree = "<group>"; };
@@ -283,6 +290,7 @@
 				100000000000000000001006 /* CodexRadarTests.swift */,
 				A30000000000000000000001 /* OpenCodeGoTests.swift */,
 				300000000000000000000003 /* LocalCodexUsageReaderTests.swift */,
+                A62000000000000000000004 /* CodexDashboardTests.swift */,
 				10000000000000000000002E /* Info.plist */,
 			);
 			path = CodexMeterTests;
@@ -320,6 +328,7 @@
 				100000000000000000001005 /* CodexRadarView.swift */,
 				100000000000000000000B04 /* MenuBarDisplaySettings.swift */,
 				100000000000000000000B05 /* SettingsView.swift */,
+                A62000000000000000000001 /* CodexDashboardView.swift */,
 				100000000000000000000D01 /* SettingsPanelLayout.swift */,
 				100000000000000000000D02 /* SettingsSections.swift */,
 				100000000000000000000D03 /* SettingsControls.swift */,
@@ -572,6 +581,10 @@
 				100000000000000000000C02 /* SettingsWindowOpener.swift in Sources */,
 				100000000000000000000C05 /* SettingsWindowPresenter.swift in Sources */,
 				100000000000000000000C07 /* SettingsView.swift in Sources */,
+                A62000000000000000000002 /* CodexDashboardView.swift in Sources */,
+                A62000000000000000000005 /* CodexDashboardTests.swift in Sources */,
+                A62000000000000000000006 /* MenuBarView.swift in Sources */,
+                A62000000000000000000007 /* CodexRadarView.swift in Sources */,
 				100000000000000000001022 /* MenuBarPopoverLayout.swift in Sources */,
 				100000000000000000000D06 /* SettingsPanelLayout.swift in Sources */,
 				100000000000000000000D08 /* SettingsSections.swift in Sources */,
@@ -612,6 +625,7 @@
 				A50000000000000000000001 /* CodexActivityHook.swift in Sources */,
 				100000000000000000000B01 /* MenuBarDisplaySettings.swift in Sources */,
 				100000000000000000000B03 /* SettingsView.swift in Sources */,
+                A62000000000000000000003 /* CodexDashboardView.swift in Sources */,
 				100000000000000000000D05 /* SettingsPanelLayout.swift in Sources */,
 				100000000000000000000D07 /* SettingsSections.swift in Sources */,
 				100000000000000000000D09 /* SettingsControls.swift in Sources */,

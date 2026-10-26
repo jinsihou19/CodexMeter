@@ -1,5 +1,40 @@
+// 设置页共用控件，统一操作行、偏好项与折叠区域的交互。
 import CodexMeterShared
 import SwiftUI
+
+/// 设置页折叠标题整行可点击，内容区仍由内部控件独立处理交互。
+struct SettingsDisclosureGroupStyle: DisclosureGroupStyle {
+    /// 沿用原生展开状态和按钮的键盘操作，避免点击内容时误收起父级。
+    func makeBody(configuration: Configuration) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Button {
+                withAnimation(.easeInOut(duration: 0.15)) {
+                    configuration.isExpanded.toggle()
+                }
+            } label: {
+                HStack(spacing: 8) {
+                    Image(systemName: "chevron.right")
+                        .font(.caption.weight(.semibold))
+                        .rotationEffect(.degrees(configuration.isExpanded ? 90 : 0))
+                        .accessibilityHidden(true)
+                    configuration.label
+                    Spacer(minLength: 0)
+                }
+                .frame(maxWidth: .infinity, minHeight: 32, alignment: .leading)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityValue(configuration.isExpanded
+                ? (AppLocalization.usesEnglish() ? "Expanded" : "已展开")
+                : (AppLocalization.usesEnglish() ? "Collapsed" : "已收起"))
+            if configuration.isExpanded {
+                configuration.content
+                    .disclosureGroupStyle(self)
+                    .padding(.top, 8)
+            }
+        }
+    }
+}
 
 /// 维护操作行直接展示名称与后果，避免破坏性或恢复动作只依赖悬停说明。
 struct SettingsActionRow: View {

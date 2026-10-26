@@ -242,13 +242,14 @@ struct SettingsView: View {
         themedContent
     }
 
-    /// 把外观偏好应用到整个设置窗口，确保原生分栏创建的独立呈现层使用同一配色。
+    /// 设置窗口统一应用语言、配色和整行可点击的折叠样式。
     private var themedContent: some View {
         let mode = currentSurfaceAppearanceSettings.appearanceMode
         let language = AppLanguage(rawValue: selectedLanguage) ?? .system
         return content
             .environment(\.locale, language.locale)
             .preferredColorScheme(mode.colorScheme)
+            .disclosureGroupStyle(SettingsDisclosureGroupStyle())
     }
 
     /// 当前选择直接参与视图渲染，确保切换语言时侧栏和窗口标题同步刷新。
@@ -1028,7 +1029,7 @@ struct SettingsView: View {
         .scrollContentBackground(.hidden)
     }
 
-    /// Codex 页只展示提供商状态与连接入口，低频路径和缓存操作统一折叠到诊断区。
+    /// Codex 页优先展示费用与用量，沿用共享快照；低频连接和诊断入口放在统计之后。
     private var codexPane: some View {
         Form {
             Section {
@@ -1057,8 +1058,15 @@ struct SettingsView: View {
 
                     Spacer(minLength: 12)
 
+                    if let plan = previewSnapshot?.accountPlanDisplayText {
+                        Text(plan)
+                            .font(.callout.weight(.semibold))
+                            .foregroundStyle(.secondary)
+                    }
+
                     Button {
                         configurationInfo = CodexConfigurationInfo.current()
+                        loadPreviewSnapshot()
                     } label: {
                         Image(systemName: "arrow.clockwise")
                     }
@@ -1066,6 +1074,8 @@ struct SettingsView: View {
                     .help(AppLocalization.string("重新读取 Codex 配置"))
                 }
             }
+
+            CodexDashboardSections(snapshot: previewSnapshot, displaySettings: currentSettings)
 
             Section(AppLocalization.string("连接")) {
                 SettingsCompactActionButton(

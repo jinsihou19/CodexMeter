@@ -597,6 +597,7 @@ final class UsageViewModelTests: XCTestCase {
     }
 
     /// 验证本机看板重排项目与任务，并只保留三种口径的可悬停热力图。
+    /// 保留菜单交互与诊断入口约束；热力图允许供 Codex 页面复用，不限定为文件私有。
     func testLocalUsageDashboardIncludesInteractivePages() throws {
         let projectRoot = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent()
@@ -625,7 +626,7 @@ final class UsageViewModelTests: XCTestCase {
         XCTAssertTrue(source.contains("estimatedCostUSD: estimatedCost(for: week)"))
         XCTAssertFalse(source.contains("LocalUsageDashboardPage"))
         XCTAssertTrue(source.contains("ForEach(LocalUsageHeatmapMode.allCases)"))
-        XCTAssertTrue(source.contains("private struct LocalMenuUsageHeatmap"))
+        XCTAssertTrue(source.contains("struct LocalMenuUsageHeatmap"))
         XCTAssertFalse(source.contains("private struct LocalUsageTrendChart"))
         XCTAssertTrue(source.contains("let rowCount = 7"))
         XCTAssertTrue(source.contains(".fill(CodexMeterChartPalette.heatmapColor(value: colorBucket?.tokens ?? 0, maximum: maximum))"))

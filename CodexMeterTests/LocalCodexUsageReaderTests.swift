@@ -5,7 +5,7 @@ import libzstd
 @testable import CodexMeterShared
 
 final class LocalCodexUsageReaderTests: XCTestCase {
-    /// 验证注入的 SQLite 行会生成 token 汇总、项目排行和四类今日任务。
+    /// 验证全年活动、旧缓存补读和今日汇总共用日志，迁移后保留备份且不重复累计。
     func testReaderBuildsUsageAndTaskBoard() async throws {
         let now = try XCTUnwrap(ISO8601DateFormatter().date(from: "2026-07-28T12:00:00Z"))
         let databaseURL = try temporaryFile(named: "state_5.sqlite", contents: Data())
@@ -16,7 +16,7 @@ final class LocalCodexUsageReaderTests: XCTestCase {
         let sessionURL = try temporaryFile(
             named: "rollout-test.jsonl",
             contents: Data("""
-            {"timestamp":"2025-01-01T02:00:00Z","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":900000,"cached_input_tokens":360000,"output_tokens":90000},"last_token_usage":{"input_tokens":900000,"cached_input_tokens":360000,"output_tokens":90000}}}}
+            {"timestamp":"2025-12-01T02:00:00Z","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":900000,"cached_input_tokens":360000,"output_tokens":90000},"last_token_usage":{"input_tokens":900000,"cached_input_tokens":360000,"output_tokens":90000}}}}
             {"timestamp":"2026-07-28T02:00:00Z","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":1000000,"cached_input_tokens":400000,"output_tokens":100000},"last_token_usage":{"input_tokens":100000,"cached_input_tokens":40000,"output_tokens":10000}}}}
             """.utf8)
         )
@@ -24,12 +24,13 @@ final class LocalCodexUsageReaderTests: XCTestCase {
             named: "session_index.jsonl",
             contents: Data("{\"id\":\"active\",\"thread_name\":\"侧边栏会话名称\"}\n".utf8)
         )
+        let diagnostics = testDiagnosticLog()
         let reader = LocalCodexUsageReader(
             now: { now },
             databaseURL: databaseURL,
             sessionIndexURL: sessionIndexURL,
             automationFiles: [automationURL],
-            diagnostics: testDiagnosticLog(),
+            diagnostics: diagnostics,
             query: { _, sql in
                 if sql.contains("AS threadCount") {
                     return Self.json([["threadCount": 4, "lastUpdatedAt": 1_799_900]])
@@ -63,7 +64,8 @@ final class LocalCodexUsageReaderTests: XCTestCase {
         XCTAssertEqual(snapshot.summary.threadCount, 4)
         XCTAssertEqual(snapshot.summary.projects.map(\.name), ["Beta"])
         XCTAssertEqual(snapshot.summary.projects.first?.tokens, 110_000)
-        XCTAssertEqual(snapshot.summary.dailyBuckets?.count, 190)
+        XCTAssertEqual(snapshot.summary.dailyBuckets?.count, 365)
+        XCTAssertEqual(snapshot.summary.dailyBuckets?.first(where: { $0.id == "2025-12-01" })?.tokens, 990_000)
         XCTAssertEqual(snapshot.summary.dailyBuckets?.first(where: { $0.id == "2026-07-28" })?.tokens, 110_000)
         XCTAssertEqual(snapshot.summary.dailyBuckets?.first(where: { $0.id == "2025-01-01" })?.tokens, nil)
         XCTAssertEqual(snapshot.summary.dailyBuckets?.last?.tokens, 110_000)
@@ -77,6 +79,24 @@ final class LocalCodexUsageReaderTests: XCTestCase {
         XCTAssertEqual(snapshot.taskBoard.doneCount, 1)
         XCTAssertEqual(snapshot.taskBoard.items.first(where: { $0.kind == .active })?.title, "侧边栏会话名称")
         XCTAssertEqual(snapshot.taskBoard.items.first(where: { $0.kind == .pending })?.title, "待处理预览")
+
+        let cacheURL = diagnostics.directoryURL.appendingPathComponent("LocalUsageCache.json")
+        var legacy = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: cacheURL)) as? [String: Any])
+        var sessions = try XCTUnwrap(legacy["sessions"] as? [String: [String: Any]])
+        for (path, var entry) in sessions {
+            entry["parserVersion"] = 9
+            let events = try XCTUnwrap(entry["recentEvents"] as? [[String: Any]])
+            entry["recentEvents"] = events.filter { ($0["day"] as? String ?? "") >= "2026-01-20" }
+            sessions[path] = entry
+        }
+        legacy["version"] = 9
+        legacy["sessions"] = sessions
+        let legacyData = try JSONSerialization.data(withJSONObject: legacy)
+        try legacyData.write(to: cacheURL)
+        let migrated = await reader.load()
+        XCTAssertEqual(migrated?.summary.dailyBuckets?.first(where: { $0.id == "2025-12-01" })?.tokens, 990_000)
+        XCTAssertEqual(migrated?.summary.lifetimeTokens, 1_100_000)
+        XCTAssertEqual(try Data(contentsOf: cacheURL.appendingPathExtension("v9-before-migration")), legacyData)
 
         let handle = try FileHandle(forWritingTo: sessionURL)
         defer { try? handle.close() }

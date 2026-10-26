@@ -225,7 +225,7 @@ struct LocalCodexUsageReader: Sendable {
         let calendar = Calendar.current
         let todayStart = calendar.startOfDay(for: fetchedAt)
         let sevenDayStart = calendar.date(byAdding: .day, value: -6, to: todayStart) ?? todayStart
-        let historyStart = calendar.date(byAdding: .day, value: -189, to: todayStart) ?? sevenDayStart
+        let historyStart = calendar.date(byAdding: .day, value: -364, to: todayStart) ?? sevenDayStart
         let monthStart = calendar.date(from: calendar.dateComponents([.year, .month], from: fetchedAt)) ?? todayStart
         let activeStart = fetchedAt.addingTimeInterval(-2 * 60 * 60)
         let sessionTitles = sessionTitlesByThreadID()
@@ -309,7 +309,7 @@ struct LocalCodexUsageReader: Sendable {
         return LocalCodexUsageSnapshot(summary: summary, taskBoard: taskBoard)
     }
 
-    /// 将稀疏事件日聚合补成连续 190 天；费用只展示已完整识别模型价格的日期。
+    /// 将稀疏事件日聚合补成连续一年，供 52 周活动图使用；费用只展示已完整识别模型价格的日期。
     private static func dailyBuckets(
         from rows: [DailyUsageRow],
         endingAt endDate: Date,
@@ -327,8 +327,8 @@ struct LocalCodexUsageReader: Sendable {
         labelFormatter.timeZone = calendar.timeZone
         labelFormatter.dateFormat = "MM/dd"
 
-        return (0..<190).compactMap { offset in
-            guard let date = calendar.date(byAdding: .day, value: offset - 189, to: endDate) else { return nil }
+        return (0..<365).compactMap { offset in
+            guard let date = calendar.date(byAdding: .day, value: offset - 364, to: endDate) else { return nil }
             let identifier = identifierFormatter.string(from: date)
             let row = rowsByDay[identifier]
             return LocalCodexDailyUsageBucket(
@@ -1578,7 +1578,7 @@ private struct SessionTokenUsage: Codable, Equatable, Sendable {
     }
 }
 
-/// 单个 rollout 的增量扫描进度和近半年事件，避免每次刷新重读大型历史日志。
+/// 单个 rollout 的增量扫描进度和近一年事件，避免每次刷新重读大型历史日志。
 private struct SessionUsageCache: Codable, Sendable {
     var readOffset: UInt64 = 0
     var latestTotal: SessionTokenUsage?
@@ -1599,7 +1599,7 @@ private struct SessionUsageCache: Codable, Sendable {
     var collectsEvents: Bool
     var events: [SessionUsageEvent] = []
 
-    /// 新缓存只为 fork 关系保存全量事件；普通会话仅保留近半年计价事件。
+    /// 新缓存只为 fork 关系保存全量事件；普通会话仅保留近一年计价事件。
     init(collectsEvents: Bool = false) {
         self.collectsEvents = collectsEvents
     }
@@ -1607,8 +1607,8 @@ private struct SessionUsageCache: Codable, Sendable {
 
 /// 保存所有历史 rollout；日期边界变化逐项迁移，未能重读的记录继续保留。
 private struct LocalUsageCache: Codable, Sendable {
-    // 服务档位解析修正后重读旧事件，避免继续沿用标准价。
-    static let currentVersion = 9
+    // 扩展为全年活动图后补读旧日志，避免半年缓存遗漏更早的日期；迁移保留原缓存备份。
+    static let currentVersion = 10
 
     var version = currentVersion
     var timeZoneIdentifier: String
