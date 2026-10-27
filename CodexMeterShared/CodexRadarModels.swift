@@ -34,12 +34,12 @@ public enum CodexRadarSource: String, Codable, CaseIterable, Identifiable, Senda
         }
     }
 
-    /// 只有完整提供各模型时序数据的来源才允许显示分值曲线。
+    /// 当前三题和其他来源均只提供当前快照，不将跨基准缓存拼成历史曲线。
     public var supportsScoreHistory: Bool {
-        self == .codexRadar
+        false
     }
 
-    /// 当前 RadarBench 绑定与 Radar Insights 只提供 GPT 系列，其他厂商从 AI IQ 展示。
+    /// 当前三题与 Radar Insights 只提供 GPT 系列，其他厂商从 AI IQ 展示。
     public var supportsOtherModels: Bool {
         self == .aiIQ
     }
@@ -279,7 +279,7 @@ public struct CodexRadarIQRun: Codable, Equatable, Identifiable, Sendable {
     public let model: String?
     public let reasoningEffort: String?
     public let costUSD: Double?
-    /// RadarBench 已覆盖题数；不是通过题数，旧 IQ 来源不填写。
+    /// 已参与计分的题数；不是通过题数，只有 IQ 的来源不填写。
     public let coveredTasks: Int?
 
     public init(

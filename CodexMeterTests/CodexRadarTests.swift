@@ -216,45 +216,40 @@ final class CodexRadarTests: XCTestCase {
         XCTAssertEqual(client.fetchCount, 0)
     }
 
-    /// 验证官网绑定动态提供6.1，旧家族不请求，缺分与零分分开，历史最多三个自然日。
-    func testDirectCodexRadarClientReadsCodexRadarHistory() async throws {
-        let transport = RadarBenchTestTransport()
-        let client = DirectCodexRadarClient { request in
-            try await transport.respond(to: request)
-        }
+    /// 验证单次请求读取 Terra 六档，按官网等权计分；零分、缺分和旧家族不混淆。
+    func testDirectCodexRadarClientReadsThreeTaskScores() async throws {
+        let transport = ThreeTaskTestTransport()
+        let client = DirectCodexRadarClient { try await transport.respond(to: $0) }
         let snapshot = try await client.fetchRadarSnapshot(source: .codexRadar)
         let series = try XCTUnwrap(snapshot.modelIQ?.allSeries)
-        let sol = series.filter { $0.model == "gpt-6.1-sol" }
+        let terra = series.filter { $0.model == "gpt-6.1-terra" }
         XCTAssertEqual(snapshot.source, .codexRadar)
-        XCTAssertEqual(sol.count, 3)
-        XCTAssertEqual(sol.first { $0.reasoningEffort == "low" }?.latest?.score, 0)
-        XCTAssertEqual(sol.first { $0.reasoningEffort == "high" }?.latest?.status, "provisional")
-        XCTAssertEqual(sol.first { $0.reasoningEffort == "high" }?.latest?.coveredTasks, 16)
-        XCTAssertNil(sol.first { $0.reasoningEffort == "high" }?.latest?.passed)
-        XCTAssertEqual(sol.first { $0.reasoningEffort == "max" }?.latest?.score, 104.28)
-        XCTAssertTrue(series.allSatisfy { $0.recentDays.count == 3 })
-        XCTAssertEqual(sol.first?.recentDays.map(\.score), [103, 104, 105])
+        XCTAssertEqual(terra.count, 6)
+        XCTAssertEqual(terra.first { $0.reasoningEffort == "ultra" }?.latest?.score, 132.5)
+        XCTAssertEqual(try XCTUnwrap(terra.first { $0.reasoningEffort == "max" }?.latest?.score), 144.88709677419354, accuracy: 0.000001)
+        XCTAssertEqual(series.first { $0.model == "gpt-6-luna" }?.latest?.score, 0)
+        XCTAssertEqual(series.filter { $0.model == "gpt-6-luna" }.count, 1)
+        XCTAssertFalse(series.contains { $0.model == "gpt-6-sol" || $0.model == "gpt-5.5" })
+        XCTAssertTrue(series.allSatisfy { $0.recentDays.isEmpty && $0.latest?.coveredTasks == 3 })
+        XCTAssertTrue(CodexRadarSource.allCases.allSatisfy { !$0.supportsScoreHistory })
+        XCTAssertEqual(snapshot.modelIQ?.updatedAt, "2026-10-27T01:31:02.710353+00:00")
         let requests = await transport.requests
-        XCTAssertEqual(requests.count, 9) // 一次绑定、八个最新家族档位；medium 缺分仍完成一次查询。
-        XCTAssertEqual(requests.first?.url?.path, "/data/radar-bench-binding.json")
-        for request in requests.dropFirst() {
-            let url = try XCTUnwrap(request.url)
-            let query = try XCTUnwrap(URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems)
-            XCTAssertEqual(url.host, "codexradar.com")
-            XCTAssertEqual(url.path, "/api/radar-bench-score")
-            XCTAssertTrue(["gpt-6.1-sol", "gpt-6-astra"].contains(query.first { $0.name == "model" }?.value ?? ""))
-            XCTAssertEqual(query.first { $0.name == "view" }?.value, "summary")
-            XCTAssertEqual(query.first { $0.name == "selection" }?.value, "user-selected-v1")
-            XCTAssertEqual(request.value(forHTTPHeaderField: "Cache-Control"), "no-store")
-        }
-        let peakRequests = await transport.peakRequests
-        XCTAssertLessThanOrEqual(peakRequests, 3)
+        XCTAssertEqual(requests.count, 1)
+        let request = try XCTUnwrap(requests.first)
+        XCTAssertEqual(request.url?.absoluteString, "https://codexradar.com/data/codex-three-task-results.json")
+        XCTAssertEqual(request.value(forHTTPHeaderField: "Cache-Control"), "no-store")
+
+        let missingTransport = ThreeTaskTestTransport(invalidField: "missing_latest")
+        let missingSnapshot = try await DirectCodexRadarClient { try await missingTransport.respond(to: $0) }
+            .fetchRadarSnapshot(source: .codexRadar)
+        XCTAssertFalse(missingSnapshot.modelIQ?.allSeries.contains { $0.model?.hasSuffix("-sol") == true } == true)
     }
 
-    /// 拒绝串模型、旧题集、不同刻度和异常分值，不能静默展示为可用成绩。
-    func testRadarBenchRejectsMismatchedAndInvalidScores() async throws {
-        for field in ["model", "benchmark", "task_set_sha256", "score_version", "score_max", "score", "coverage", "score_status"] {
-            let transport = RadarBenchTestTransport(invalidField: field)
+    /// 拒绝未知协议、重复档位、坏时间和异常分项，不能静默换算成可用成绩。
+    func testThreeTaskRadarRejectsInvalidResponses() async throws {
+        for field in ["schema", "protocol", "configurations", "task_count", "integrated_verified_at",
+                      "duplicate_rows", "empty_rows", "score100", "score", "candy"] {
+            let transport = ThreeTaskTestTransport(invalidField: field)
             let client = DirectCodexRadarClient { try await transport.respond(to: $0) }
             do {
                 _ = try await client.fetchRadarSnapshot(source: .codexRadar)
@@ -267,9 +262,9 @@ final class CodexRadarTests: XCTestCase {
         }
     }
 
-    /// 限流直接报告失败，不批量重试或悄悄回退到冻结的旧 JSON。
-    func testRadarBenchStopsOnRateLimit() async throws {
-        let transport = RadarBenchTestTransport(statusCode: 429)
+    /// 限流只请求一次并报告失败，不重试或悄悄回退到旧基准。
+    func testThreeTaskRadarStopsOnRateLimit() async throws {
+        let transport = ThreeTaskTestTransport(statusCode: 429)
         let client = DirectCodexRadarClient { try await transport.respond(to: $0) }
         do {
             _ = try await client.fetchRadarSnapshot(source: .codexRadar)
@@ -278,7 +273,28 @@ final class CodexRadarTests: XCTestCase {
             XCTAssertEqual(error as? DirectCodexRadarClientError, .httpStatus(429))
         }
         let requests = await transport.requests
-        XCTAssertLessThanOrEqual(requests.count, 4)
+        XCTAssertEqual(requests.count, 1)
+    }
+
+    /// 三题接口变更或响应无效时，保留最近一次成功的同基准快照和落盘内容。
+    @MainActor
+    func testThreeTaskRadarFailurePreservesSnapshot() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let transport = ThreeTaskTestTransport()
+        let snapshot = try await DirectCodexRadarClient { try await transport.respond(to: $0) }
+            .fetchRadarSnapshot(source: .codexRadar)
+        let cache = CodexRadarSnapshotStore(appGroupIdentifier: "", fallbackDirectory: directory)
+        try cache.save(snapshot)
+        let invalidTransport = ThreeTaskTestTransport(invalidField: "schema")
+        let store = CodexRadarStore(
+            client: DirectCodexRadarClient { try await invalidTransport.respond(to: $0) },
+            store: cache, settingsProvider: { CodexRadarSettings(source: .codexRadar) }
+        )
+        await store.refresh()
+        XCTAssertEqual(store.snapshot, snapshot)
+        XCTAssertEqual(try cache.load(), snapshot)
+        XCTAssertNotNil(store.errorMessage)
     }
 
     /// 手动与后台首轮均使用当前选中的来源，不额外请求其余供应商。
@@ -336,19 +352,23 @@ final class CodexRadarTests: XCTestCase {
         XCTAssertFalse(store.isRefreshing)
     }
 
-    /// 新评分使用独立缓存文件；旧 IQ 留在磁盘，但不再被新雷达加载。
-    func testRadarBenchCacheDoesNotLoadLegacyIQ() throws {
+    /// 新评分使用独立缓存文件；旧 IQ 和64题基准保留在磁盘，但不再加载。
+    func testThreeTaskRadarCacheDoesNotLoadOlderScores() throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-        let oldStore = CodexRadarSnapshotStore(
-            appGroupIdentifier: "", fallbackDirectory: directory, fileName: "latest-codex-radar-v1.json"
-        )
-        try oldStore.save(CodexRadarSnapshot(
-            fetchedAt: Date(), monitoredAt: nil, timezone: nil,
-            prediction: nil, modelIQ: nil, source: .codexRadar
-        ))
+        defer { try? FileManager.default.removeItem(at: directory) }
+        for version in [1, 2] {
+            let oldStore = CodexRadarSnapshotStore(
+                appGroupIdentifier: "", fallbackDirectory: directory,
+                fileName: "latest-codex-radar-v\(version).json"
+            )
+            try oldStore.save(CodexRadarSnapshot(
+                fetchedAt: Date(), monitoredAt: nil, timezone: nil,
+                prediction: nil, modelIQ: nil, source: .codexRadar
+            ))
+            XCTAssertNotNil(try oldStore.load())
+        }
         let currentStore = CodexRadarSnapshotStore(appGroupIdentifier: "", fallbackDirectory: directory)
         XCTAssertNil(try currentStore.load())
-        XCTAssertNotNil(try oldStore.load())
     }
 
     /// 验证 Radar Insights 只提供当前综合分，不把推荐趋势拼成不完整历史。
@@ -518,7 +538,7 @@ final class CodexRadarTests: XCTestCase {
         try store.save(snapshot)
 
         XCTAssertEqual(try store.load(), snapshot)
-        XCTAssertEqual(store.snapshotURL().lastPathComponent, "latest-codex-radar-v2.json")
+        XCTAssertEqual(store.snapshotURL().lastPathComponent, "latest-codex-radar-v3.json")
     }
 
     /// 验证雷达缓存遇到不可用 App Group 时仍能回退写入，避免首次拉取成功却无法落盘。
@@ -606,70 +626,64 @@ private final class CountingCodexRadarClient: CodexRadarFetching, @unchecked Sen
     }
 }
 
-/// 提供真实绑定与聚合响应形状的内存传输，检查请求数量、并发上限与字段校验。
-private actor RadarBenchTestTransport {
+/// 三题 JSON 的内存传输；记录请求并注入边界错误，测试不依赖公网或站方改分。
+private actor ThreeTaskTestTransport {
     private(set) var requests: [URLRequest] = []
-    private(set) var peakRequests = 0
-    private var inFlight = 0
     private let invalidField: String?
     private let statusCode: Int
 
-    /// 仅改变指定的边界字段或 HTTP 状态，避免测试依赖公网和固定日期。
+    /// 仅改变指定边界字段或 HTTP 状态，正常样例包含官网 Terra 的真实计分输入。
     init(invalidField: String? = nil, statusCode: Int = 200) {
         self.invalidField = invalidField
         self.statusCode = statusCode
     }
 
-    /// 绑定后只接受 summary 查询；构造零分、缺分、暂定分与超过三天的日历史。
-    func respond(to request: URLRequest) async throws -> (Data, HTTPURLResponse) {
+    /// 返回旧版 Sol、最新 Sol/Terra、零分及缺分配置，验证筛选与一次请求即可更新。
+    func respond(to request: URLRequest) throws -> (Data, HTTPURLResponse) {
         requests.append(request)
-        inFlight += 1
-        peakRequests = max(peakRequests, inFlight)
-        defer { inFlight -= 1 }
-        try await Task.sleep(nanoseconds: 1_000_000)
         let url = try XCTUnwrap(request.url)
-        let query = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems ?? []
-        let model = query.first { $0.name == "model" }?.value
-        let effort = query.first { $0.name == "effort" }?.value ?? "max"
-        var body: [String: Any]
-        let code: Int
-        if let model {
-            code = statusCode
-            var calendar = Calendar(identifier: .gregorian)
-            calendar.timeZone = TimeZone(secondsFromGMT: 0)!
-            let today = calendar.startOfDay(for: Date())
-            let historyPoints: [[String: Any]] = (0..<6).map { index in
-                ["at": today.addingTimeInterval(Double(index - 5) * 86400).ISO8601Format(),
-                 "score": 100 + index, "coverage": 64, "required_tasks": 64, "score_status": "complete"]
-            }
-            let coverage = effort == "high" ? 16 : 64
-            body = [
-                "model": model, "effort": effort, "benchmark": "test64", "task_set_sha256": "hash64",
-                "score_version": "radar-bench-v2-150", "score_max": 150,
-                "score": effort == "medium" ? NSNull() : effort == "low" ? 0.0 : 104.28,
-                "coverage": coverage, "required_tasks": 64,
-                "score_status": coverage == 64 ? "complete" : "provisional",
-                "detail_metrics": ["latest_graded_at": today.ISO8601Format()],
-                "history": ["model": model, "effort": effort, "score_version": "radar-bench-v2-150",
-                            "score_max": 150, "time_zone": "UTC", "bucket": "day", "points": historyPoints]
-            ]
-            if let invalidField {
-                switch invalidField {
-                case "score_max": body[invalidField] = 100
-                case "score": body[invalidField] = 151
-                case "coverage": body[invalidField] = 65
-                default: body[invalidField] = "wrong"
-                }
-            }
-        } else {
-            code = 200
-            let selections = ["gpt-6-sol", "gpt-6.1-sol", "gpt-6-astra", "gpt-5.5"].flatMap { model in
-                ["low", "medium", "high", "max"].map { ["model": model, "effort": $0] }
-            }
-            body = ["enabled": true, "production_read_verified": true, "benchmark": "test64",
-                    "task_set_sha256": "hash64", "total_tasks": 64, "model_efforts": selections]
+        var rows: [[String: Any]] = [
+            ["model": "gpt-6-sol", "effort": "max",
+             "pompeii": ["score100": 80], "pelican": ["score": 80], "candy": ["correct": true]],
+            ["model": "gpt-6.1-sol", "effort": "max",
+             "pompeii": ["score100": 90], "pelican": ["score": 90], "candy": ["correct": true]]
+        ]
+        rows += ["ultra", "max", "xhigh", "high", "medium", "low"].map { effort in
+            ["model": "gpt-6.1-terra", "effort": effort,
+             "pompeii": ["score100": effort == "max" ? 96.7741935483871 : 75.0],
+             "pelican": ["score": effort == "max" ? 93.0 : 90.0], "candy": ["correct": true]]
         }
-        let response = try XCTUnwrap(HTTPURLResponse(url: url, statusCode: code, httpVersion: nil, headerFields: nil))
+        rows += [
+            ["model": "gpt-6-luna", "effort": "low",
+             "pompeii": ["score100": 0], "pelican": ["score": 0], "candy": ["correct": false]],
+            ["model": "gpt-6-luna", "effort": "high",
+             "pompeii": ["score100": NSNull()], "pelican": ["score": 0], "candy": ["correct": false]],
+            ["model": "gpt-5.5", "effort": "max",
+             "pompeii": ["score100": 100], "pelican": ["score": 100], "candy": ["correct": true]]
+        ]
+        switch invalidField {
+        case "duplicate_rows": rows.append(rows[1])
+        case "empty_rows": rows = []
+        case "score100": rows[1]["pompeii"] = ["score100": -1]
+        case "score": rows[1]["pelican"] = ["score": 101]
+        case "candy": rows[1]["candy"] = ["correct": "unknown"]
+        case "missing_latest": rows[1]["pompeii"] = ["score100": NSNull()]
+        default: break
+        }
+        var body: [String: Any] = [
+            "schema": "codex-three-task-results/1", "protocol": "codex-independent-three-v1",
+            "configurations": rows.count, "task_count": 3,
+            "integrated_verified_at": "2026-10-27T01:31:02.710353+00:00", "rows": rows
+        ]
+        if let invalidField {
+            switch invalidField {
+            case "schema", "protocol", "integrated_verified_at": body[invalidField] = "wrong"
+            case "configurations": body[invalidField] = rows.count + 1
+            case "task_count": body[invalidField] = 4
+            default: break
+            }
+        }
+        let response = try XCTUnwrap(HTTPURLResponse(url: url, statusCode: statusCode, httpVersion: nil, headerFields: nil))
         return (try JSONSerialization.data(withJSONObject: body), response)
     }
 }

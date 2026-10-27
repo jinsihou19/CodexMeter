@@ -12,8 +12,8 @@ public struct CodexRadarSnapshotStore: Sendable {
     public init(
         appGroupIdentifier: String = UsageSnapshotStore.defaultAppGroupIdentifier,
         fallbackDirectory: URL? = nil,
-        // 雷达Bench评分口径已变化，独立缓存避免把旧 IQ 当作新雷达分展示；旧文件保留。
-        fileName: String = "latest-codex-radar-v2.json"
+        // 三题与旧 RadarBench 基准独立，升级后不加载旧分值和历史；旧文件保留。
+        fileName: String = "latest-codex-radar-v3.json"
     ) {
         self.appGroupIdentifier = appGroupIdentifier
         self.usesDefaultFallbackDirectory = fallbackDirectory == nil

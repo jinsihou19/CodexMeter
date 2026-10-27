@@ -1,7 +1,7 @@
 import CodexMeterShared
 import SwiftUI
 
-// 本文件负责降智雷达可视化，区分 RadarBench 雷达分与其他来源的 IQ 口径。
+// 本文件负责降智雷达可视化，区分三题等权雷达分与其他来源的 IQ 口径。
 
 /// 下拉面板里的降智雷达区块；展示最新 IQ 分数、历史折线和拉取状态。
 struct CodexRadarSection: View {
@@ -249,11 +249,11 @@ struct CodexRadarSection: View {
         }
     }
 
-    /// 说明当前评分口径；RadarBench 使用满分150，不沿用旧 IQ 的常态区间。
+    /// 标明三题等权、满分150，避免和旧基准或 IQ 混淆。
     private func footer(snapshot: CodexRadarSnapshot) -> some View {
         HStack(alignment: .firstTextBaseline, spacing: 8) {
             Text(settings.source == .codexRadar
-                 ? (AppLocalization.usesEnglish() ? "RadarBench · out of 150" : "RadarBench · 满分150")
+                 ? (AppLocalization.usesEnglish() ? "3 tasks · out of 150" : "三题等权 · 满分150")
                  : settings.source == .aiIQ ? "Composite IQ" : AppLocalization.string("常态 90-110"))
                 .foregroundStyle(.secondary)
             Spacer(minLength: 8)
@@ -265,11 +265,11 @@ struct CodexRadarSection: View {
         .font(.caption2)
     }
 
-    /// 新雷达标注真实判分时间；没有上游时间时只显示抓取时间。
+    /// 三题标注上游数据核验时间；没有上游时间时只显示抓取时间。
     private func syncText(snapshot: CodexRadarSnapshot) -> String {
         if let updatedAt = snapshot.modelIQ?.updatedAt.flatMap(CodexRadarDateFormatter.shortDateTime) {
             if settings.source == .codexRadar {
-                return AppLocalization.usesEnglish() ? "Graded \(updatedAt)" : "最近判分 \(updatedAt)"
+                return AppLocalization.usesEnglish() ? "Updated \(updatedAt)" : "数据更新 \(updatedAt)"
             }
             return AppLocalization.usesEnglish() ? "Model IQ updated \(updatedAt)" : "模型IQ更新 \(updatedAt)"
         }

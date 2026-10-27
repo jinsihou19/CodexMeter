@@ -36,7 +36,7 @@
 - 可独立开关额度、重置卡、Profile 概览、Token 活动、活动洞察和常用插件模块。
 - 本机消耗与成本支持概览、趋势、项目和任务模块；趋势可以切换每日、每周和累计口径。
 - 支持 26 周 Token 热力图、项目消耗排行和今日任务分类。
-- Codex Radar 支持模型矩阵、模型 IQ 卡片和历史折线图，并可独立启停。
+- Codex Radar 支持模型矩阵、三题雷达分或模型 IQ 卡片，并可独立启停。
 
 ### 本机统计与成本
 
@@ -149,7 +149,7 @@ Astra 支持缓存读取、缓存写入、272K 输入阈值和日志明确记录
 
 ### 其他网络数据
 
-- Codex Radar 读取 <https://codexradar.com/current.json>，只用于模型雷达展示。
+- Codex Radar 读取 <https://codexradar.com/data/codex-three-task-results.json>，跟随官网展示庞贝、鹈鹕、糖果三题等权的 150 分总分。此来源是单批次快照，不提供历史曲线；使用独立缓存隔离旧 RadarBench 基准。
 - Antigravity 额度优先读取本地服务；本地服务不可用时才尝试已有 Google OAuth 配置。
 - 活动 Hook 只写入轻量状态，不包含 prompt、transcript 或工具输出。
 
