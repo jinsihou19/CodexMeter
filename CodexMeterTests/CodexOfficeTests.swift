@@ -1,5 +1,8 @@
 // 公司监控的采集、隐私、状态归约和稳定工位测试；全部写入独立临时目录。
+import AppKit
 import CodexMeterShared
+import SceneKit
+import simd
 import XCTest
 
 /// 通过原生 Hook 写入到页面读取的完整链路验证详细信息，不把演示通过当成真实接入通过。
@@ -361,6 +364,187 @@ final class CodexOfficeTests: XCTestCase {
         }
     }
 
+    /// 相同项目名的不同目录分别设立部门，新同事加入不会改变原来的部门与工位。
+    @MainActor
+    func testStableSeatAssignmentsAcrossProjectsAndStatusChanges() {
+        let first = person("b", path: "/one/Client")
+        let second = person("c", path: "/two/Client")
+        var book = CodexOfficeSeatBook()
+        book.assign([first, second])
+        let firstRoom = CodexOfficeSeatBook.Room(project: first.projectPath, index: 0)
+        let secondRoom = CodexOfficeSeatBook.Room(project: second.projectPath, index: 0)
+        let room = book.rooms[firstRoom]
+        let seat = book.seats[first.projectPath]?[first.id]
+        var resting = first
+        resting.status = .idle
+        book.assign([person("a", path: first.projectPath), resting, second, person("d", path: "/another/project")])
+        XCTAssertEqual(book.rooms[firstRoom], room)
+        XCTAssertEqual(book.seats[first.projectPath]?[first.id], seat)
+        XCTAssertNotEqual(book.rooms[firstRoom], book.rooms[secondRoom])
+        let replacement = person("replacement", path: first.projectPath)
+        let remaining = book.seats[first.projectPath]?["a"]
+        book.assign([person("a", path: first.projectPath), replacement])
+        XCTAssertEqual(book.seats[first.projectPath]?[replacement.id], seat)
+        XCTAssertEqual(book.seats[first.projectPath]?["a"], remaining)
+        XCTAssertNil(book.seats[first.projectPath]?[first.id])
+        XCTAssertNil(book.rooms[secondRoom])
+    }
+
+    /// 使用真实 SceneKit 视口回归切换数据源后的取景，演示不得继承真实公司的空楼层。
+    @MainActor
+    func testSceneReframesWhenSwitchingFromLiveToDemo() {
+        let director = CodexOfficeScene()
+        let view = OfficeCanvasView(frame: NSRect(x: 0, y: 0, width: 700, height: 400))
+        view.scene = director.scene
+        director.view = view
+        let live = (0..<24).map { person("live-\($0)", path: "/project-\($0 / 4)") }
+        director.update(employees: live, selected: nil, isNight: false, paused: true, cameraRequest: 0, reduceMotion: true, isDemo: false)
+        let liveScale = director.camera.camera!.orthographicScale
+        let demo = (0..<2).map { person("demo-\($0)", path: "demo/project") }
+        director.update(employees: demo, selected: nil, isNight: false, paused: true, cameraRequest: 1, reduceMotion: true, isDemo: true)
+        let demoScale = director.camera.camera!.orthographicScale
+        XCTAssertTrue(demoScale.isFinite)
+        XCTAssertGreaterThan(demoScale, 0)
+        XCTAssertLessThan(demoScale, liveScale)
+        view.scene = nil
+    }
+
+    /// 首次从空场景载入真实会话必须重取全景，重复全景不能因上一帧缩放而越调越远。
+    @MainActor
+    func testSceneFramesFirstPopulationAndRepeatedOverviewIsStable() {
+        let director = CodexOfficeScene()
+        let view = OfficeCanvasView(frame: NSRect(x: 0, y: 0, width: 1080, height: 540))
+        view.scene = director.scene
+        director.view = view
+        director.update(employees: [], selected: nil, isNight: false, paused: true, cameraRequest: 0, reduceMotion: true, isDemo: false)
+        let emptyScale = director.camera.camera!.orthographicScale
+        let live = (0..<32).map { person("live-\($0)", path: "/project-\($0 / 4)") }
+        director.update(employees: live, selected: nil, isNight: false, paused: true, cameraRequest: 0, reduceMotion: true, isDemo: false)
+        let liveScale = director.camera.camera!.orthographicScale
+        XCTAssertGreaterThan(liveScale, emptyScale)
+        director.camera.camera?.orthographicScale = 5
+        director.resetCamera()
+        XCTAssertEqual(director.camera.camera!.orthographicScale, liveScale, accuracy: 0.0001)
+        director.resetCamera()
+        XCTAssertEqual(director.camera.camera!.orthographicScale, liveScale, accuracy: 0.0001)
+        view.scene = nil
+    }
+
+    /// 已经离开工位又收到新状态时，必须从当前路径段继续走，经过门口才能换房间。
+    func testWalkRouteKeepsDoorwayWhenRetargeting() {
+        let door = CGPoint(x: 0, y: 5)
+        let aisle = CGPoint(x: -1.3, y: 5)
+        let desk = CGPoint(x: -5, y: 5)
+        let otherDoor = CGPoint(x: 0, y: 12)
+        let otherDesk = CGPoint(x: 3, y: 12)
+        let current = CGPoint(x: -3, y: 5)
+        let exit = [desk, aisle, door, CGPoint(x: 0, y: -1), CGPoint(x: -2, y: -1)]
+        XCTAssertEqual(OfficeWalkRoute.itinerary(from: current, leaving: exit, entering: [otherDoor, otherDesk]),
+                       [current, aisle, door, otherDoor, otherDesk])
+        XCTAssertEqual(OfficeWalkRoute.itinerary(from: current, leaving: [door, aisle, desk], entering: [otherDoor, otherDesk]),
+                       [current, aisle, door, otherDoor, otherDesk])
+    }
+
+    /// SceneKit 推进动作时人物从休息区连续行走；别人返回工位不会让仍在休息的人重新排位。
+    @MainActor
+    func testSceneWalksBetweenLocationsWithoutMovingRestingCoworkers() throws {
+        let director = CodexOfficeScene()
+        var first = person("first", path: "/project")
+        var second = person("second", path: "/project")
+        first.status = .idle
+        second.status = .idle
+        director.update(employees: [first, second], selected: nil, isNight: false, paused: false, cameraRequest: 0, reduceMotion: false, isDemo: true)
+        let people = try XCTUnwrap(director.scene.rootNode.childNode(withName: "office-people", recursively: false))
+        let walker = try XCTUnwrap(people.childNode(withName: "employee:first", recursively: false))
+        let coworker = try XCTUnwrap(people.childNode(withName: "employee:second", recursively: false))
+        let start = walker.position
+        let coworkerPosition = coworker.position
+        let renderer = SCNRenderer(device: nil, options: nil)
+        renderer.scene = director.scene
+        renderer.pointOfView = director.camera
+        renderer.isPlaying = true
+        let viewport = CGSize(width: 320, height: 200)
+        _ = renderer.snapshot(atTime: 1, with: viewport, antialiasingMode: .none)
+        first.status = .working
+        director.update(employees: [first, second], selected: nil, isNight: false, paused: false, cameraRequest: 0, reduceMotion: false, isDemo: true)
+        XCTAssertEqual(walker.position.z, start.z, accuracy: 0.001)
+        _ = renderer.snapshot(atTime: 1.05, with: viewport, antialiasingMode: .none)
+        _ = renderer.snapshot(atTime: 1.2, with: viewport, antialiasingMode: .none)
+        XCTAssertGreaterThan(walker.presentation.position.z, start.z)
+        XCTAssertLessThan(walker.presentation.position.z - start.z, 1.0)
+        XCTAssertEqual(coworker.position.x, coworkerPosition.x, accuracy: 0.001)
+        XCTAssertEqual(coworker.position.z, coworkerPosition.z, accuracy: 0.001)
+    }
+
+    /// 验证前台座位、横竖工位的朝向和办公椅轮距。入座点要与椅心重合，脚轮须贴地且位于状态环内。
+    @MainActor
+    func testOfficeSeatsRestingCoworkersAtReceptionAndClustersDesks() throws {
+        let director = CodexOfficeScene()
+        let workers = (0..<6).map { person("worker-\($0)", path: "/project") }
+        let resting = (0..<7).map { index in
+            var employee = person("resting-\(index)", path: "/project")
+            employee.status = .idle
+            return employee
+        }
+        director.update(employees: workers + resting, selected: nil, isNight: false, paused: true,
+                        cameraRequest: 0, reduceMotion: true, isDemo: true)
+
+        let root = director.scene.rootNode
+        let building = try XCTUnwrap(root.childNode(withName: "office-building", recursively: false))
+        let reception = try XCTUnwrap(building.childNode(withName: "office-reception", recursively: true))
+        let sofas = reception.childNodes.filter { $0.name == "office-sofa" }
+            .sorted { $0.worldPosition.z < $1.worldPosition.z }
+        XCTAssertEqual(sofas.count, 2)
+        XCTAssertNotNil(reception.childNode(withName: "office-tool-room", recursively: false))
+        let people = try XCTUnwrap(root.childNode(withName: "office-people", recursively: false))
+        for (row, sofa) in sofas.enumerated() {
+            var cushionPositions = Set<CGFloat>()
+            for employee in resting.dropFirst(row * 3).prefix(3) {
+                let actor = try XCTUnwrap(people.childNode(withName: "employee:" + employee.id, recursively: false))
+                let seat = sofa.convertPosition(actor.worldPosition, from: nil)
+                XCTAssertEqual(seat.z, 0, accuracy: 0.001)
+                XCTAssertLessThan(abs(seat.x), 1.8)
+                XCTAssertTrue(cushionPositions.insert(seat.x).inserted)
+                XCTAssertEqual(simd_dot(actor.simdWorldFront, sofa.simdWorldFront), 1, accuracy: 0.001)
+            }
+        }
+        let overflow = try XCTUnwrap(people.childNode(withName: "employee:resting-6", recursively: false))
+        XCTAssertLessThan(overflow.worldPosition.z, OfficeBuilding.entrance.y)
+
+        let room = try XCTUnwrap(building.childNode(withName: "office-room", recursively: false))
+        let desks = try workers.map {
+            try XCTUnwrap(room.childNode(withName: "employee:" + $0.id, recursively: false))
+        }
+        for (first, second) in [(0, 2), (3, 4)] {
+            XCTAssertEqual(desks[first].position.x, desks[second].position.x, accuracy: 0.001)
+            XCTAssertGreaterThan(abs(desks[first].position.z - desks[second].position.z), 1)
+            XCTAssertLessThan(abs(desks[first].position.z - desks[second].position.z), 1.2)
+            XCTAssertEqual(simd_dot(desks[first].simdWorldFront, desks[second].simdWorldFront), -1, accuracy: 0.001)
+        }
+        for index in [1, 5] {
+            XCTAssertEqual(simd_dot(desks[0].simdWorldFront, desks[index].simdWorldFront), 0, accuracy: 0.001)
+            XCTAssertLessThan(desks[index].position.x, desks[0].position.x)
+        }
+        let rug = try XCTUnwrap(room.childNode(withName: "office-room-rug", recursively: false))
+        let rugTop = rug.worldPosition.y + (try XCTUnwrap(rug.geometry as? SCNBox)).height / 2
+        for (employee, desk) in zip(workers, desks) {
+            let actor = try XCTUnwrap(people.childNode(withName: "employee:" + employee.id, recursively: false))
+            let chair = try XCTUnwrap(desk.childNode(withName: "office-task-chair", recursively: false))
+            XCTAssertEqual(chair.worldPosition.x, actor.worldPosition.x, accuracy: 0.001)
+            XCTAssertEqual(chair.worldPosition.z, actor.worldPosition.z, accuracy: 0.001)
+            let casters = chair.childNodes.flatMap(\.childNodes).filter { $0.name == "office-chair-caster" }
+            XCTAssertEqual(casters.count, 5)
+            for caster in casters {
+                let wheel = try XCTUnwrap(caster.geometry as? SCNCylinder)
+                let position = chair.convertPosition(caster.worldPosition, from: nil)
+                XCTAssertEqual(caster.worldPosition.y - wheel.radius, rugTop, accuracy: 0.003)
+                XCTAssertLessThan(hypot(position.x, position.z) + wheel.radius, 0.42)
+            }
+            let towardsDesk = simd_normalize(desk.simdWorldPosition - actor.simdWorldPosition)
+            XCTAssertEqual(simd_dot(-actor.simdWorldFront, towardsDesk), 1, accuracy: 0.001)
+        }
+    }
+
     /// 空闲超时会退出三维场景，名册仍保留真实会话与退出原因。
     @MainActor
     func testIdleSessionLeavesSceneAndStaysInRoster() throws {
@@ -380,6 +564,267 @@ final class CodexOfficeTests: XCTestCase {
         XCTAssertEqual(store.employees.first?.isOnSite, false)
     }
 
+    /// 低人数时始终有两间房，只为在岗的人摆桌。换主题不能影响取景和沙发位置。
+    @MainActor
+    func testOfficeBuildsOnlyOccupiedDesksAndChangesThemeInPlace() throws {
+        let director = CodexOfficeScene()
+        let canvas = OfficeCanvasView(frame: NSRect(x: 0, y: 0, width: 900, height: 560))
+        canvas.scene = director.scene
+        director.view = canvas
+        var worker = person("worker", path: "/working")
+        var resting = person("resting", path: "/break")
+        resting.status = .idle
+        let history = (0..<20).map { index in
+            var past = person("history-\(index)", path: "/past-\(index)")
+            past.isOnSite = false
+            return past
+        }
+        director.update(employees: history + [worker, resting], selected: nil, isNight: false, paused: false, cameraRequest: 0, reduceMotion: true, isDemo: false)
+        let building = try XCTUnwrap(director.scene.rootNode.childNode(withName: "office-building", recursively: false))
+        let people = try XCTUnwrap(director.scene.rootNode.childNode(withName: "office-people", recursively: false))
+        XCTAssertEqual(building.childNodes.filter { $0.name == "office-room" }.count, 2)
+        XCTAssertNotNil(building.childNode(withName: "employee:worker", recursively: true))
+        XCTAssertNil(building.childNode(withName: "employee:resting", recursively: true))
+        XCTAssertEqual(people.childNodes.count, 2)
+        let rest = try XCTUnwrap(people.childNode(withName: "employee:resting", recursively: false))
+        let place = rest.simdWorldPosition
+        let fit = try XCTUnwrap(director.camera.camera).orthographicScale
+        let light = director.scene.background.contents as? NSColor
+        director.update(employees: history + [worker, resting], selected: nil, isNight: true, paused: false, cameraRequest: 0, reduceMotion: true, isDemo: false)
+        XCTAssertNotEqual(director.scene.background.contents as? NSColor, light)
+        XCTAssertEqual(rest.simdWorldPosition, place)
+        XCTAssertEqual(director.camera.camera?.orthographicScale, fit)
+
+        worker.isOnSite = false
+        director.update(employees: history + [worker, resting], selected: nil, isNight: true, paused: false, cameraRequest: 0, reduceMotion: true, isDemo: false)
+        XCTAssertEqual(building.childNodes.filter { $0.name == "office-room" }.count, 2)
+        XCTAssertNil(building.childNode(withName: "employee:worker", recursively: true))
+        XCTAssertEqual(people.childNodes.count, 1)
+        XCTAssertEqual(rest.simdWorldPosition, place)
+        XCTAssertEqual(try XCTUnwrap(director.camera.camera).orthographicScale, fit, accuracy: 0.0001)
+    }
+
+    /// 大项目占用多间房时会扩建；只剩后排的两位同事时，他们的工位与楼层一起收回首排。
+    @MainActor
+    func testOfficeCompactsRearWorkstationsIntoTwoRooms() throws {
+        let director = CodexOfficeScene()
+        let view = OfficeCanvasView(frame: NSRect(x: 0, y: 0, width: 900, height: 560))
+        view.scene = director.scene
+        director.view = view
+        let team = (0..<13).map { person(String(format: "worker-%02d", $0), path: "/alpha") }
+        let other = person("other", path: "/beta")
+        let last = person("last", path: "/gamma")
+        let tail = try XCTUnwrap(team.last)
+        director.update(employees: team + [other, last], selected: nil, isNight: false, paused: true,
+                        cameraRequest: 0, reduceMotion: true, isDemo: false)
+
+        let building = try XCTUnwrap(director.scene.rootNode.childNode(withName: "office-building", recursively: false))
+        let expandedScale = try XCTUnwrap(director.camera.camera).orthographicScale
+        let rearDesk = try XCTUnwrap(building.childNode(withName: "employee:" + tail.id, recursively: true))
+        let lastDesk = try XCTUnwrap(building.childNode(withName: "employee:" + last.id, recursively: true))
+        let rearZ = rearDesk.worldPosition.z
+        let lastZ = lastDesk.worldPosition.z
+        XCTAssertEqual(building.childNodes.filter { $0.name == "office-room" }.count, 5)
+
+        director.update(employees: [tail, last], selected: nil, isNight: false, paused: true,
+                        cameraRequest: 0, reduceMotion: true, isDemo: false)
+
+        XCTAssertEqual(building.childNodes.filter { $0.name == "office-room" }.count, 2)
+        XCTAssertLessThan(try XCTUnwrap(director.camera.camera).orthographicScale, expandedScale)
+        XCTAssertLessThan(try XCTUnwrap(building.childNode(withName: "employee:" + tail.id, recursively: true)).worldPosition.z, rearZ)
+        XCTAssertLessThan(try XCTUnwrap(building.childNode(withName: "employee:" + last.id, recursively: true)).worldPosition.z, lastZ)
+        XCTAssertNil(building.childNode(withName: "employee:" + other.id, recursively: true))
+    }
+
+    /// 紧凑布局的后墙必须闭合，两侧外墙跨过前台接缝，工具间后面只用一道共享隔断。
+    @MainActor
+    func testOfficeExteriorClosesPerimeterAndSharesToolPartition() throws {
+        let director = CodexOfficeScene()
+        director.update(employees: [], selected: nil, isNight: true, paused: true,
+                        cameraRequest: 0, reduceMotion: true, isDemo: false)
+        let building = try XCTUnwrap(director.scene.rootNode.childNode(withName: "office-building", recursively: false))
+        let facade = try XCTUnwrap(building.childNode(withName: "office-facade", recursively: true))
+        let exteriorSills = facade.childNodes.filter { $0.name == "office-wall-sill" }
+        let rear = try XCTUnwrap(exteriorSills.first { ($0.geometry as? SCNBox)?.width ?? 0 > 19 })
+        let rearShape = try XCTUnwrap(rear.geometry as? SCNBox)
+        let sides = exteriorSills.filter { ($0.geometry as? SCNBox)?.length ?? 0 > 15 }
+        XCTAssertEqual(sides.count, 2)
+        for side in sides {
+            let shape = try XCTUnwrap(side.geometry as? SCNBox)
+            XCTAssertLessThan(side.position.z - shape.length / 2, OfficeBuilding.firstRoomStart)
+            XCTAssertEqual(side.position.z + shape.length / 2, rear.position.z + rearShape.length / 2, accuracy: 0.001)
+            XCTAssertEqual(abs(side.position.x) - shape.width / 2, rearShape.width / 2, accuracy: 0.001)
+        }
+
+        let lobbyDividers = building.childNodes.filter {
+            $0.name == "office-wall-sill" && abs($0.position.z - OfficeBuilding.firstRoomStart) < 0.001
+        }
+        XCTAssertEqual(lobbyDividers.count, 2)
+        let toolRoom = try XCTUnwrap(building.childNode(withName: "office-tool-room", recursively: true))
+        let crossWalls = toolRoom.childNodes.filter {
+            guard $0.name == "office-wall-sill", let shape = $0.geometry as? SCNBox else { return false }
+            return shape.width > shape.length
+        }
+        XCTAssertEqual(crossWalls.count, 1)
+    }
+
+    /// 聚焦扩建后的首排时，地台仍须完整落在近远裁剪面内。近景只淡出前方窗框，复位后恢复外墙。
+    @MainActor
+    func testOfficeCloseUpKeepsYardInsideClipPlanes() throws {
+        let director = CodexOfficeScene()
+        let canvas = OfficeCanvasView(frame: NSRect(x: 0, y: 0, width: 900, height: 560))
+        canvas.scene = director.scene
+        director.view = canvas
+        let employees = (0..<6).map { person("worker-\($0)", path: "/project-\($0)") }
+        director.update(employees: employees, selected: nil, isNight: false, paused: true,
+                        cameraRequest: 0, reduceMotion: true, isDemo: false)
+        let facade = try XCTUnwrap(director.scene.rootNode.childNode(withName: "office-facade", recursively: true))
+        let panels = facade.childNodes.filter { $0.name == "office-facade-upper" }
+        let bases = facade.childNodes.filter { $0.name == "office-wall-sill" }
+        XCTAssertEqual(panels.count, 4)
+        XCTAssertTrue(panels.allSatisfy { $0.opacity == 1 })
+
+        director.update(employees: employees, selected: employees[0].id, isNight: false, paused: true,
+                        cameraRequest: 0, reduceMotion: true, isDemo: false)
+        let camera = director.camera
+        let lens = try XCTUnwrap(camera.camera)
+        XCTAssertLessThan(lens.orthographicScale, canvas.overviewScale)
+        let yard = try XCTUnwrap(director.scene.rootNode.childNode(withName: "office-garden", recursively: true))
+        let bounds = yard.boundingBox
+        for x in [bounds.min.x, bounds.max.x] {
+            for y in [bounds.min.y, bounds.max.y] {
+                for z in [bounds.min.z, bounds.max.z] {
+                    let corner = yard.convertPosition(SCNVector3(x, y, z), to: nil)
+                    let distance = simd_dot(SIMD3<Float>(corner) - camera.simdWorldPosition, camera.simdWorldFront)
+                    XCTAssertGreaterThan(Double(distance), lens.zNear)
+                    XCTAssertLessThan(Double(distance), lens.zFar)
+                }
+            }
+        }
+        XCTAssertEqual(panels.filter { $0.opacity < 0.5 }.count, 2)
+        XCTAssertTrue(bases.allSatisfy { $0.opacity == 1 })
+        director.resetCamera()
+        XCTAssertTrue(panels.allSatisfy { $0.opacity == 1 })
+    }
+
+    /// 模拟 AppKit 的机械滚轮输入，验证视野缩放且镜头不发生平移。
+    @MainActor
+    func testOfficeWheelZoomChangesOnlyOrthographicScale() throws {
+        let director = CodexOfficeScene()
+        let canvas = OfficeCanvasView(frame: NSRect(x: 0, y: 0, width: 700, height: 400))
+        canvas.scene = director.scene
+        director.view = canvas
+        director.resetCamera()
+        let camera = try XCTUnwrap(director.camera.camera)
+        let start = director.camera.position
+        let scale = camera.orthographicScale
+        let wheel = try XCTUnwrap(CGEvent(scrollWheelEvent2Source: nil, units: .line, wheelCount: 1, wheel1: 3, wheel2: 0, wheel3: 0))
+        wheel.setIntegerValueField(.scrollWheelEventDeltaAxis1, value: 3)
+        wheel.setDoubleValueField(.scrollWheelEventFixedPtDeltaAxis1, value: 3)
+        wheel.setIntegerValueField(.scrollWheelEventPointDeltaAxis1, value: 3)
+        let event = try XCTUnwrap(NSEvent(cgEvent: wheel))
+        XCTAssertGreaterThan(event.scrollingDeltaY, 0)
+        canvas.scrollWheel(with: event)
+        XCTAssertLessThan(camera.orthographicScale, scale)
+        XCTAssertEqual(director.camera.position.x, start.x, accuracy: 0.001)
+        XCTAssertEqual(director.camera.position.y, start.y, accuracy: 0.001)
+        XCTAssertEqual(director.camera.position.z, start.z, accuracy: 0.001)
+    }
+
+    /// 使用真实画布验证平移、旋转和单击。多次右键斜拖保持固定俯角、缩放和竖直方向。
+    @MainActor
+    func testOfficeMouseButtonsPanOrbitAndSelectIndependently() throws {
+        let director = CodexOfficeScene()
+        let canvas = OfficeCanvasView(frame: NSRect(x: 0, y: 0, width: 700, height: 400))
+        canvas.scene = director.scene
+        director.view = canvas
+        director.resetCamera()
+        var clicks: [CGPoint] = []
+        canvas.onClick = { clicks.append($0) }
+        let camera = director.camera
+        let lens = try XCTUnwrap(camera.camera)
+        let start = camera.simdWorldPosition
+        let forward = camera.simdWorldFront
+        let zoom = lens.orthographicScale
+        let pivot = canvas.orbitTarget
+
+        /// 创建画布本地的鼠标事件，测试不向系统发送输入。
+        func mouse(_ type: NSEvent.EventType, _ x: CGFloat, _ y: CGFloat) throws -> NSEvent {
+            try XCTUnwrap(NSEvent.mouseEvent(with: type, location: CGPoint(x: x, y: y), modifierFlags: [],
+                                            timestamp: 0, windowNumber: 0, context: nil, eventNumber: 0,
+                                            clickCount: 1, pressure: 1))
+        }
+
+        canvas.mouseDown(with: try mouse(.leftMouseDown, 240, 180))
+        canvas.mouseDragged(with: try mouse(.leftMouseDragged, 290, 200))
+        canvas.mouseUp(with: try mouse(.leftMouseUp, 290, 200))
+        let panned = camera.simdWorldPosition
+        let movedPivot = canvas.orbitTarget
+        XCTAssertGreaterThan(simd_distance(panned, start), 1)
+        XCTAssertEqual(simd_distance(camera.simdWorldFront, forward), 0, accuracy: 0.0001)
+        XCTAssertEqual(simd_distance(panned - start, movedPivot - pivot), 0, accuracy: 0.0001)
+
+        canvas.rightMouseDown(with: try mouse(.rightMouseDown, 240, 180))
+        canvas.rightMouseDragged(with: try mouse(.rightMouseDragged, 290, 200))
+        XCTAssertGreaterThan(simd_distance(camera.simdWorldFront, forward), 0.01)
+        let beforeVerticalDrag = camera.simdWorldPosition
+        canvas.rightMouseDragged(with: try mouse(.rightMouseDragged, 290, 390))
+        XCTAssertEqual(simd_distance(camera.simdWorldPosition, beforeVerticalDrag), 0, accuracy: 0.0001)
+        for (x, y): (CGFloat, CGFloat) in [(360, 270), (500, 80), (720, 390), (970, 160)] {
+            canvas.rightMouseDragged(with: try mouse(.rightMouseDragged, x, y))
+            XCTAssertEqual(camera.simdWorldFront.y, forward.y, accuracy: 0.0001)
+            XCTAssertEqual(camera.simdWorldRight.y, 0, accuracy: 0.0001)
+        }
+        canvas.rightMouseUp(with: try mouse(.rightMouseUp, 970, 160))
+        XCTAssertEqual(canvas.orbitTarget, movedPivot)
+        XCTAssertEqual(simd_distance(camera.simdWorldPosition, movedPivot), simd_distance(panned, movedPivot), accuracy: 0.001)
+        XCTAssertEqual(lens.orthographicScale, zoom)
+        director.resetCamera()
+        XCTAssertEqual(camera.simdWorldRight.y, 0, accuracy: 0.0001)
+        XCTAssertTrue(clicks.isEmpty)
+
+        canvas.mouseDown(with: try mouse(.leftMouseDown, 240, 180))
+        canvas.mouseUp(with: try mouse(.leftMouseUp, 240, 180))
+        XCTAssertEqual(clicks.count, 1)
+    }
+
+    /// 使用 Hook 和日志校正产生真实事件结构，验证旧事件、暂停积压和重复更新都不会触发飞行。
+    @MainActor
+    func testToolTrafficUsesOnlyNewHookAndTranscriptEvents() throws {
+        let fixture = try OfficeFixture()
+        defer { fixture.clean() }
+        let store = fixture.store()
+        var traffic = OfficeToolTraffic()
+        try fixture.record("UserPromptSubmit", seconds: 0)
+        try fixture.record("PreToolUse", call: "first", seconds: 0.25)
+        let baseline = fixture.now.addingTimeInterval(0.5)
+        store.refresh(now: baseline)
+        XCTAssertTrue(traffic.observe(store.employees, now: baseline, animated: true).isEmpty)
+        try fixture.record("PreToolUse", call: "second", seconds: 1)
+        let requestTime = fixture.now.addingTimeInterval(1.1)
+        store.refresh(now: requestTime)
+        let outbound = traffic.observe(store.employees, now: requestTime, animated: true)
+        XCTAssertEqual(outbound.map(\.employeeID), ["session"])
+        XCTAssertEqual(outbound.map(\.returning), [false])
+        XCTAssertTrue(traffic.observe(store.employees, now: requestTime, animated: true).isEmpty)
+
+        try fixture.appendReturn("second", seconds: 2)
+        let returnedAt = fixture.now.addingTimeInterval(2.1)
+        store.refresh(now: returnedAt)
+        let inbound = traffic.observe(store.employees, now: returnedAt, animated: true)
+        XCTAssertEqual(inbound.map(\.returning), [true])
+        XCTAssertEqual(inbound.map(\.failed), [false])
+        try fixture.record("PostToolUse", call: "first", seconds: 3)
+        let pausedAt = fixture.now.addingTimeInterval(3.1)
+        store.refresh(now: pausedAt)
+        XCTAssertTrue(traffic.observe(store.employees, now: pausedAt, animated: false).isEmpty)
+        XCTAssertTrue(traffic.observe(store.employees, now: pausedAt, animated: true).isEmpty)
+    }
+
+    /// 场景布局测试只需要明确的身份与项目，不读取用户机器上的真实会话。
+    private func person(_ id: String, path: String) -> CodexOfficeEmployee {
+        CodexOfficeEmployee(id: id, projectPath: path, project: "Client", name: id, task: "test", status: .working, tool: nil, updatedAt: Date(), signalExpired: false, isDemo: true)
+    }
 }
 
 /// 创建真实主会话日志头与独立活动文件，复用生产事件处理入口而非手造详细结果。

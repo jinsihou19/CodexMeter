@@ -1,3 +1,4 @@
+// 设置窗口宿主负责 AppKit 外观与窗口尺寸，具体页面和交互由 SwiftUI 管理。
 import AppKit
 import CodexMeterShared
 import SwiftUI
@@ -26,11 +27,13 @@ extension SurfaceAppearanceMode {
     }
 }
 
+/// 复用设置窗口，在活动监控切换大屏时保存与恢复其窗口位置和尺寸。
 @MainActor
 final class SettingsWindowPresenter {
     static let shared = SettingsWindowPresenter()
 
     private var window: NSWindow?
+    private var officeRestoreFrame: NSRect?
     private let makeContentViewController: @MainActor () -> NSViewController
     private let prepareApplicationForWindow: @MainActor () -> Void
     private let activateApplication: @MainActor () -> Void
@@ -65,6 +68,22 @@ final class SettingsWindowPresenter {
         settingsWindow.orderFrontRegardless()
 
         return settingsWindow
+    }
+
+    /// 大屏模式将现有窗口扩大到所在屏幕的可用区域，退出时恢复进入前的边框。
+    /// 系统全屏由 macOS 管理，设置页在这种情况下只切换内部布局。
+    func setOfficeExpanded(_ expanded: Bool) {
+        guard let window else { return }
+        if expanded {
+            guard officeRestoreFrame == nil, !window.styleMask.contains(.fullScreen), let screen = window.screen else { return }
+            officeRestoreFrame = window.frame
+            window.setFrame(screen.visibleFrame, display: true)
+        } else if let restoreFrame = officeRestoreFrame {
+            officeRestoreFrame = nil
+            if !window.styleMask.contains(.fullScreen) {
+                window.setFrame(restoreFrame, display: true)
+            }
+        }
     }
 
     /// 在设置变化后立即刷新窗口标题栏和 AppKit 控件，不等待窗口重新打开。

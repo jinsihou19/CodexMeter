@@ -879,6 +879,7 @@ public enum AppLocalization {
         "菜单栏": "Menu Bar",
         "下拉面板": "Popover",
         "小组件": "Widget",
+        "会话小镇": "Session Town",
         "关于": "About",
         "CodexMeter 设置": "CodexMeter Settings",
         "检测到旧版配置": "Legacy Configuration Found",

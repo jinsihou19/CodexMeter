@@ -671,6 +671,31 @@ final class UsageViewModelTests: XCTestCase {
         XCTAssertFalse(firstWindow.isReleasedWhenClosed)
     }
 
+    /// 大屏使用当前屏幕的可用区域，重复展开后仍恢复进入前的窗口边框。
+    func testOfficeLargeViewExpandsAndRestoresSettingsWindow() throws {
+        let presenter = SettingsWindowPresenter(
+            makeContentViewController: { NSViewController() },
+            prepareApplicationForWindow: {},
+            activateApplication: {}
+        )
+        let window = presenter.show()
+        defer { window.close() }
+
+        let screen = try XCTUnwrap(window.screen)
+        let expandedFrame = screen.visibleFrame
+        window.setFrame(expandedFrame.insetBy(dx: 60, dy: 60), display: true)
+        let originalFrame = window.frame
+        XCTAssertNotEqual(originalFrame, expandedFrame)
+
+        presenter.setOfficeExpanded(true)
+        presenter.setOfficeExpanded(true)
+        XCTAssertEqual(window.frame, expandedFrame)
+        XCTAssertIdentical(presenter.show(), window)
+
+        presenter.setOfficeExpanded(false)
+        XCTAssertEqual(window.frame, originalFrame)
+    }
+
     func testSettingsWindowUsesExpandedResizableContentSize() {
         let presenter = SettingsWindowPresenter(
             makeContentViewController: {

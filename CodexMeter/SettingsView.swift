@@ -101,7 +101,7 @@ struct CheckForUpdatesView: View {
     }
 }
 
-/// CodexMeter 设置窗口根视图，负责把启动、菜单栏项目、下拉面板、小组件和 Codex 状态分组呈现。
+/// CodexMeter 设置窗口根视图，负责设置分组、供应商仪表盘和独立的公司活动页面。
 struct SettingsView: View {
     /// 设置侧边栏页面枚举；保持稳定 rawValue，方便未来接入 SceneStorage 或深链。
     private enum Pane: String, CaseIterable, Identifiable {
@@ -111,6 +111,7 @@ struct SettingsView: View {
         case popover
         case widget
         case codex
+        case office
         case gemini
         case openCodeGo
         case about
@@ -133,6 +134,8 @@ struct SettingsView: View {
                 return "小组件"
             case .codex:
                 return "Codex"
+            case .office:
+                return "会话小镇"
             case .gemini:
                 return "Antigravity"
             case .openCodeGo:
@@ -156,6 +159,8 @@ struct SettingsView: View {
                 return "rectangle.grid.2x2"
             case .codex:
                 return "doc.text.magnifyingglass"
+            case .office:
+                return "building.2.crop.circle"
             case .gemini:
                 return "sparkles"
             case .openCodeGo:
@@ -220,6 +225,7 @@ struct SettingsView: View {
     @AppStorage(PopoverPreferenceKeys.resetTimeDisplayStyle, store: MenuBarDisplaySettings.sharedDefaults) private var popoverResetTimeDisplayStyle = PopoverDisplaySettings.defaultResetTimeDisplayStyle.rawValue
 
     @State private var selectedPane = Pane.general
+    @State private var isOfficeExpanded = false
     @State private var configurationInfo = CodexConfigurationInfo.current()
     @State private var previewSnapshot: UsageSnapshot?
     @State private var launchAtLoginEnabled = false
@@ -262,15 +268,17 @@ struct SettingsView: View {
         AppLocalization.string(key, language: activeLanguage)
     }
 
-    /// 使用明确的侧栏和正文层级承载设置页，避免 SwiftUI 分栏额外覆盖 AppKit 材质。
+    /// 展开活动监控时折叠侧栏，正文留在同一层级以保留当前场景与会话状态。
     private var content: some View {
         HStack(spacing: 0) {
-            sidebar
-                .frame(width: SettingsPanelLayout.sidebarWidth)
-                .background {
-                    Color.primary.opacity(0.055)
-                        .ignoresSafeArea()
-                }
+            if !isOfficeExpanded {
+                sidebar
+                    .frame(width: SettingsPanelLayout.sidebarWidth)
+                    .background {
+                        Color.primary.opacity(0.055)
+                            .ignoresSafeArea()
+                    }
+            }
 
             contentPane
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
@@ -293,6 +301,9 @@ struct SettingsView: View {
             minHeight: 560,
             idealHeight: SettingsPanelLayout.windowHeight
         )
+        .onChange(of: isOfficeExpanded) { _, expanded in
+            SettingsWindowPresenter.shared.setOfficeExpanded(expanded)
+        }
         .onAppear {
             normalizeStoredSettings()
             updateLaunchAtLoginState()
@@ -380,7 +391,7 @@ struct SettingsView: View {
         )
     }
 
-    /// 按侧栏选择展示独立设置页，供应商凭据不混入 Codex 的连接配置。
+    /// 按侧栏选择展示各设置页，会话小镇的启用页负责切换当前窗口的大屏布局。
     @ViewBuilder
     private var contentPane: some View {
         switch selectedPane {
@@ -396,6 +407,8 @@ struct SettingsView: View {
             widgetPane
         case .codex:
             codexPane
+        case .office:
+            CodexOfficeSettingsPane(isExpanded: $isOfficeExpanded)
         case .gemini:
             geminiPane
         case .openCodeGo:
