@@ -177,6 +177,26 @@ final class CodexOfficeTests: XCTestCase {
         XCTAssertEqual(Set(reset.values).count, ids.count + 1)
     }
 
+    /// 海岛的三人演示采用独立演员和动作节奏，切回普通演示与实时数据时重新取样。
+    @MainActor
+    func testIslandDemoRestartsWhenChangingThemes() throws {
+        let fixture = try OfficeFixture()
+        defer { fixture.clean() }
+        try fixture.record("UserPromptSubmit", seconds: 0)
+        let original = try Data(contentsOf: fixture.activityURL)
+        let store = fixture.store()
+        store.setDemo(true, island: true)
+        XCTAssertEqual(store.employees.map(\.appearance), [0, 1, 3])
+        XCTAssertEqual(store.employees.map(\.status), [.working, .thinking, .idle])
+        store.refresh(now: Date().addingTimeInterval(7))
+        XCTAssertEqual(store.employees.map(\.status), [.thinking, .idle, .idle])
+        store.setDemo(true)
+        XCTAssertEqual(store.employees.count, 6)
+        store.setDemo(false)
+        XCTAssertEqual(store.employees.map(\.id), ["session"])
+        XCTAssertEqual(try Data(contentsOf: fixture.activityURL), original)
+    }
+
     /// 旧版快照仍可解码，缺少详细资料时不得伪造调用次数或模型。
     func testOldSnapshotsDecodeWithoutOfficeDetails() throws {
         let snapshot = CodexHookActivitySnapshot(state: .running, sessionID: "old", turnID: "turn", eventName: "PreToolUse", toolName: "Bash", message: nil, updatedAt: 1)
@@ -602,6 +622,98 @@ final class CodexOfficeTests: XCTestCase {
         XCTAssertEqual(people.childNodes.count, 1)
         XCTAssertEqual(rest.simdWorldPosition, place)
         XCTAssertEqual(try XCTUnwrap(director.camera.camera).orthographicScale, fit, accuracy: 0.0001)
+    }
+
+    /// 空岛仍有布景，实际会话按状态进入工位和长椅。切换外观时保持位置、镜头和暂停状态。
+    @MainActor
+    func testIslandSeatsOnSiteSessionsAndKeepsFramingAcrossAppearance() throws {
+        let director = CodexOfficeScene(isIsland: true)
+        let canvas = OfficeCanvasView(frame: NSRect(x: 0, y: 0, width: 900, height: 560))
+        canvas.scene = director.scene
+        director.view = canvas
+        director.update(employees: [], selected: nil, isNight: false, paused: false, cameraRequest: 0, reduceMotion: true, isDemo: false)
+        let building = try XCTUnwrap(director.scene.rootNode.childNode(withName: "office-building", recursively: false))
+        let people = try XCTUnwrap(director.scene.rootNode.childNode(withName: "office-people", recursively: false))
+        let sails = try XCTUnwrap(building.childNode(withName: "island-windmill-sails", recursively: true))
+        XCTAssertNotNil(sails.action(forKey: "island-breeze"))
+        let water = try XCTUnwrap(building.childNode(withName: "island-water", recursively: true))
+        XCTAssertNotNil(water.action(forKey: "island-current"))
+        XCTAssertNil(building.childNode(withName: "island-workstation", recursively: true))
+        XCTAssertTrue(people.childNodes.isEmpty)
+        XCTAssertFalse(canvas.isPlaying)
+        XCTAssertTrue(director.scene.isPaused)
+        XCTAssertEqual(canvas.preferredFramesPerSecond, 60)
+
+        let worker = person("island-worker", path: "/working")
+        var resting = person("island-resting", path: "/break")
+        resting.status = .idle
+        var history = person("island-history", path: "/past")
+        history.isOnSite = false
+        director.update(employees: [worker, resting, history], selected: nil, isNight: false, paused: false,
+                        cameraRequest: 0, reduceMotion: true, isDemo: false)
+        XCTAssertEqual(building.childNodes.filter { $0.name?.hasPrefix("employee:") == true }.count, 1)
+        XCTAssertEqual(people.childNodes.count, 2)
+        let rest = try XCTUnwrap(people.childNode(withName: "employee:island-resting", recursively: false))
+        let place = rest.simdWorldPosition
+        let bench = try XCTUnwrap(OfficeIslandLayout.restDestination(for: 0).route.last)
+        XCTAssertEqual(place.x, Float(bench.x), accuracy: 0.001)
+        XCTAssertEqual(place.z, Float(bench.y), accuracy: 0.001)
+        let fit = try XCTUnwrap(director.camera.camera?.orthographicScale)
+        let day = director.scene.background.contents as? NSColor
+        director.update(employees: [worker, resting, history], selected: nil, isNight: true, paused: false,
+                        cameraRequest: 0, reduceMotion: true, isDemo: false)
+        XCTAssertNotEqual(director.scene.background.contents as? NSColor, day)
+        XCTAssertEqual(rest.simdWorldPosition, place)
+        XCTAssertEqual(director.camera.camera?.orthographicScale, fit)
+        XCTAssertEqual(CodexOfficeSceneStyle(rawValue: "island"), .island)
+
+        var another = person("island-sitting", path: "/another")
+        another.status = .idle
+        director.update(employees: [worker, resting, another], selected: nil, isNight: true, paused: false,
+                        cameraRequest: 0, reduceMotion: true, isDemo: false)
+        let originalBadge = try XCTUnwrap(rest.childNode(withName: "island-status-badge", recursively: false))
+        let second = try XCTUnwrap(people.childNode(withName: "employee:island-sitting", recursively: false))
+        let raisedBadge = try XCTUnwrap(second.childNode(withName: "island-status-badge", recursively: false))
+        let retainedDesk = try XCTUnwrap(building.childNode(withName: "employee:island-worker", recursively: false))
+        let extraWorker = person("island-extra", path: "/new")
+        director.update(employees: [worker, resting, another, extraWorker], selected: resting.id, isNight: true, paused: false,
+                        cameraRequest: 0, reduceMotion: true, isDemo: false)
+        XCTAssertTrue(retainedDesk === building.childNode(withName: "employee:island-worker", recursively: false))
+        // 选中前排名牌后绕岛旋转，按屏幕投影的距离检查高度差。
+        for yaw: CGFloat in [-.pi / 2, 0, .pi / 2, .pi] {
+            director.camera.position = SCNVector3(27 * sin(yaw), 17.61, 27 * cos(yaw))
+            director.camera.look(at: SCNVector3(0, 0.81, 0))
+            canvas.onCameraChanged?()
+            let gap = simd_dot(director.camera.simdWorldUp, raisedBadge.simdWorldPosition - originalBadge.simdWorldPosition)
+            XCTAssertGreaterThan(gap, 0.62)
+        }
+    }
+
+    /// 超出首间工坊后沿主路扩建，全部会话都有席位，收回空工坊后岸线恢复。
+    @MainActor
+    func testIslandExpandsForMoreThanSixWorkers() throws {
+        let director = CodexOfficeScene(isIsland: true)
+        let people = (0..<7).map { person("island-\($0)", path: "/project-\($0)") }
+        director.update(employees: people, selected: nil, isNight: false, paused: true, cameraRequest: 0, reduceMotion: true, isDemo: false)
+        let building = try XCTUnwrap(director.scene.rootNode.childNode(withName: "office-building", recursively: false))
+        let site = try XCTUnwrap(building.childNodes.first)
+        XCTAssertEqual(site.childNodes.filter { $0.name == "island-workshop" }.count, 2)
+        XCTAssertEqual(building.childNodes.filter { $0.name?.hasPrefix("employee:") == true }.count, 7)
+        director.update(employees: Array(people.prefix(1)), selected: nil, isNight: false, paused: true,
+                        cameraRequest: 0, reduceMotion: true, isDemo: false)
+        XCTAssertEqual(site.childNodes.filter { $0.name == "island-workshop" }.count, 1)
+        XCTAssertEqual(building.childNodes.filter { $0.name?.hasPrefix("employee:") == true }.count, 1)
+    }
+
+    /// 对向经过主路时使用不同侧的步行点，转入工坊前仍经过原路口。
+    func testIslandSpineSeparatesOpposingWalks() {
+        let start = CGPoint(x: 0, y: 0)
+        let end = CGPoint(x: 0, y: 4)
+        let turning = CGPoint(x: -2, y: 4)
+        let outgoing = OfficeIslandLayout.walkingLanes(on: [start, end, turning])
+        let incoming = OfficeIslandLayout.walkingLanes(on: [end, start])
+        XCTAssertEqual(outgoing.suffix(2), [end, turning])
+        XCTAssertGreaterThan(outgoing[1].x - incoming[1].x, 0.8)
     }
 
     /// 大项目占用多间房时会扩建；只剩后排的两位同事时，他们的工位与楼层一起收回首排。

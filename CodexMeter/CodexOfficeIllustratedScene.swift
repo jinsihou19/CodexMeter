@@ -4,13 +4,14 @@ import SwiftUI
 
 /// 设置页以稳定的原始值保存小镇场景，菜单文案随语言切换。
 enum CodexOfficeSceneStyle: String, CaseIterable {
-    case company, pixelPostOffice
+    case company, pixelPostOffice, island
 
     /// 菜单文案与保存的主题标识独立，切换语言不会改变所选场景。
     var title: String {
         switch self {
         case .company: return officeText("3D 公司", "3D Office")
         case .pixelPostOffice: return officeText("像素邮局", "Pixel Post Office")
+        case .island: return officeText("海风小岛", "Sea Breeze Island")
         }
     }
 }

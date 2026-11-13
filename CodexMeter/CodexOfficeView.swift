@@ -51,6 +51,7 @@ private struct OfficeEnableSwitch: View {
 private struct CodexOfficeView: View {
     @StateObject private var store = CodexOfficeStore()
     @StateObject private var director = CodexOfficeScene()
+    @StateObject private var islandDirector = CodexOfficeScene(isIsland: true)
     @State private var selectedID: String?
     @State private var department = ""
     @State private var paused = false
@@ -74,6 +75,9 @@ private struct CodexOfficeView: View {
 
     /// 已移除或无法识别的旧主题回退到像素邮局。
     private var sceneStyle: CodexOfficeSceneStyle { CodexOfficeSceneStyle(rawValue: storedSceneStyle) ?? .pixelPostOffice }
+
+    /// 画布、镜头和娱乐互动都指向当前主题自己的导演。
+    private var sceneDirector: CodexOfficeScene { sceneStyle == .island ? islandDirector : director }
 
     private var visibleEmployees: [CodexOfficeEmployee] {
         store.employees.filter { department.isEmpty || $0.projectPath == department }.sorted {
@@ -155,7 +159,7 @@ private struct CodexOfficeView: View {
             metrics(compact: compact)
             Spacer(minLength: 4)
             sceneStyleMenu
-            Picker(officeText("数据来源", "Data source"), selection: Binding(get: { store.isDemo }, set: { store.setDemo($0) })) {
+            Picker(officeText("数据来源", "Data source"), selection: Binding(get: { store.isDemo }, set: { store.setDemo($0, island: sceneStyle == .island) })) {
                 Text(officeText("实时", "Live")).tag(false)
                 Text(officeText("演示", "Demo")).tag(true)
             }
@@ -163,7 +167,9 @@ private struct CodexOfficeView: View {
             HStack(spacing: 2) {
                 pauseButton
                 if sceneStyle != .pixelPostOffice {
-                    sceneButton("viewfinder", help: officeText("查看公司全景", "Frame the whole office")) {
+                    let overview = sceneStyle == .island ? officeText("查看海岛全景", "Frame the whole island")
+                        : officeText("查看公司全景", "Frame the whole office")
+                    sceneButton("viewfinder", help: overview) {
                         select(nil)
                         cameraRequest += 1
                     }
@@ -239,7 +245,7 @@ private struct CodexOfficeView: View {
     /// 切换三维主题时重新绑定原生画布；没有在场会话时也直接展示场景。
     private var companyScene: some View {
         ZStack(alignment: .bottomLeading) {
-            CodexOfficeSceneView(director: director, employees: store.employees, selected: selectedID,
+            CodexOfficeSceneView(director: sceneDirector, employees: store.employees, selected: selectedID,
                                  night: (preferredScheme ?? colorScheme) == .dark, paused: paused,
                                  cameraRequest: cameraRequest, reduceMotion: reduceMotion, isDemo: store.isDemo, onSelect: select)
                 .id(sceneStyle.rawValue)
@@ -285,6 +291,7 @@ private struct CodexOfficeView: View {
             ForEach(CodexOfficeSceneStyle.allCases, id: \.rawValue) { style in
                 Button {
                     storedSceneStyle = style.rawValue
+                    if store.isDemo { store.setDemo(true, island: style == .island) }
                 } label: {
                     if style == sceneStyle {
                         Label(style.title, systemImage: "checkmark")
@@ -320,7 +327,7 @@ private struct CodexOfficeView: View {
             if sceneStyle == .pixelPostOffice {
                 illustrationAction = OfficeIllustratedAction(.stretch)
             } else {
-                director.stretch()
+                sceneDirector.stretch()
             }
             announce(officeText("伸个懒腰，灵感马上就来。", "A little stretch, a fresh idea."))
         }
@@ -471,7 +478,7 @@ private struct CodexOfficeView: View {
         if sceneStyle == .pixelPostOffice {
             illustrationAction = OfficeIllustratedAction(.coffee(person.id))
         } else {
-            director.sendCoffee(to: person.id)
+            sceneDirector.sendCoffee(to: person.id)
         }
         announce(officeText("给 \(person.name) 送了一杯咖啡。", "Coffee delivered to \(person.name)."))
     }

@@ -16,9 +16,9 @@ struct CodexOfficeSeatBook: Equatable {
     private(set) var rooms: [Room: Int] = [:]
     private(set) var seats: [String: [String: Int]] = [:]
 
-    /// 在岗或尚未离开工位的会话按项目占用座席。
-    mutating func assign(_ employees: [CodexOfficeEmployee]) {
-        let grouped = Dictionary(grouping: employees, by: \.projectPath)
+    /// 在岗或尚未离开工位的会话占用座席。公司按项目分配，海岛由所有项目共用工坊。
+    mutating func assign(_ employees: [CodexOfficeEmployee], byProject: Bool = true) {
+        let grouped = Dictionary(grouping: employees) { byProject ? $0.projectPath : "" }
         seats = seats.filter { grouped[$0.key] != nil }
         for (project, people) in grouped {
             let present = Set(people.map(\.id))
@@ -108,15 +108,19 @@ final class CodexOfficeScene: ObservableObject {
     private let traffic = SCNNode()
     private let ambient = SCNNode()
     private let sun = SCNNode()
+    private let isIsland: Bool
     private var seatBook = CodexOfficeSeatBook()
     private var characters: [String: OfficeCharacter] = [:]
     private var trackedPeople: [String: CodexOfficeEmployee] = [:]
     private var deskDestinations: [String: OfficeDestination] = [:]
+    private var islandWorkstations: [String: (seat: Int, tint: Int, node: SCNNode)] = [:]
     private var restSlots: [String: Int] = [:]
     private var toolTraffic = OfficeToolTraffic()
     private var layoutReady = false
     private var yardFront = OfficeBuilding.defaultYardFront
     private var drawnSite: (front: CGFloat, end: CGFloat, night: Bool)?
+    private var drawnWorkshops = 0
+    private var drawnBenches = 0
     private var facadeSides: [OfficeFacadeSide] = []
     private var night = false
     private var selectedID: String?
@@ -129,11 +133,16 @@ final class CodexOfficeScene: ObservableObject {
             oldValue?.onCameraChanged = nil
             view?.pointOfView = camera
             view?.onCameraChanged = { [weak self] in self?.updateCameraPresentation() }
+            if isIsland {
+                view?.preferredFramesPerSecond = 60
+                view?.antialiasingMode = .multisampling2X
+            }
         }
     }
 
-    /// 初始化公司镜头和照明，进入画布后按会话与外观配置布景。
-    init() {
+    /// 每个主题持有自己的镜头和场景，进入画布后才按会话与外观配置布景。
+    init(isIsland: Bool = false) {
+        self.isIsland = isIsland
         scene.rootNode.addChildNode(environment)
         environment.name = "office-building"
         environment.addChildNode(site)
@@ -143,7 +152,7 @@ final class CodexOfficeScene: ObservableObject {
         camera.camera = SCNCamera()
         camera.camera?.usesOrthographicProjection = true
         camera.camera?.zFar = 500
-        camera.camera?.screenSpaceAmbientOcclusionIntensity = 0.35
+        camera.camera?.screenSpaceAmbientOcclusionIntensity = isIsland ? 0.44 : 0.35
         scene.rootNode.addChildNode(camera)
         ambient.light = SCNLight()
         ambient.light?.type = .ambient
@@ -153,11 +162,12 @@ final class CodexOfficeScene: ObservableObject {
         sun.light?.type = .directional
         sun.light?.intensity = 950
         sun.light?.castsShadow = true
-        sun.light?.shadowMode = .deferred
-        sun.light?.shadowColor = NSColor.black.withAlphaComponent(0.17)
+        sun.light?.shadowMode = isIsland ? .forward : .deferred
+        sun.light?.shadowColor = NSColor.black.withAlphaComponent(isIsland ? 0.37 : 0.17)
         sun.light?.shadowMapSize = CGSize(width: 1024, height: 1024)
-        sun.light?.shadowSampleCount = 8
-        sun.eulerAngles = SCNVector3(-CGFloat.pi / 3, -CGFloat.pi / 5, 0)
+        sun.light?.shadowSampleCount = isIsland ? 6 : 8
+        sun.eulerAngles = isIsland ? SCNVector3(-CGFloat.pi / 3.37, -CGFloat.pi / 3.8, 0)
+            : SCNVector3(-CGFloat.pi / 3, -CGFloat.pi / 5, 0)
         scene.rootNode.addChildNode(sun)
     }
 
@@ -198,9 +208,16 @@ final class CodexOfficeScene: ObservableObject {
             restSlots[person.id] = slot
             used.insert(slot)
         }
-        let destinations = restSlots.mapValues { OfficeBuilding.restDestination(for: $0) }
-        let front = destinations.values.compactMap { $0.route.last?.y }.reduce(OfficeBuilding.defaultYardFront) {
-            min($0, $1 - 1.8)
+        let destinations = restSlots.mapValues {
+            isIsland ? OfficeIslandLayout.restDestination(for: $0) : OfficeBuilding.restDestination(for: $0)
+        }
+        let front: CGFloat
+        if isIsland {
+            front = OfficeIslandLayout.back
+        } else {
+            front = destinations.values.compactMap { $0.route.last?.y }.reduce(OfficeBuilding.defaultYardFront) {
+                min($0, $1 - 1.8)
+            }
         }
         // 工位会保留到离开的步行动作结束，避免隔墙或门口在人物经过时被移除。
         let occupants = visible.filter { person in
@@ -208,21 +225,29 @@ final class CodexOfficeScene: ObservableObject {
                 || (!reduceMotion && characters[person.id]?.reservesDesk == true)
         }
         let previousSeats = seatBook
-        seatBook.assign(occupants)
+        seatBook.assign(occupants, byProject: !isIsland)
         let rows = (seatBook.rooms.values.max() ?? 0) / 2 + 1
-        let roomEnd = OfficeBuilding.firstRoomStart + CGFloat(rows) * officeRoomDepth + OfficeBuilding.foundationOverhang
+        let workshops = (seatBook.seats[""]?.values.max() ?? 0) / CodexOfficeSeatBook.roomCapacity + 1
+        let benches = (restSlots.values.max() ?? 0) / 2 + 1
+        let islandShapeChanged = isIsland && (drawnWorkshops != workshops || drawnBenches != benches)
+        let roomEnd = isIsland ? OfficeIslandLayout.shoreEnd(workshops: workshops, benches: benches)
+            : OfficeBuilding.firstRoomStart + CGFloat(rows) * officeRoomDepth + OfficeBuilding.foundationOverhang
         let previousEnd = drawnSite?.end ?? roomEnd
         let keepFloor = !reduceMotion && previousEnd > roomEnd && characters.values.contains {
             $0.needsFloor(beyond: roomEnd, includeStationary: !paused)
         }
         let end = keepFloor ? previousEnd : roomEnd
-        if !layoutReady || previousSeats != seatBook || isNight != night || front != yardFront || end != drawnSite?.end {
+        if !layoutReady || previousSeats != seatBook || isNight != night || front != yardFront || end != drawnSite?.end || islandShapeChanged {
             let initialLayout = !layoutReady
             let priorZ = floorBounds.maximum.z
             let priorFront = yardFront
             yardFront = front
             night = isNight
-            buildOffice(occupants, rows: rows, end: end)
+            if isIsland {
+                buildIsland(occupants, workshops: workshops, benches: benches, end: end)
+            } else {
+                buildOffice(occupants, rows: rows, end: end)
+            }
             layoutReady = true
             if initialLayout || (selected == nil && view?.cameraWasMoved != true &&
                 (priorZ != floorBounds.maximum.z || priorFront != yardFront)) {
@@ -230,11 +255,12 @@ final class CodexOfficeScene: ObservableObject {
             }
         }
         trackedPeople = Dictionary(uniqueKeysWithValues: visible.map { ($0.id, $0) })
-        let entrance = OfficeBuilding.entrance
+        let entrance = isIsland ? CGPoint(x: 0, y: end - 1.0) : OfficeBuilding.entrance
         let exit = OfficeDestination(route: [entrance], heading: .pi, seated: false, kind: .exit)
+        let benchLift = isIsland ? islandBenchBadgeLift : 0
         for person in visible {
             let isNew = characters[person.id] == nil
-            let character = characters[person.id] ?? OfficeCharacter(employee: person)
+            let character = characters[person.id] ?? OfficeCharacter(employee: person, isIsland: isIsland)
             if isNew {
                 characters[person.id] = character
                 people.addChildNode(character.root)
@@ -249,15 +275,17 @@ final class CodexOfficeScene: ObservableObject {
                     destination = desk
                 }
             }
+            let sharesBench = isIsland && restSlots[person.id].map { !$0.isMultiple(of: 2) && used.contains($0 - 1) } == true
             character.update(person, destination: destination, selected: selected == person.id,
-                             animated: !reduceMotion, placeImmediately: paused || (isNew && initialPopulation))
+                             animated: !reduceMotion, placeImmediately: paused || (isNew && initialPopulation),
+                             restBadgeLift: sharesBench ? benchLift : 0)
         }
         let flights = toolTraffic.observe(employees, now: Date(), animated: !paused && !reduceMotion)
         if reduceMotion { traffic.childNodes.forEach { $0.removeFromParentNode() } }
         for flight in flights.prefix(max(0, 6 - traffic.childNodes.count)) {
             guard let desk = deskDestinations[flight.employeeID]?.route.last else { continue }
-            let workstation = SCNVector3(desk.x, 2.36, desk.y)
-            let station = OfficeBuilding.toolStation
+            let workstation = isIsland ? SCNVector3(desk.x, 2.16, desk.y + 0.74) : SCNVector3(desk.x, 2.36, desk.y)
+            let station = isIsland ? OfficeIslandLayout.toolStation : OfficeBuilding.toolStation
             let start = flight.returning ? station : workstation
             let end = flight.returning ? workstation : station
             let color = NSColor(officeHex: flight.failed ? 0xFF9D86 : flight.returning ? 0xD4C6FF : 0xACE2FF)
@@ -278,12 +306,14 @@ final class CodexOfficeScene: ObservableObject {
     /// 按画布尺寸恢复默认构图；画布尚无尺寸时，保留当前缩放，等待布局回调重新取景。
     func resetCamera() {
         // 外墙容器与场景共用坐标。以外墙取景，庭院仍使用原边界处理裁剪平面。
-        let facade = facadeSides.first?.upper.parent?.boundingBox
+        let facade = isIsland ? nil : facadeSides.first?.upper.parent?.boundingBox
         let minimum = facade?.min ?? floorBounds.minimum
         let maximum = facade?.max ?? floorBounds.maximum
-        let target = SCNVector3((minimum.x + maximum.x) / 2, (minimum.y + maximum.y) / 2, (minimum.z + maximum.z) / 2)
-        // 公司保留约 30° 俯角，让建筑在宽画布里横向铺开。
-        camera.position = SCNVector3(target.x + 24, target.y + 19.6, target.z + 24)
+        let target = isIsland ? SCNVector3(center.x, 0.81, center.z)
+            : SCNVector3((minimum.x + maximum.x) / 2, (minimum.y + maximum.y) / 2, (minimum.z + maximum.z) / 2)
+        camera.position = isIsland ? SCNVector3(target.x - 6.5, target.y + 16.8, target.z + 27)
+            // 公司保留约 30° 俯角，让建筑在宽画布里横向铺开。
+            : SCNVector3(target.x + 24, target.y + 19.6, target.z + 24)
         // 显式指定世界竖直方向，避免复位时带入上一次视角的横滚。
         camera.look(at: target, up: SCNVector3(0, 1, 0), localFront: SCNVector3(0, 0, -1))
         view?.orbitTarget = SIMD3<Float>(target)
@@ -293,10 +323,12 @@ final class CodexOfficeScene: ObservableObject {
             let projectedWidth = CGFloat(simd_dot(simd_abs(camera.simdWorldRight), extent))
             let projectedHeight = CGFloat(simd_dot(simd_abs(camera.simdWorldUp), extent))
             let aspect = view.bounds.width / view.bounds.height
-            let widthFill: CGFloat = 0.98
-            let heightFill: CGFloat = 0.98
+            let widthFill: CGFloat = isIsland ? 0.96 : 0.98
+            let heightFill: CGFloat = isIsland ? 0.94 : 0.98
             let fit = max(projectedWidth / (2 * aspect * widthFill), projectedHeight / (2 * heightFill))
-            camera.camera?.orthographicScale = Double(fit)
+            // 小岛仅在单工坊且长椅较少时收紧构图。
+            let crop: CGFloat = isIsland && drawnWorkshops == 1 && drawnBenches <= 2 ? 0.79 : 1
+            camera.camera?.orthographicScale = Double(fit * crop)
             view.overviewScale = camera.camera?.orthographicScale ?? 25
             view.cameraWasMoved = false
         }
@@ -315,7 +347,7 @@ final class CodexOfficeScene: ObservableObject {
         SCNTransaction.animationDuration = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion ? 0 : 0.5
         camera.simdWorldPosition = target - camera.simdWorldFront * 18
         // 宽画布的默认构图可能已经很近，人物特写仍需有足够的放大幅度让前墙淡出。
-        camera.camera?.orthographicScale = min(7.6, (view?.overviewScale ?? 25) * 0.56)
+        camera.camera?.orthographicScale = isIsland ? 5.7 : min(7.6, (view?.overviewScale ?? 25) * 0.56)
         updateCameraPresentation()
         SCNTransaction.commit()
         view?.orbitTarget = target
@@ -343,6 +375,20 @@ final class CodexOfficeScene: ObservableObject {
             let opacity = CGFloat(1 - 0.88 * close * facing)
             if side.upper.opacity != opacity { side.upper.opacity = opacity }
         }
+        if isIsland {
+            let occupiedSlots = Set(restSlots.values)
+            let lift = islandBenchBadgeLift
+            for (id, slot) in restSlots where !slot.isMultiple(of: 2) {
+                characters[id]?.setRestBadgeLift(occupiedSlots.contains(slot - 1) ? lift : 0)
+            }
+        }
+    }
+
+    /// 用镜头的屏幕上方向补偿两个座位的横向投影，留出大号选中名牌的垂直间距。
+    private var islandBenchBadgeLift: CGFloat {
+        let up = camera.simdWorldUp
+        let seatGap = Float(2 * OfficeIslandLayout.benchSeatOffset)
+        return CGFloat(max(0.20, (0.78 + seatGap * up.x) / max(0.20, up.y)))
     }
 
     /// 点击人物或其工位时向上查找会话身份；家具本身不冒充同事。
@@ -383,6 +429,46 @@ final class CodexOfficeScene: ObservableObject {
         for character in characters.values {
             character.body.runAction(.sequence([.moveBy(x: 0, y: 0.25, z: 0, duration: 0.2), .wait(duration: 0.5), .moveBy(x: 0, y: -0.25, z: 0, duration: 0.3)]), forKey: "stretch")
         }
+    }
+
+    /// 布景按岛的尺寸和外观更新，工位仅在会话离席、挪位或材质变更时替换。
+    private func buildIsland(_ employees: [CodexOfficeEmployee], workshops: Int, benches: Int, end: CGFloat) {
+        let art = OfficeIslandScenery(night: night)
+        let appearanceChanged = drawnSite?.night != night
+        if drawnSite?.end != end || appearanceChanged || drawnWorkshops != workshops || drawnBenches != benches {
+            site.childNodes.forEach { $0.removeFromParentNode() }
+            art.build(on: site, workshops: workshops, benches: benches, end: end)
+            drawnSite = (yardFront, end, night)
+            drawnWorkshops = workshops
+            drawnBenches = benches
+        }
+        if appearanceChanged {
+            scene.background.contents = NSColor(officeHex: night ? 0x123C5B : 0x168FA5)
+            ambient.light?.color = NSColor(officeHex: night ? 0xA8C0DA : 0xF4F7EE)
+            ambient.light?.intensity = night ? 555 : 505
+            sun.light?.color = NSColor(officeHex: night ? 0xC7DEF4 : 0xFFF0CD)
+            sun.light?.intensity = night ? 410 : 1080
+        }
+        floorBounds = (SCNVector3(-10.72, -1.25, yardFront - 0.45), SCNVector3(12.58, 4.88, end + 0.65))
+        center = SCNVector3(0.83, 0, (floorBounds.minimum.z + floorBounds.maximum.z) / 2)
+        let occupants = Set(employees.map(\.id))
+        let released = islandWorkstations.keys.filter { appearanceChanged || !occupants.contains($0) }
+        for id in released {
+            islandWorkstations.removeValue(forKey: id)?.node.removeFromParentNode()
+            deskDestinations.removeValue(forKey: id)
+        }
+        let accents = [0x77A797, 0xD79D64, 0x799EBB, 0xC08794, 0x918FB7, 0xBDAD70]
+        for employee in employees {
+            guard let seat = seatBook.seats[""]?[employee.id] else { continue }
+            let tint = accents[Int(CodexOfficeEmployee.stableHash(employee.projectPath) % UInt64(accents.count))]
+            if let previous = islandWorkstations[employee.id], previous.seat == seat, previous.tint == tint { continue }
+            islandWorkstations[employee.id]?.node.removeFromParentNode()
+            let (desk, destination) = art.workstation(for: employee.id, index: seat, projectTint: tint)
+            environment.addChildNode(desk)
+            islandWorkstations[employee.id] = (seat, tint, desk)
+            deskDestinations[employee.id] = destination
+        }
+        updateCameraPresentation()
     }
 
     /// 按已分配的行数绘制房间。办公室内的对坐桌与侧桌跟随座位编号，主题刷新时位置稳定。
@@ -502,6 +588,9 @@ private final class OfficeCharacter {
     private let rightKnee = SCNNode()
     private let head = SCNNode()
     private let badge = SCNNode()
+    private let badgeHeight: CGFloat
+    private let isIsland: Bool
+    private var restMug: SCNNode?
     private let statusRing: SCNNode
     private let selection: SCNNode
     private(set) var reservesDesk = false
@@ -514,8 +603,10 @@ private final class OfficeCharacter {
     private var labelKey = ""
     private var motionEnabled = true
 
-    /// 以会话编号固定分配衣着和肤色，状态变化只更新动作和名牌。
-    init(employee: CodexOfficeEmployee) {
+    /// 会话编号决定衣着和肤色。海岛小人的大头与帽饰沿用同一套步态和姿势节点。
+    init(employee: CodexOfficeEmployee, isIsland: Bool) {
+        self.isIsland = isIsland
+        badgeHeight = isIsland ? 2.43 : 1.91
         root.name = "employee:" + employee.id
         selection = officeNode(SCNTorus(ringRadius: 0.51, pipeRadius: 0.023), color: .white, at: SCNVector3(0, 0.10, 0))
         statusRing = officeNode(SCNTorus(ringRadius: 0.42, pipeRadius: 0.036), color: .clear, at: SCNVector3(0, 0.10, 0))
@@ -524,14 +615,29 @@ private final class OfficeCharacter {
         root.addChildNode(statusRing)
         root.addChildNode(selection)
         root.addChildNode(body)
+        let islandArt = isIsland ? OfficeIslandScenery(night: false) : nil
+        if isIsland {
+            let scale = OfficeIslandLayout.figureScale
+            body.scale = SCNVector3(scale, scale, scale)
+        }
         let shirt = OfficePalette.shirts[employee.appearance]
         let skin = [0xE9BB91, 0xB77D55, 0xF0CFAC, 0xC99771, 0xE0AC7D, 0x986B50][employee.appearance]
-        body.addChildNode(officeNode(SCNBox(width: 0.44, height: 0.44, length: 0.29, chamferRadius: 0.07), color: shirt, at: SCNVector3(0, 0.86, 0)))
+        body.addChildNode(officeNode(SCNBox(width: 0.44, height: 0.44, length: 0.29, chamferRadius: isIsland ? 0.13 : 0.07), color: shirt, at: SCNVector3(0, 0.86, 0)))
         head.position = SCNVector3(0, 1.25, 0)
-        head.addChildNode(officeBox(0.38, 0.38, 0.35, color: skin, at: SCNVector3Zero))
-        head.addChildNode(officeBox(0.4, 0.14, 0.37, color: employee.appearance % 2 == 0 ? 0x473A34 : 0x302E31, at: SCNVector3(0, 0.17, -0.01)))
-        for x: CGFloat in [-0.085, 0.085] {
-            head.addChildNode(officeNode(SCNSphere(radius: 0.024), color: NSColor(officeHex: 0x302E31), at: SCNVector3(x, 0.01, 0.18)))
+        if let islandArt {
+            head.addChildNode(islandArt.characterHead(variation: employee.appearance, skin: skin))
+            head.scale = SCNVector3(1.13, 1.13, 1.13)
+            let collar = officeNode(SCNTorus(ringRadius: 0.101, pipeRadius: 0.023), color: NSColor(officeHex: 0xE8C491), at: SCNVector3(0, 1.045, 0.008))
+            collar.scale.z = 0.78
+            body.addChildNode(collar)
+            let pocket = officeBox(0.15, 0.12, 0.035, color: 0xCC9B66, at: SCNVector3(0.083, 0.84, 0.151))
+            body.addChildNode(pocket)
+        } else {
+            head.addChildNode(officeBox(0.38, 0.38, 0.35, color: skin, at: SCNVector3Zero))
+            head.addChildNode(officeBox(0.4, 0.14, 0.37, color: employee.appearance % 2 == 0 ? 0x473A34 : 0x302E31, at: SCNVector3(0, 0.17, -0.01)))
+            for x: CGFloat in [-0.085, 0.085] {
+                head.addChildNode(officeNode(SCNSphere(radius: 0.024), color: NSColor(officeHex: 0x302E31), at: SCNVector3(x, 0.01, 0.18)))
+            }
         }
         body.addChildNode(head)
         for (arm, x) in [(leftArm, CGFloat(-0.28)), (rightArm, CGFloat(0.28))] {
@@ -545,17 +651,25 @@ private final class OfficeCharacter {
             leg.addChildNode(officeBox(0.14, 0.25, 0.16, color: 0x37484C, at: SCNVector3(0, -0.11, 0)))
             knee.position.y = -0.23
             knee.addChildNode(officeBox(0.13, 0.25, 0.15, color: 0x37484C, at: SCNVector3(0, -0.12, 0)))
-            knee.addChildNode(officeBox(0.19, 0.12, 0.27, color: 0xE7E9DD, at: SCNVector3(0, -0.26, 0.045)))
+            knee.addChildNode(officeBox(0.19, 0.12, 0.27, color: isIsland ? 0x744C33 : 0xE7E9DD, at: SCNVector3(0, -0.26, 0.045)))
             leg.addChildNode(knee)
             body.addChildNode(leg)
         }
-        badge.position = SCNVector3(0, 1.91, 0)
+        badge.position = SCNVector3(0, badgeHeight, 0)
+        if isIsland { badge.name = "island-status-badge" }
         root.addChildNode(badge)
+        if let islandArt {
+            let mug = islandArt.restCup(at: SCNVector3(0.015, -0.31, 0.065))
+            mug.eulerAngles.x = 1.13
+            mug.isHidden = true
+            rightArm.addChildNode(mug)
+            restMug = mug
+        }
     }
 
-    /// 用名册昵称和会话状态更新名牌；行走时继续使用当前位置。
+    /// 用名册昵称更新名牌，按状态、选中和长椅位置调整外观；行走时继续使用当前位置。
     func update(_ employee: CodexOfficeEmployee, destination next: OfficeDestination,
-                selected: Bool, animated: Bool, placeImmediately: Bool) {
+                selected: Bool, animated: Bool, placeImmediately: Bool, restBadgeLift: CGFloat) {
         let poseChanged = status != employee.status || signalExpired != employee.signalExpired || motionEnabled != animated
         let routeChanged = destination != next || motionEnabled != animated
         if next.kind == .desk { reservesDesk = true }
@@ -563,7 +677,7 @@ private final class OfficeCharacter {
         signalExpired = employee.signalExpired
         motionEnabled = animated
         selection.isHidden = !selected
-        badge.position.y = selected ? 2.06 : 1.91
+        setRestBadgeLift(restBadgeLift)
         let badgeScale: CGFloat = selected ? 1.20 : 1
         badge.scale = SCNVector3(badgeScale, badgeScale, badgeScale)
         let badgeStatus = employee.signalExpired ? .idle : status
@@ -572,7 +686,11 @@ private final class OfficeCharacter {
         if labelKey != nextLabel {
             let tint = badgeStatus == .working ? NSColor(officeHex: 0x399AC7) : badgeStatus.officeColor
             badge.childNodes.forEach { $0.removeFromParentNode() }
-            let label = officeLabel(employee.name, color: tint, width: 3.8, height: 0.49, status: statusTitle)
+            let label = officeLabel(employee.name, color: tint, width: 3.8, height: isIsland ? 0.51 : 0.49, status: statusTitle)
+            if isIsland {
+                label.geometry?.firstMaterial?.readsFromDepthBuffer = false
+                label.renderingOrder = 12
+            }
             badge.addChildNode(label)
             statusRing.geometry?.firstMaterial?.diffuse.contents = tint.withAlphaComponent(0.86)
             labelKey = nextLabel
@@ -584,13 +702,20 @@ private final class OfficeCharacter {
         }
     }
 
+    /// 镜头旋转也可重算名牌高度，无需重新生成名牌纹理或改变人物姿势。
+    func setRestBadgeLift(_ lift: CGFloat) {
+        let height = badgeHeight + (selection.isHidden ? 0 : 0.15) + lift
+        if badge.position.y != height { badge.position.y = height }
+    }
+
     /// 用当前呈现的位置接续路线。路段按距离计时，转弯期间保持走动，旧动作回调不能覆盖新路线。
     private func move(to next: OfficeDestination, immediately: Bool) {
         guard let target = next.route.last else { return }
         let position = walkPath.isEmpty ? root.position : root.presentation.position
         let rotation = walkPath.isEmpty ? root.eulerAngles : root.presentation.eulerAngles
         let current = CGPoint(x: position.x, y: position.z)
-        let path = OfficeWalkRoute.itinerary(from: current, leaving: walkPath.isEmpty ? destination?.route ?? [] : walkPath, entering: next.route)
+        let itinerary = OfficeWalkRoute.itinerary(from: current, leaving: walkPath.isEmpty ? destination?.route ?? [] : walkPath, entering: next.route)
+        let path = isIsland ? OfficeIslandLayout.walkingLanes(on: itinerary) : itinerary
         walkRevision += 1
         let revision = walkRevision
         root.removeAction(forKey: "walk")
@@ -662,6 +787,7 @@ private final class OfficeCharacter {
             node.eulerAngles = SCNVector3Zero
         }
         body.position = SCNVector3Zero
+        restMug?.isHidden = true
     }
 
     /// 工位、沙发和公共区椅子共用坐姿；减少动态效果时仍保留可辨认的静态姿势。
@@ -669,7 +795,7 @@ private final class OfficeCharacter {
         clearPose()
         guard destination?.kind != .exit else { return }
         if destination?.seated == true {
-            body.position.y = -0.15
+            body.position.y = isIsland ? -0.20 : -0.15
             leftLeg.eulerAngles.x = -.pi / 2
             rightLeg.eulerAngles.x = -.pi / 2
             leftKnee.eulerAngles.x = .pi / 2
@@ -679,7 +805,7 @@ private final class OfficeCharacter {
         switch status {
         case .working:
             for (arm, delay) in [(leftArm, 0.0), (rightArm, 0.13)] {
-                arm.eulerAngles.x = -0.85
+                arm.eulerAngles.x = isIsland ? -1.43 : -0.85
                 guard motionEnabled else { continue }
                 arm.runAction(.repeatForever(.sequence([.wait(duration: delay), .rotateBy(x: 0.18, y: 0, z: 0, duration: 0.16), .rotateBy(x: -0.18, y: 0, z: 0, duration: 0.16)])))
             }
@@ -702,6 +828,13 @@ private final class OfficeCharacter {
             guard motionEnabled else { return }
             head.runAction(.repeatForever(.sequence([.rotateBy(x: 0, y: 0.2, z: 0, duration: 0.25), .rotateBy(x: 0, y: -0.4, z: 0, duration: 0.5), .rotateBy(x: 0, y: 0.2, z: 0, duration: 0.25), .wait(duration: 1)])))
         case .idle:
+            if destination?.kind == .rest, let restMug {
+                restMug.isHidden = false
+                rightArm.eulerAngles.x = -1.13
+                body.position.z = -0.092
+                leftKnee.eulerAngles.x = 1.14
+                rightKnee.eulerAngles.x = 1.23
+            }
             guard motionEnabled else { return }
             body.runAction(.repeatForever(.sequence([.rotateBy(x: 0, y: 0, z: 0.035, duration: 1.7), .rotateBy(x: 0, y: 0, z: -0.035, duration: 1.7)])), forKey: "status")
         }

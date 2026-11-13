@@ -153,6 +153,7 @@ final class CodexOfficeStore: ObservableObject {
     private var titles: [String: String] = [:]
     private var indexModifiedAt: Date?
     private var demoStartedAt = Date()
+    private var islandDemo = false
     private var lastHookCheck = Date.distantPast
 
     /// 可注入临时文件与偏好存储进行真实事件测试；生产环境遵循现有 CODEX_HOME 约定。
@@ -187,9 +188,11 @@ final class CodexOfficeStore: ObservableObject {
         timer = nil
     }
 
-    /// 切换数据来源时重新建立基线，演示事件只在内存中流转。
-    func setDemo(_ enabled: Bool) {
-        guard enabled != isDemo else { return }
+    /// 切换数据来源或演示布置时重新建立基线，演示事件只在内存中流转。
+    func setDemo(_ enabled: Bool, island: Bool = false) {
+        let useIslandDemo = enabled && island
+        guard enabled != isDemo || useIslandDemo != islandDemo else { return }
+        islandDemo = useIslandDemo
         isDemo = enabled
         demoStartedAt = Date()
         events = []
@@ -359,17 +362,23 @@ final class CodexOfficeStore: ObservableObject {
         indexModifiedAt = modified
     }
 
-    /// 按时间推进六位同事的演示状态，预设昵称交由名册统一分配。
+    /// 按时间推进演示状态。海岛使用三位演员，其他场景使用六位；预设昵称交由名册统一分配。
     private func demoEmployees(now: Date) -> [CodexOfficeEmployee] {
-        let cadence: TimeInterval = 8
+        let cadence: TimeInterval = islandDemo ? 6 : 8
         let tick = max(0, Int(now.timeIntervalSince(demoStartedAt) / cadence))
         let changedAt = demoStartedAt.addingTimeInterval(Double(tick) * cadence)
         let statuses = CodexOfficeStatus.allCases
         let projects = ["产品研发", "设计工作室", "质量保障"]
         let tasks = ["给用量 App 装修新办公室", "打磨交互细节", "把测试跑到全绿", "整理下一轮工作计划", "等待你的好主意", "检查最后一处边界"]
-        return (0..<6).map { index in
-            let id = "demo-\(index)"
-            let status = statuses[(index + tick) % statuses.count]
+        let islandRoster = [1, 0, 2]
+        let islandIDs = ["island-demo-3", "island-demo-8", "island-demo-6"]
+        let islandPoses: [[CodexOfficeStatus]] = [
+            [.working, .thinking, .idle], [.thinking, .idle, .idle], [.working, .working, .idle],
+            [.completed, .waiting, .idle], [.idle, .failed, .working]
+        ]
+        return (islandDemo ? islandRoster : Array(0..<6)).enumerated().map { slot, index in
+            let id = islandDemo ? islandIDs[slot] : "demo-\(index)"
+            let status = islandDemo ? islandPoses[tick % islandPoses.count][slot] : statuses[(index + tick) % statuses.count]
             var details = CodexOfficeActivityDetails()
             details.model = "Codex · DEMO"
             details.turnStartedAt = demoStartedAt.addingTimeInterval(-Double(30 + index * 12)).timeIntervalSince1970
