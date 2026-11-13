@@ -12,6 +12,70 @@ private final class UnwritableMigrationDefaults: UserDefaults {
 
 @MainActor
 final class UsageViewModelTests: XCTestCase {
+    /// 平滑混合必须保留半透明文字的亮度和透明度，同时让变化像素产生中间色且不共享可变画布。
+    func testMenuBarAnimationFramesBlendWithoutFadingStaticText() throws {
+        let fixed: [UInt8] = [64, 32, 16, 128]
+        let keyframes = [
+            animationTestImage(fixed + [255, 0, 0, 255]),
+            animationTestImage(fixed + [0, 255, 0, 255]),
+            animationTestImage(fixed + [0, 0, 255, 255])
+        ]
+        let size = NSSize(width: 2, height: 1)
+        let frames = MenuBarAnimationFrames.make(keyframes: keyframes, size: size)
+        XCTAssertEqual(frames.count, 61)
+        // NSImage 会按本机 ICC 配置转换颜色，与同一路径绘制的原图比较，而非假设屏幕 RGB 数值。
+        let fixedPixel = try animationTestPixel(NSImage(cgImage: keyframes[0], size: size), x: 0)
+        for image in frames {
+            XCTAssertEqual(image.size, size)
+            let pixel = try animationTestPixel(image, x: 0)
+            XCTAssertEqual(pixel.redComponent, fixedPixel.redComponent, accuracy: 0.01)
+            XCTAssertEqual(pixel.greenComponent, fixedPixel.greenComponent, accuracy: 0.01)
+            XCTAssertEqual(pixel.blueComponent, fixedPixel.blueComponent, accuracy: 0.01)
+            XCTAssertEqual(pixel.alphaComponent, 128.0 / 255.0, accuracy: 0.01)
+        }
+        let first = try animationTestPixel(NSImage(cgImage: keyframes[0], size: size), x: 1)
+        let middle = try animationTestPixel(NSImage(cgImage: keyframes[1], size: size), x: 1)
+        let last = try animationTestPixel(NSImage(cgImage: keyframes[2], size: size), x: 1)
+        XCTAssertEqual(try animationTestPixel(frames[0], x: 1).redComponent, first.redComponent, accuracy: 0.01)
+        let blended = try animationTestPixel(frames[15], x: 1)
+        let expectedBlend = try animationTestPixel(NSImage(
+            cgImage: animationTestImage(fixed + [128, 128, 0, 255]), size: size
+        ), x: 1)
+        XCTAssertEqual(blended.redComponent, expectedBlend.redComponent, accuracy: 0.01)
+        XCTAssertEqual(blended.greenComponent, expectedBlend.greenComponent, accuracy: 0.01)
+        XCTAssertEqual(try animationTestPixel(frames[30], x: 1).greenComponent, middle.greenComponent, accuracy: 0.01)
+        XCTAssertEqual(try animationTestPixel(frames[60], x: 1).blueComponent, last.blueComponent, accuracy: 0.01)
+    }
+
+    /// 尺寸或关键帧数量不匹配时拒绝生成，避免在动画播放阶段出现越界和图像拉伸。
+    func testMenuBarAnimationFramesRejectIncompatibleImages() {
+        let image = animationTestImage([255, 0, 0, 255])
+        let wider = animationTestImage([255, 0, 0, 255, 0, 255, 0, 255])
+        let size = NSSize(width: 1, height: 1)
+        XCTAssertTrue(MenuBarAnimationFrames.make(keyframes: [image], size: size).isEmpty)
+        XCTAssertTrue(MenuBarAnimationFrames.make(keyframes: [image, image, wider], size: size).isEmpty)
+        XCTAssertTrue(MenuBarAnimationFrames.make(keyframes: [image, image, image], size: .zero).isEmpty)
+    }
+
+    /// 创建一行预乘 RGBA 测试像素；Data 由 CGDataProvider 持有，避免测试图像引用已释放的内存。
+    private func animationTestImage(_ pixels: [UInt8]) -> CGImage {
+        precondition(!pixels.isEmpty && pixels.count.isMultiple(of: 4))
+        return CGImage(
+            width: pixels.count / 4, height: 1, bitsPerComponent: 8, bitsPerPixel: 32,
+            bytesPerRow: pixels.count, space: CGColorSpace(name: CGColorSpace.sRGB)!,
+            bitmapInfo: CGBitmapInfo(rawValue: CGImageAlphaInfo.premultipliedLast.rawValue
+                | CGBitmapInfo.byteOrder32Big.rawValue),
+            provider: CGDataProvider(data: Data(pixels) as CFData)!,
+            decode: nil, shouldInterpolate: false, intent: .defaultIntent
+        )!
+    }
+
+    /// 读取真实输出像素并还原直通颜色，验证混合结果而非重复生成算法。
+    private func animationTestPixel(_ image: NSImage, x: Int) throws -> NSColor {
+        let bitmap = NSBitmapImageRep(cgImage: try XCTUnwrap(image.cgImage(forProposedRect: nil, context: nil, hints: nil)))
+        return try XCTUnwrap(bitmap.colorAt(x: x, y: 0)?.usingColorSpace(.sRGB))
+    }
+
     /// 验证设置侧栏版本文案组合用户版本和构建号，并能在缺少构建号时安全回退。
     func testAppVersionDisplayFormatsBundleVersionAndBuild() {
         XCTAssertEqual(

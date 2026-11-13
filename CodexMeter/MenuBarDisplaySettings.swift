@@ -1362,6 +1362,51 @@ private extension Collection {
     }
 }
 
+/// 将三张关键帧预混合成平滑动画；对预乘 RGBA 像素直接插值，确保静态文字的颜色与透明度逐字节不变。
+enum MenuBarAnimationFrames {
+    /// 输入必须是等尺寸的 0、0.5、1 三张进度图及正逻辑尺寸；无效图片或分配失败返回空数组。
+    static func make(keyframes: [CGImage], size: NSSize) -> [NSImage] {
+        guard keyframes.count == 3, let first = keyframes.first,
+              size.width > 0, size.height > 0,
+              keyframes.allSatisfy({ $0.width == first.width && $0.height == first.height }),
+              let space = CGColorSpace(name: CGColorSpace.sRGB),
+              let context = CGContext(
+                data: nil, width: first.width, height: first.height,
+                bitsPerComponent: 8, bytesPerRow: first.width * 4, space: space,
+                bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue | CGBitmapInfo.byteOrder32Big.rawValue
+              ) else { return [] }
+        let bounds = CGRect(x: 0, y: 0, width: first.width, height: first.height)
+        guard let data = context.data else { return [] }
+        let byteCount = first.width * first.height * 4
+        let keyframePixels = keyframes.map { image -> [UInt8] in
+            context.setBlendMode(.copy)
+            context.draw(image, in: bounds)
+            return Array(UnsafeBufferPointer(start: data.assumingMemoryBound(to: UInt8.self), count: byteCount))
+        }
+        var frames: [NSImage] = []
+        for index in 0...60 {
+            let segment = min(1, index / 30)
+            let fraction = index - segment * 30
+            let start = keyframePixels[segment]
+            let end = keyframePixels[segment + 1]
+            var pixels = [UInt8](repeating: 0, count: byteCount)
+            for offset in pixels.indices {
+                pixels[offset] = UInt8((Int(start[offset]) * (30 - fraction) + Int(end[offset]) * fraction + 15) / 30)
+            }
+            guard let provider = CGDataProvider(data: Data(pixels) as CFData),
+                  let image = CGImage(
+                    width: first.width, height: first.height, bitsPerComponent: 8, bitsPerPixel: 32,
+                    bytesPerRow: first.width * 4, space: space,
+                    bitmapInfo: CGBitmapInfo(rawValue: CGImageAlphaInfo.premultipliedLast.rawValue
+                        | CGBitmapInfo.byteOrder32Big.rawValue),
+                    provider: provider, decode: nil, shouldInterpolate: false, intent: .defaultIntent
+                  ) else { return [] }
+            frames.append(NSImage(cgImage: image, size: size))
+        }
+        return frames
+    }
+}
+
 enum StatusBarDisplayMetrics {
     static let trailingProviderSeparatorSpacing: CGFloat = 8
     static let trailingGeminiIconWidth: CGFloat = 13

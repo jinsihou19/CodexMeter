@@ -294,6 +294,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 }
 
+/// 一份可见内容对应一组缓存帧；不把 Hook 时间戳和工具名纳入图片缓存，避免仅事件元数据变化时重复排版。
+private struct StatusBarRenderKey: Equatable {
+    let settings: MenuBarDisplaySettings
+    let layout: MenuBarLayout
+    let display: MenuBarLayoutDisplay
+    let activityState: CodexHookActivityState
+    let activityIsVisible: Bool
+    let size: NSSize
+    let scale: CGFloat
+    let colorScheme: ColorScheme
+    let animates: Bool
+}
+
+/// 协调用量状态与原生菜单栏按钮；内容变化时离屏排版，动画时只播放缓存图片。
 @MainActor
 final class StatusBarController: NSObject {
     private let viewModel: UsageViewModel
@@ -301,7 +315,12 @@ final class StatusBarController: NSObject {
     private let activityStore = CodexHookActivityStore()
     private let statusItem: NSStatusItem
     private let popover = NSPopover()
-    private var statusLabel: PassthroughHostingView<StatusBarLabel>?
+    private let statusAnimationLayer = CALayer()
+    private var statusAppearanceObserver: NSKeyValueObservation?
+    private var renderedStatusColorScheme: ColorScheme?
+    private var renderedStatusKey: StatusBarRenderKey?
+    private var statusAnimationFrames: [NSImage] = []
+    private var statusAnimationSpeed: Double = 1
     private var nativeStatusButtonFont: NSFont?
     private var defaultsObservers: [NSObjectProtocol] = []
     private var openCodeGoObserver: AnyCancellable?
@@ -341,7 +360,7 @@ final class StatusBarController: NSObject {
         observeActivityChanges()
     }
 
-    /// 将统一布局挂载到原生状态栏按钮，图标与额度共用点击入口。
+    /// 保持原生按钮作为唯一点击入口，并监听外观及辅助功能变化以重绘离屏布局。
     private func configureStatusItem() {
         guard let button = statusItem.button else {
             return
@@ -356,39 +375,27 @@ final class StatusBarController: NSObject {
         button.toolTip = "CodexMeter"
         button.target = self
         button.action = #selector(togglePopover(_:))
-
-        let settings = MenuBarDisplaySettings(defaults: MenuBarDisplaySettings.sharedDefaults)
-        let layout = MenuBarLayoutStore.load()
-        let display = MenuBarLayoutDisplay(
-            layout: layout,
-            snapshot: viewModel.snapshot,
-            settings: settings,
-            geminiSnapshot: viewModel.geminiSnapshot,
-            openCodeGoEnabled: OpenCodeGoStore.shared.isEnabled,
-            openCodeGoSnapshot: OpenCodeGoStore.shared.snapshot
-        )
-        let statusWidth = StatusBarDisplayMetrics.statusItemWidth(
-            for: layout,
-            display: display,
-            settings: settings,
-        )
-        let label = PassthroughHostingView(rootView: StatusBarLabel(
-            viewModel: viewModel,
-            activityStore: activityStore,
-            settings: settings,
-            statusWidth: statusWidth,
-            layout: layout
-        ))
-        statusLabel = label
-        label.translatesAutoresizingMaskIntoConstraints = false
-        button.addSubview(label)
-
-        NSLayoutConstraint.activate([
-            label.leadingAnchor.constraint(equalTo: button.leadingAnchor),
-            label.trailingAnchor.constraint(equalTo: button.trailingAnchor),
-            label.centerYAnchor.constraint(equalTo: button.centerYAnchor),
-            label.heightAnchor.constraint(equalToConstant: MenuBarDisplaySettings().statusLabelHeight)
-        ])
+        button.imagePosition = .imageOnly
+        button.imageScaling = .scaleNone
+        button.wantsLayer = true
+        button.layer?.addSublayer(statusAnimationLayer)
+        statusAppearanceObserver = button.observe(\.effectiveAppearance) { [weak self] _, _ in
+            Task { @MainActor in
+                guard let self, let button = self.statusItem.button else { return }
+                let scheme: ColorScheme = button.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+                    ? .dark : .light
+                // 设置原生图片也可能重复通知同一外观，只有明暗真正切换时才重新渲染。
+                guard scheme != self.renderedStatusColorScheme else { return }
+                self.applyStatusDisplay()
+            }
+        }
+        defaultsObservers.append(NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.accessibilityDisplayOptionsDidChangeNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in self?.applyStatusDisplay() }
+        })
     }
 
     /// 使用系统标准弹窗外观，让 macOS 26 自动提供与系统一致的 Liquid Glass。
@@ -461,8 +468,9 @@ final class StatusBarController: NSObject {
         preferredPopoverSize = MenuBarPopoverLayout.initialSize
     }
 
-    /// 使用当前供应商快照重算宽度并更新内容，避免启停或数值变化后裁切文本。
+    /// 按当前供应商快照离屏生成原生图片；不把 NSHostingView 挂在按钮上，阻断系统截图与布局的反馈循环。
     private func applyStatusDisplay(settings: MenuBarDisplaySettings? = nil) {
+        guard let button = statusItem.button else { return }
         let settings = settings ?? MenuBarDisplaySettings(defaults: MenuBarDisplaySettings.sharedDefaults)
         let layout = MenuBarLayoutStore.load()
         let display = MenuBarLayoutDisplay(
@@ -480,18 +488,84 @@ final class StatusBarController: NSObject {
             settings: settings,
             activityDisplay: activityDisplay,
         )
-        statusItem.length = statusWidth
-        statusItem.button?.title = ""
-        statusItem.button?.attributedTitle = NSAttributedString(string: "")
-        statusItem.button?.image = nil
-        statusLabel?.isHidden = false
-        statusLabel?.rootView = StatusBarLabel(
+        if statusItem.length != statusWidth {
+            statusItem.length = statusWidth
+        }
+        let reduceMotion = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+        let animates = activityDisplay.isVisible && !reduceMotion
+            && activityDisplay.state != .completed && activityDisplay.state != .succeeded
+        let statusView = StatusBarLabel(
             viewModel: viewModel,
             activityStore: activityStore,
             settings: settings,
             statusWidth: statusWidth,
             layout: layout
         )
+        let colorScheme: ColorScheme = button.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+            ? .dark : .light
+        renderedStatusColorScheme = colorScheme
+        let size = NSSize(width: statusWidth, height: settings.statusLabelHeight)
+        let scale = button.window?.backingScaleFactor ?? NSScreen.main?.backingScaleFactor ?? 2
+        let key = StatusBarRenderKey(
+            settings: settings, layout: layout, display: display,
+            activityState: activityDisplay.state, activityIsVisible: activityDisplay.isVisible,
+            size: size, scale: scale, colorScheme: colorScheme, animates: animates
+        )
+        let framesChanged = renderedStatusKey != key
+        if framesChanged {
+            let values: [Double] = animates ? [0, 0.5, 1] : [1]
+            let images = values.compactMap { value -> CGImage? in
+                var frame = statusView
+                frame.activityVariableValue = value
+                let renderer = ImageRenderer(content: frame.environment(\.colorScheme, colorScheme))
+                renderer.scale = scale
+                return renderer.cgImage
+            }
+            guard images.count == values.count, let firstImage = images.first else { return }
+            let frames = animates ? MenuBarAnimationFrames.make(keyframes: images, size: size)
+                : [NSImage(cgImage: firstImage, size: size)]
+            guard !frames.isEmpty else { return }
+            statusAnimationFrames = frames
+            renderedStatusKey = key
+        }
+        button.setAccessibilityLabel(statusView.accessibilityText(
+            lines: display.codexLines,
+            trailingGeminiLines: display.trailingGeminiLines,
+            activityDisplay: activityDisplay
+        ))
+        let previousSpeed = statusAnimationSpeed
+        statusAnimationSpeed = CodexActivityGlyph(
+            display: activityDisplay, style: settings.hookActivityIndicatorStyle, size: 16
+        ).animationSpeed
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        statusAnimationLayer.frame = CGRect(
+            x: (button.bounds.width - size.width) / 2,
+            y: (button.bounds.height - size.height) / 2,
+            width: size.width, height: size.height
+        )
+        statusAnimationLayer.contentsScale = scale
+        statusAnimationLayer.contents = statusAnimationFrames.last?.cgImage(forProposedRect: nil, context: nil, hints: nil)
+        CATransaction.commit()
+        updateStatusAnimation(isActive: animates, contentChanged: framesChanged || previousSpeed != statusAnimationSpeed)
+    }
+
+    /// 由系统合成器播放缓存帧；只在内容或速度变化时重建动画，空闲和减少动态效果立即停止。
+    private func updateStatusAnimation(isActive: Bool, contentChanged: Bool) {
+        guard isActive else {
+            statusAnimationLayer.removeAnimation(forKey: "activity")
+            return
+        }
+        guard contentChanged || statusAnimationLayer.animation(forKey: "activity") == nil else { return }
+        let animation = CAKeyframeAnimation(keyPath: "contents")
+        animation.values = statusAnimationFrames.compactMap {
+            $0.cgImage(forProposedRect: nil, context: nil, hints: nil)
+        }
+        animation.duration = 1 / statusAnimationSpeed
+        animation.autoreverses = true
+        animation.repeatCount = .infinity
+        animation.calculationMode = .discrete
+        statusAnimationLayer.add(animation, forKey: "activity")
     }
 
     /// 单行时直接使用系统状态按钮标题；活动图标优先，否则按设置显示 Codex 图标。
@@ -500,7 +574,6 @@ final class StatusBarController: NSObject {
         settings: MenuBarDisplaySettings
     ) {
         guard let button = statusItem.button else { return }
-        statusLabel?.isHidden = true
         // 先解除双行的固定宽度，否则 AppKit 会在窄宽度下把单行标题提前换行。
         statusItem.length = NSStatusItem.variableLength
         let nativeFont = nativeStatusButtonFont ?? NSFont.systemFont(ofSize: NativeStatusBarTitle.fontSize)
@@ -716,6 +789,7 @@ private struct StatusBarLabel: View {
     let settings: MenuBarDisplaySettings
     let statusWidth: CGFloat
     let layout: MenuBarLayout
+    var activityVariableValue: Double = 1
     var body: some View {
         content
     }
@@ -865,7 +939,8 @@ private struct StatusBarLabel: View {
         CodexActivityGlyph(
             display: display,
             style: settings.hookActivityIndicatorStyle,
-            size: 16
+            size: 16,
+            variableValue: activityVariableValue
         )
             .frame(
                 width: CodexHookActivityDisplay.menuBarIndicatorWidth,
@@ -933,7 +1008,7 @@ private struct StatusBarLabel: View {
     }
 
     /// 组合菜单栏读数和可见 hook 状态，给 VoiceOver 一个完整但不啰嗦的说明。
-    private func accessibilityText(
+    fileprivate func accessibilityText(
         lines: [StatusLineDisplay],
         trailingGeminiLines: [StatusLineDisplay],
         activityDisplay: CodexHookActivityDisplay
@@ -950,48 +1025,28 @@ private struct StatusBarLabel: View {
     }
 }
 
-/// 菜单栏上的活动符号；优先使用系统 SF Symbol，并按 hook 状态映射到轻量动画。
+/// 将 Hook 状态映射为菜单栏符号；活动动画统一交给限频组件，避免系统循环动画持续刷新整块状态栏。
 private struct CodexActivityGlyph: View {
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    // 离屏渲染没有窗口环境，直接读取系统偏好；控制器监听偏好变更后重绘。
+    private var reduceMotion: Bool { NSWorkspace.shared.accessibilityDisplayShouldReduceMotion }
 
     let display: CodexHookActivityDisplay
     let style: HookActivityIndicatorStyle
     let size: CGFloat
+    var variableValue: Double = 1
 
+    /// 只在活动符号内推进动画；完成和减少动态效果时不保留刷新任务。
     var body: some View {
-        TimelineView(.animation(minimumInterval: frameInterval)) { timeline in
-            let time = reduceMotion ? 0 : activityTime(for: timeline.date)
-            ZStack(alignment: .center) {
-                glyphBody(time: time, effect: glyphEffect, speedMultiplier: animationSpeedMultiplier)
-            }
-            .frame(width: size, height: size)
+        ZStack(alignment: .center) {
+            glyphBody(effect: glyphEffect)
         }
+        .frame(width: size, height: size)
         .accessibilityHidden(true)
-    }
-
-    /// 根据状态选择刷新频率；低频状态避免在菜单栏里做无意义重绘。
-    private var frameInterval: TimeInterval {
-        if reduceMotion {
-            return 1.0
-        }
-        let multiplier = animationSpeedMultiplier
-        switch glyphEffect {
-        case .running:
-            return 1.0 / (30.0 * multiplier)
-        case .thinking:
-            return 1.0 / (24.0 * multiplier)
-        case .needsConfirmation:
-            return 1.0 / (30.0 * multiplier)
-        case .idle, .completed:
-            return 1.0 / 18.0
-        }
     }
 
     /// 按 hook 状态选择对应的小型符号动效，避免在菜单栏里混用多个状态语言。
     @ViewBuilder private func glyphBody(
-        time: TimeInterval,
-        effect: CodexActivityGlyphEffect,
-        speedMultiplier: Double
+        effect: CodexActivityGlyphEffect
     ) -> some View {
         let color = glyphColor
         switch effect {
@@ -1002,23 +1057,22 @@ private struct CodexActivityGlyph: View {
                 systemName: "target",
                 size: size,
                 color: color,
-                speed: 1.15 * speedMultiplier,
-                reduceMotion: reduceMotion
+                variableValue: variableValue
             )
         case .thinking:
-            VerticalEllipsisGlyph(
+            VariableColorSymbolGlyph(
+                systemName: "ellipsis",
                 size: size,
                 color: color,
-                speed: 1.25 * speedMultiplier,
-                reduceMotion: reduceMotion
+                variableValue: variableValue
             )
+            .rotationEffect(.degrees(90))
         case .needsConfirmation:
             VariableColorSymbolGlyph(
                 systemName: "aqi.medium",
                 size: size,
                 color: color,
-                speed: 1.35 * speedMultiplier,
-                reduceMotion: reduceMotion
+                variableValue: variableValue
             )
         case .completed:
             CompletionCheckGlyph(size: size, reduceMotion: reduceMotion)
@@ -1050,61 +1104,31 @@ private struct CodexActivityGlyph: View {
     }
 
     /// 活跃会话越多，状态符号的系统动效越快；封顶避免菜单栏小图标显得刺眼。
-    private var animationSpeedMultiplier: Double {
+    fileprivate var animationSpeed: Double {
         let extraSessions = max(0, display.activeSessionCount - 1)
-        return 0.5 + min(Double(extraSessions) * 0.28, 1.12)
-    }
-
-    /// 动画从 hook 快照更新时间起算，让符号动效和 hook 事件触发同步。
-    private func activityTime(for date: Date) -> TimeInterval {
-        guard let snapshot = display.snapshot else {
-            return date.timeIntervalSinceReferenceDate
+        let multiplier = 0.5 + min(Double(extraSessions) * 0.28, 1.12)
+        switch glyphEffect {
+        case .running: return 1.15 * multiplier
+        case .thinking: return 1.25 * multiplier
+        case .idle, .needsConfirmation, .completed: return 1.35 * multiplier
         }
-        return max(0, date.timeIntervalSince1970 - snapshot.updatedAt)
     }
 }
 
-/// 思考态使用系统 ellipsis 符号并旋转为竖向，通过 SF Symbols 的可变颜色表达处理进度。
-private struct VerticalEllipsisGlyph: View {
-    let size: CGFloat
-    let color: Color
-    let speed: Double
-    let reduceMotion: Bool
-
-    var body: some View {
-        Image(systemName: "ellipsis")
-            .font(.system(size: size * 0.92, weight: .heavy, design: .rounded))
-            .symbolRenderingMode(.monochrome)
-            .foregroundStyle(color)
-            .symbolEffect(
-                .variableColor.iterative.reversing,
-                options: .repeating.speed(speed),
-                isActive: !reduceMotion
-            )
-            .rotationEffect(.degrees(90))
-            .shadow(color: color.opacity(0.18), radius: 1.2, y: 0)
-            .frame(width: size, height: size)
-    }
-}
-
-/// 运行和确认态都使用系统 SF Symbol 的可变颜色动画，避免小尺寸自绘图形造成辨识度下降。
+/// 渲染单帧系统符号；由原生菜单栏控制器推进进度，视图自身不创建持续运行的动画时钟。
 private struct VariableColorSymbolGlyph: View {
     let systemName: String
     let size: CGFloat
     let color: Color
-    let speed: Double
-    let reduceMotion: Bool
+    let variableValue: Double
 
+    /// 只渲染控制器要求的关键帧，不创建动画时钟或读取当前时间。
     var body: some View {
-        Image(systemName: systemName)
+        assert((0...1).contains(variableValue))
+        return Image(systemName: systemName, variableValue: variableValue)
             .font(.system(size: size * 0.98, weight: .heavy, design: .rounded))
             .symbolRenderingMode(.monochrome)
             .foregroundStyle(color)
-            .symbolEffect(
-                .variableColor.iterative.reversing,
-                options: .repeating.speed(speed),
-                isActive: !reduceMotion
-            )
             .shadow(color: color.opacity(0.18), radius: 1.2, y: 0)
             .frame(width: size, height: size)
     }
@@ -1165,16 +1189,5 @@ private struct CodexMenuBarIcon: View {
             .frame(width: MenuBarDisplaySettings.menuBarIconWidth, height: MenuBarDisplaySettings.menuBarIconWidth)
             .foregroundStyle(.primary)
             .accessibilityHidden(true)
-    }
-}
-
-/// 承载菜单栏彩色读数并穿透点击；禁用 Vibrancy，避免系统材质把状态色混成浅色。
-private final class PassthroughHostingView<Content: View>: NSHostingView<Content> {
-    override var allowsVibrancy: Bool {
-        false
-    }
-
-    override func hitTest(_ point: NSPoint) -> NSView? {
-        nil
     }
 }
