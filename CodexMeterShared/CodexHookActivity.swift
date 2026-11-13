@@ -2,7 +2,7 @@
 import CoreGraphics
 import Foundation
 
-/// Codex 生命周期 hook 写入的活动状态；只表达 UI 需要的离散阶段，不保存完整 prompt 或工具输出。
+/// Codex 生命周期 hook 写入的活动状态；离散阶段与公司详细记录协作，不保存完整 prompt 或工具输出。
 public enum CodexHookActivityState: String, Codable, Equatable, Sendable, CaseIterable {
     case idle
     case thinking
@@ -81,7 +81,7 @@ public enum CodexHookActivityState: String, Codable, Equatable, Sendable, CaseIt
     }
 }
 
-/// Hook 脚本和 App 之间共享的极小 JSON 快照；字段保持扁平，方便 Python、Shell 或其他脚本写入。
+/// Hook 与 App 之间共享的有界 JSON 快照；基础状态保持扁平，详细活动作为可选字段兼容旧版本。
 public struct CodexHookActivitySnapshot: Codable, Equatable, Sendable {
     public static let currentSchemaVersion = 1
 
@@ -97,6 +97,7 @@ public struct CodexHookActivitySnapshot: Codable, Equatable, Sendable {
     public let pendingQuestionIDs: [String]?
     public let approvalToolID: String?
     public let approvalToolName: String?
+    public let office: CodexOfficeActivityDetails?
 
     /// 等待只保存问题编号和审批工具身份，不保存问题正文；新增字段可缺省以兼容旧快照。
     public init(
@@ -111,7 +112,8 @@ public struct CodexHookActivitySnapshot: Codable, Equatable, Sendable {
         transcriptPath: String? = nil,
         pendingQuestionIDs: [String]? = nil,
         approvalToolID: String? = nil,
-        approvalToolName: String? = nil
+        approvalToolName: String? = nil,
+        office: CodexOfficeActivityDetails? = nil
     ) {
         self.schemaVersion = schemaVersion
         self.state = state
@@ -125,6 +127,7 @@ public struct CodexHookActivitySnapshot: Codable, Equatable, Sendable {
         self.pendingQuestionIDs = pendingQuestionIDs
         self.approvalToolID = approvalToolID
         self.approvalToolName = approvalToolName
+        self.office = office
     }
 
     public var updatedAtDate: Date {
@@ -135,6 +138,74 @@ public struct CodexHookActivitySnapshot: Codable, Equatable, Sendable {
     public func isFresh(now: Date = Date()) -> Bool {
         let awaitsInput = state == .waitingApproval && (pendingQuestionIDs?.isEmpty == false || approvalToolName != nil)
         return now.timeIntervalSince1970 - updatedAt <= (awaitsInput ? 86_400 : state.expirationInterval)
+    }
+}
+
+/// 公司活动的有界采集记录；只保存身份、操作摘要、计时与结果，不保存提示词、命令参数或工具输出。
+public struct CodexOfficeActivityDetails: Codable, Equatable, Sendable {
+    public var cwd: String?
+    public var model: String?
+    public var permissionMode: String?
+    public var turnStartedAt: TimeInterval?
+    public var turnFinishedAt: TimeInterval?
+    public var toolCalls = 0
+    public var failedTools = 0
+    public var completedTurns = 0
+    public var modelRequests = 0
+    public var latestTokenUsage: [String: Int]?
+    public var tools: [CodexOfficeToolActivity] = []
+    public var history: [CodexOfficeActivityEvent] = []
+
+    /// 新会话从空计数开始，旧快照通过可选 office 字段继续兼容。
+    public init() {}
+}
+
+/// 一次工具调用的配对记录；缺少开始事件时耗时保持未知，中断不被算作工具失败。
+public struct CodexOfficeToolActivity: Codable, Equatable, Sendable, Identifiable {
+    public let id: String
+    public let name: String
+    public let operation: String
+    public var startedAt: TimeInterval?
+    public var finishedAt: TimeInterval?
+    public var outcome: String
+    public var resultConfirmed: Bool?
+    public var exitCode: Int?
+
+    /// 调用编号用来配对并行的前后事件，只有明确收到开始事件才记录起点。
+    public init(id: String, name: String, operation: String, startedAt: TimeInterval?, finishedAt: TimeInterval? = nil, outcome: String = "running") {
+        self.id = id
+        self.name = name
+        self.operation = operation
+        self.startedAt = startedAt
+        self.finishedAt = finishedAt
+        self.outcome = outcome
+    }
+
+    public var duration: TimeInterval? {
+        guard outcome != "unknown", let startedAt, let finishedAt else { return nil }
+        return max(0, finishedAt - startedAt)
+    }
+}
+
+/// 每个会话保留最近六十四个事件，页面轮询再慢也不会漏掉同一秒内的工具变化。
+public struct CodexOfficeActivityEvent: Codable, Equatable, Sendable, Identifiable {
+    public let id: String
+    public let event: String
+    public let turnID: String?
+    public let tool: String?
+    public let operation: String
+    public let state: CodexHookActivityState
+    public let date: TimeInterval
+
+    /// 事件编号由回合、工具调用和阶段组成，重复 Hook 投递不会重复进入活动墙。
+    public init(id: String, event: String, turnID: String?, tool: String?, operation: String, state: CodexHookActivityState, date: TimeInterval) {
+        self.id = id
+        self.event = event
+        self.turnID = turnID
+        self.tool = tool
+        self.operation = operation
+        self.state = state
+        self.date = date
     }
 }
 

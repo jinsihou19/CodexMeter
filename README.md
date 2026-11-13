@@ -151,7 +151,7 @@ Astra 支持缓存读取、缓存写入、272K 输入阈值和日志明确记录
 
 - Codex Radar 读取 <https://codexradar.com/data/codex-three-task-results.json>，跟随官网展示庞贝、鹈鹕、糖果三题等权的 150 分总分。此来源是单批次快照，不提供历史曲线；使用独立缓存隔离旧 RadarBench 基准。
 - Antigravity 额度优先读取本地服务；本地服务不可用时才尝试已有 Google OAuth 配置。
-- 活动 Hook 只写入轻量状态，不包含 prompt、transcript 或工具输出。
+- 活动 Hook 写入状态及有界的公司活动元数据，不包含 prompt、transcript 正文、原始命令参数或工具输出。
 
 ## 自动更新
 
@@ -198,13 +198,13 @@ bash script/package_release.sh
 
 在“设置 → 菜单栏”选择非“无”的活动样式，再点击“活动钩子”右侧的“安装”。应用把原生入口合并到 `CODEX_HOME/hooks.json`（默认 `~/.codex/hooks.json`），保留其他 Hook，并在首次改写前备份到同目录的 `hooks.json.codexmeter-backup`。检测全部活动事件完整配置后，按钮自动替换成“已安装”；移动 App 或条目缺失时会重新显示安装按钮。选择“无”隐藏活动图标与安装行，保留已安装的 Hook。
 
-配置后需要在 Codex 的 `/hooks → 来自配置 → 用户配置` 中审核并信任活动 Hook，再开始新回合。需要的 10 项是 `SessionStart`、`UserPromptSubmit`、`PreToolUse`、`PermissionRequest`、`PostToolUse`、`PreCompact`、`PostCompact`、`Stop`、`Interrupt` 和 `SessionEnd`；它们的命令均包含 `--codexmeter-activity-hook`，状态说明统一为“CodexMeter 活动指示 · 事件名”。“已安装”只表示配置完整，不表示已获 Codex 信任。应用不修改 Codex 的信任设置。
+配置后需要在 Codex 的 `/hooks → 来自配置 → 用户配置` 中审核并信任活动 Hook，再开始新回合。共配置 12 项：`SessionStart`、`UserPromptSubmit`、`PreToolUse`、`PermissionRequest`、`PostToolUse`、`PreModelRequest`、`PostModelRequest`、`PreCompact`、`PostCompact`、`Stop`、`Interrupt` 和 `SessionEnd`；它们的命令均包含 `--codexmeter-activity-hook`，状态说明统一为“CodexMeter 活动指示 · 事件名”。模型请求事件需要 Codex 版本支持；没有收到事件时只显示已观察到的数据。“已安装”只表示配置完整，不表示已获 Codex 信任。应用不修改 Codex 的信任设置。事件字段以 [OpenAI Hooks 文档](https://learn.chatgpt.com/docs/hooks) 为准。
 
 为兼容更名前的安装，应用在系统允许访问时也读取旧版 App Group 目录的活动文件，按会话取新旧文件中最新事件，避免同一回合重复显示。旧目录被系统拒绝时，使用内置全局 Hook 写入新的用户支持目录即可恢复活动显示。
 
 活动指示统一使用用户级全局 Hook，覆盖当前用户的所有本机项目。仓库不再提供项目级活动配置或 Python 转发脚本，避免同一事件重复调用和额外的信任审核。
 
-活动状态写入 `~/Library/Application Support/CodexMeter/codex-activity.json`，应用聚合显示当前 Codex 会话状态。这份文件只供菜单栏使用，采用主应用自己的用户目录，避免 ad-hoc 主进程因没有 App Group 授权而无法读取 Hook 写入的状态。现有原生 Hook 的命令保持不变，升级 App 即可使用新目录。它是本地会话活动指示，不是 OpenAI 账单或计费接口。
+活动状态写入 `~/Library/Application Support/CodexMeter/codex-activity.json`，应用据此汇总当前 Codex 会话状态；详细字段作为可选数据兼容旧快照，不进入 Widget 快照。文件采用主应用自己的用户目录，避免 ad-hoc 主进程因没有 App Group 授权而无法读取 Hook 写入的状态。现有原生 Hook 的命令保持不变，升级 App 即可使用新目录。它是本地会话活动指示，不是 OpenAI 账单或计费接口。
 
 ### 活动状态与颜色
 

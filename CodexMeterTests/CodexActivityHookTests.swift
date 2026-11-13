@@ -152,7 +152,7 @@ final class CodexActivityHookTests: XCTestCase {
             XCTAssertEqual(document.sessions["first"]?.state, .thinking)
         }
         let before = try Data(contentsOf: url)
-        for event in ["SessionStart", "SubagentStart", "SubagentStop", "Unsupported"] {
+        for event in ["SubagentStart", "SubagentStop", "Unsupported"] {
             try CodexActivityHook.record(payload: payload(event, session: "first", path: first), at: url)
             XCTAssertEqual(try Data(contentsOf: url), before)
         }

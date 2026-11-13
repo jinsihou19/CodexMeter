@@ -7,6 +7,11 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+        A63000000000000000000001 /* CodexOfficeHookReducer.swift in Sources */ = {isa = PBXBuildFile; fileRef = A63000000000000000000003 /* CodexOfficeHookReducer.swift */; };
+        A63000000000000000000002 /* CodexOfficeHookReducer.swift in Sources */ = {isa = PBXBuildFile; fileRef = A63000000000000000000003 /* CodexOfficeHookReducer.swift */; };
+        A63000000000000000000004 /* CodexOfficeStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = A63000000000000000000006 /* CodexOfficeStore.swift */; };
+        A63000000000000000000005 /* CodexOfficeStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = A63000000000000000000006 /* CodexOfficeStore.swift */; };
+        A6300000000000000000000D /* CodexOfficeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A6300000000000000000000E /* CodexOfficeTests.swift */; };
         A62000000000000000000006 /* MenuBarView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 10000000000000000000001C; };
         A62000000000000000000007 /* CodexRadarView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 100000000000000000001005; };
         A62000000000000000000002 /* CodexDashboardView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A62000000000000000000001; };
@@ -156,6 +161,9 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
+        A63000000000000000000003 /* CodexOfficeHookReducer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CodexOfficeHookReducer.swift; sourceTree = "<group>"; };
+        A63000000000000000000006 /* CodexOfficeStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CodexOfficeStore.swift; sourceTree = "<group>"; };
+        A6300000000000000000000E /* CodexOfficeTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CodexOfficeTests.swift; sourceTree = "<group>"; };
         A62000000000000000000001 /* CodexDashboardView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CodexDashboardView.swift; sourceTree = "<group>"; };
         A62000000000000000000004 /* CodexDashboardTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CodexDashboardTests.swift; sourceTree = "<group>"; };
 		A61000000000000000000007 /* ThirdPartyNotices.txt */ = {isa = PBXFileReference; lastKnownFileType = text; path = CodexMeter/ThirdPartyNotices.txt; sourceTree = SOURCE_ROOT; };
@@ -281,6 +289,7 @@
 		100000000000000000000073 /* CodexMeterTests */ = {
 			isa = PBXGroup;
 			children = (
+                A6300000000000000000000E /* CodexOfficeTests.swift */,
 				A50000000000000000000005 /* CodexActivityHookTests.swift */,
 				100000000000000000000012 /* UsageModelsTests.swift */,
 				100000000000000000000013 /* UsageFormatterTests.swift */,
@@ -310,6 +319,8 @@
 		100000000000000000000075 /* CodexMeter */ = {
 			isa = PBXGroup;
 			children = (
+                A63000000000000000000003 /* CodexOfficeHookReducer.swift */,
+                A63000000000000000000006 /* CodexOfficeStore.swift */,
 				10000000000000000000001A /* CodexMeterApp.swift */,
 				100000000000000000000C03 /* SettingsWindowOpener.swift */,
 				100000000000000000000C06 /* SettingsWindowPresenter.swift */,
@@ -567,6 +578,9 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+                A63000000000000000000002 /* CodexOfficeHookReducer.swift in Sources */,
+                A63000000000000000000005 /* CodexOfficeStore.swift in Sources */,
+                A6300000000000000000000D /* CodexOfficeTests.swift in Sources */,
 				100000000000000000000002 /* UsageModelsTests.swift in Sources */,
 				A50000000000000000000002 /* CodexActivityHook.swift in Sources */,
 				A50000000000000000000003 /* CodexActivityHookTests.swift in Sources */,
@@ -607,6 +621,8 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+                A63000000000000000000001 /* CodexOfficeHookReducer.swift in Sources */,
+                A63000000000000000000004 /* CodexOfficeStore.swift in Sources */,
 				10000000000000000000000B /* CodexMeterApp.swift in Sources */,
 				10000000000000000000000C /* UsageViewModel.swift in Sources */,
 				300000000000000000000005 /* LocalCodexUsageReader.swift in Sources */,

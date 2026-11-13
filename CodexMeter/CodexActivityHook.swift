@@ -9,7 +9,7 @@ enum CodexActivityHook {
     static let argument = "--codexmeter-activity-hook"
     static let events = [
         "SessionStart", "UserPromptSubmit", "PreToolUse", "PermissionRequest", "PostToolUse",
-        "PreCompact", "PostCompact", "Stop", "Interrupt", "SessionEnd"
+        "PreModelRequest", "PostModelRequest", "PreCompact", "PostCompact", "Stop", "Interrupt", "SessionEnd"
     ]
 
     /// 消费 stdin 的单个事件；异常保持静默，不能因状态指示失败阻塞 Codex。
@@ -27,19 +27,23 @@ enum CodexActivityHook {
     /// 只跟踪持久主会话的当前回合；结束记录保留一天以拒绝迟到事件，所有入口共用同一文件锁。
     static func record(payload: [String: Any], at url: URL, now: Date = Date()) throws {
         guard let event = payload["hook_event_name"] as? String, events.contains(event),
-              event != "SessionStart",
               let sessionID = payload["session_id"] as? String, !sessionID.isEmpty,
               let path = payload["transcript_path"] as? String,
               CodexActivityTranscript.isPersistentRoot(path: path, sessionID: sessionID)
         else { return }
         let turnID = payload["turn_id"] as? String
-        guard event == "SessionEnd" || (turnID?.isEmpty == false) else { return }
+        guard ["SessionStart", "SessionEnd"].contains(event) || (turnID?.isEmpty == false) else { return }
+        // 模型事件可能沿用父会话编号；子代理请求不能覆盖主会话的模型和当前动作。
+        if ["PreModelRequest", "PostModelRequest"].contains(event),
+           let agent = payload["agent_id"] as? String, agent != sessionID { return }
         let toolName = payload["tool_name"] as? String
         let toolID = payload["tool_use_id"] as? String
         let questionTool = ["request_user_input", "request_user_input_async"].contains(toolName?.components(separatedBy: ".").last ?? "")
         var state: CodexHookActivityState
         switch event {
+        case "SessionStart": state = .idle
         case "UserPromptSubmit", "PreToolUse": state = .running
+        case "PreModelRequest", "PostModelRequest": state = .thinking
         case "PermissionRequest": state = .waitingApproval
         case "PostToolUse": state = responseFailed(payload["tool_response"]) ? .failed : .thinking
         case "PreCompact", "PostCompact": state = .compacting
@@ -74,7 +78,7 @@ enum CodexActivityHook {
         let previous = sessions[sessionID]
         let sameTurn = previous?.turnID == turnID
         let wasEnded = previous.map { ["Stop", "Interrupt", "SessionEnd"].contains($0.eventName) } ?? false
-        if event != "SessionEnd" {
+        if !["SessionStart", "SessionEnd"].contains(event) {
             // 异步提问可在本轮输出结束后继续等待，此时真实中断仍必须清除等待。
             if sameTurn && wasEnded && event != "Interrupt" { return }
             if event == "UserPromptSubmit" {
@@ -86,9 +90,10 @@ enum CodexActivityHook {
                 return
             }
         }
-        var questions = sameTurn ? CodexActivityTranscript.unansweredQuestions(previous?.pendingQuestionIDs ?? [], path: path) : []
-        var approvalID = sameTurn ? previous?.approvalToolID : nil
-        var approvalName = sameTurn ? previous?.approvalToolName : nil
+        let retainsTurn = sameTurn || event == "SessionStart"
+        var questions = retainsTurn ? CodexActivityTranscript.unansweredQuestions(previous?.pendingQuestionIDs ?? [], path: path) : []
+        var approvalID = retainsTurn ? previous?.approvalToolID : nil
+        var approvalName = retainsTurn ? previous?.approvalToolName : nil
         if event == "PermissionRequest" {
             approvalID = toolID
             approvalName = toolName
@@ -115,13 +120,28 @@ enum CodexActivityHook {
         } else if !questions.isEmpty || approvalName != nil {
             state = .waitingApproval
         }
+        let failed = event == "PostToolUse" && responseFailed(payload["tool_response"])
+            || event == "PostModelRequest" && payload["status"] as? String == "failed"
+        var officePayload = payload
+        if event == "SessionEnd" { officePayload["turn_id"] = previous?.turnID }
+        guard let office = CodexOfficeHookReducer.apply(
+            payload: officePayload, previous: previous?.office, newTurn: event == "UserPromptSubmit" && !sameTurn,
+            state: state, failed: failed, now: now
+        ) else { return }
+        let activeTool = office.tools.last { $0.finishedAt == nil }
+        if !["Stop", "Interrupt", "SessionStart", "SessionEnd"].contains(event),
+           state != .waitingApproval, activeTool != nil { state = .running }
+        if failed && activeTool == nil && state != .waitingApproval { state = .failed }
+        // 恢复会话不能清除上一回合的结束标记，避免迟到工具事件重新激活已完成的同事。
+        let preservesState = event == "SessionStart" && previous != nil
         sessions[sessionID] = CodexHookActivitySnapshot(
-            state: event == "Stop" && previous == nil ? .idle : state,
-            sessionID: sessionID, turnID: event == "SessionEnd" ? previous?.turnID : turnID,
-            eventName: event, toolName: payload["tool_name"] as? String,
+            state: preservesState ? (previous!.isFresh(now: now) ? previous!.state : .idle) : event == "Stop" && previous == nil ? .idle : state,
+            sessionID: sessionID, turnID: ["SessionStart", "SessionEnd"].contains(event) ? previous?.turnID : turnID,
+            eventName: preservesState ? previous!.eventName : event,
+            toolName: activeTool?.name ?? (preservesState ? previous?.toolName : payload["tool_name"] as? String),
             message: nil, updatedAt: now.timeIntervalSince1970, transcriptPath: path,
             pendingQuestionIDs: questions.isEmpty ? nil : Array(Set(questions)).sorted(),
-            approvalToolID: approvalID, approvalToolName: approvalName
+            approvalToolID: approvalID, approvalToolName: approvalName, office: office
         )
         try JSONEncoder().encode(CodexHookActivityDocument(sessions: sessions)).write(to: url, options: .atomic)
     }
@@ -136,19 +156,101 @@ enum CodexActivityHook {
 
     /// 只检查结构化失败字段，不把工具输出中的普通错误文案误判为回合失败。
     private static func responseFailed(_ response: Any?) -> Bool {
+        if let code = CodexOfficeHookReducer.exitCode(response), code != 0 { return true }
         guard let response = response as? [String: Any] else { return false }
-        for key in ["exit_code", "exitCode", "status_code", "statusCode", "code"] {
-            if let code = response[key] as? Int, code != 0 { return true }
+        if response["isError"] as? Bool == true || response["is_error"] as? Bool == true { return true }
+        for key in ["status_code", "statusCode"] {
+            if let code = response[key] as? Int, code >= 400 { return true }
         }
         if response["success"] as? Bool == false { return true }
         if let error = response["error"], !(error is NSNull),
            error as? Bool != false, error as? String != "" { return true }
-        return responseFailed(response["result"] ?? response["response"])
+        return responseFailed(response["result"] ?? response["response"] ?? response["structuredContent"])
     }
 }
 
-/// 只读取日志头的会话身份和尾部生命周期元数据；临时会话和子代理不参与菜单栏汇总，不保存会话正文。
+/// 限量读取身份、生命周期与工具返回元数据；临时会话和子代理不参与汇总，不保存会话正文。
 enum CodexActivityTranscript {
+    /// 每次最多前进四兆，只缓存调用编号和返回时间；长会话不会反复扫描全文或永远漏掉较早的返回。
+    private struct ToolReturnScan {
+        var offset: UInt64 = 0
+        var skippingLargeLine = false
+        var returns: [String: TimeInterval] = [:]
+        var usedAt = Date()
+    }
+    @MainActor private static var toolReturnScans: [String: ToolReturnScan] = [:]
+
+    /// 用实际返回记录补齐漏发的工具结束事件；仅读取调用编号和时间，不把工具输出复制进活动数据。
+    @MainActor
+    static func officeDetails(for snapshot: CodexHookActivitySnapshot) -> CodexOfficeActivityDetails? {
+        guard var details = snapshot.office, let path = snapshot.transcriptPath else { return snapshot.office }
+        // 旧记录曾用“未识别到失败”代表成功；缺少明确确认标记时按已返回展示，不能继续承诺成功。
+        for index in details.tools.indices where details.tools[index].outcome == "succeeded" && details.tools[index].resultConfirmed != true {
+            details.tools[index].outcome = "returned"
+        }
+        let pending = Set(details.tools.filter { $0.finishedAt == nil }.map(\.id))
+        guard !pending.isEmpty, let handle = FileHandle(forReadingAtPath: path) else { return details }
+        defer { try? handle.close() }
+        guard let size = try? handle.seekToEnd() else { return details }
+        var scan = toolReturnScans[path] ?? ToolReturnScan()
+        if scan.offset > size { scan = ToolReturnScan() }
+        guard (try? handle.seek(toOffset: scan.offset)) != nil else { return details }
+        // EOF 返回 nil 时仍要使用已确认的返回记录，否则下一次轮询会把已返回工具重新显示成运行中。
+        let data = (try? handle.read(upToCount: 4_194_304)) ?? Data()
+        var start = data.startIndex
+        if scan.skippingLargeLine {
+            if let newline = data.firstIndex(of: 10) { start = newline + 1; scan.skippingLargeLine = false }
+            else { start = data.endIndex }
+        }
+        let end = data.lastIndex(of: 10).map { $0 + 1 } ?? start
+        let complete = end > start ? data[start..<end] : Data()
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        let marker = Data("\"function_call_output\"".utf8)
+        for line in complete.split(separator: 10) where line.range(of: marker) != nil {
+            guard let object = try? JSONSerialization.jsonObject(with: Data(line)) as? [String: Any],
+                  object["type"] as? String == "response_item",
+                  let payload = object["payload"] as? [String: Any],
+                  payload["type"] as? String == "function_call_output",
+                  let id = payload["call_id"] as? String,
+                  let timestamp = object["timestamp"] as? String else { continue }
+            let date: Date?
+            if let fractional = formatter.date(from: timestamp) { date = fractional }
+            else {
+                let seconds = ISO8601DateFormatter()
+                date = seconds.date(from: timestamp)
+            }
+            if let date { scan.returns[id] = date.timeIntervalSince1970 }
+        }
+        if end > start { scan.offset += UInt64(end) }
+        else if data.count == 4_194_304 || scan.skippingLargeLine {
+            scan.offset += UInt64(data.count)
+            scan.skippingLargeLine = true
+        } else { scan.offset += UInt64(start) }
+        let recent = Set(scan.returns.sorted { $0.value > $1.value }.prefix(128).map(\.key))
+        scan.returns = scan.returns.filter { pending.contains($0.key) || recent.contains($0.key) }
+        scan.usedAt = Date()
+        if toolReturnScans[path] == nil, toolReturnScans.count >= 64,
+           let oldest = toolReturnScans.min(by: { $0.value.usedAt < $1.value.usedAt })?.key { toolReturnScans.removeValue(forKey: oldest) }
+        toolReturnScans[path] = scan
+        let returned = scan.returns.filter { pending.contains($0.key) }
+        guard !returned.isEmpty else { return details }
+        for index in details.tools.indices {
+            guard details.tools[index].finishedAt == nil, let date = returned[details.tools[index].id] else { continue }
+            details.tools[index].finishedAt = date
+            // 有返回不等于成功；没有结构化 Hook 结果时保持结果未确认，也不增加失败计数。
+            details.tools[index].outcome = "returned"
+            details.tools[index].resultConfirmed = false
+            let tool = details.tools[index]
+            details.history.append(CodexOfficeActivityEvent(
+                id: "transcript-tool:" + tool.id, event: "TranscriptToolReturn", turnID: snapshot.turnID,
+                tool: tool.name, operation: tool.operation + " · 已返回", state: .thinking, date: date
+            ))
+        }
+        details.history = Array(details.history.sorted { $0.date == $1.date ? $0.id < $1.id : $0.date < $1.date }.suffix(64))
+        return details
+    }
+
     /// 只解析尾部用户回复的结构化问题编号；部分回答只清除对应选项组，不保留问题或答案文本。
     static func unansweredQuestions(_ ids: [String], path: String) -> [String] {
         guard !ids.isEmpty, let handle = FileHandle(forReadingAtPath: path) else { return ids }

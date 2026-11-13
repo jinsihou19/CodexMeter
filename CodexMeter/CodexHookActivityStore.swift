@@ -3,10 +3,11 @@ import Combine
 import CodexMeterShared
 import Foundation
 
-/// 汇总持久主会话的活动；日志生命周期兜底结束清理，不把临时任务或子代理当成独立聊天。
+/// 汇总持久主会话的活动；短期状态服务菜单栏，最近一天的记录供公司页面保留休息中的同事。
 @MainActor
 final class CodexHookActivityStore: ObservableObject {
     @Published private(set) var snapshots: [CodexHookActivitySnapshot] = []
+    @Published private(set) var recentSnapshots: [CodexHookActivitySnapshot] = []
 
     let activityURL: URL
     private let legacyActivityURL: URL?
@@ -79,22 +80,37 @@ final class CodexHookActivityStore: ObservableObject {
                 latestBySession[key] = snapshot
             }
         }
+        // 公司里的工位不随菜单栏指示灯一起消失；这里只保留原始记录，身份校验由页面读取日志头完成。
+        let recent = latestBySession.values.filter { now.timeIntervalSince1970 - $0.updatedAt < 86_400 }
+            .sorted { $0.sessionID ?? "" < $1.sessionID ?? "" }
+        if recentSnapshots != recent { recentSnapshots = recent }
         let visible = latestBySession.values.compactMap { snapshot -> CodexHookActivitySnapshot? in
-            guard snapshot.isFresh(now: now), let path = snapshot.transcriptPath,
+            guard snapshot.isFresh(now: now) || snapshot.office?.tools.contains(where: { $0.finishedAt == nil }) == true,
+                  let path = snapshot.transcriptPath,
                   let sessionID = snapshot.sessionID,
                   CodexActivityTranscript.isPersistentRoot(path: path, sessionID: sessionID) else { return nil }
+            let office = CodexActivityTranscript.officeDetails(for: snapshot)
+            let returned = office?.tools.filter { $0.outcome == "returned" } ?? []
+            let updatedAt = max(snapshot.updatedAt, returned.compactMap(\.finishedAt).max() ?? snapshot.updatedAt)
+            guard snapshot.isFresh(now: now) || now.timeIntervalSince1970 - updatedAt <= 60 else { return nil }
             let ending = CodexActivityTranscript.ending(for: snapshot)
-            let questions = CodexActivityTranscript.unansweredQuestions(snapshot.pendingQuestionIDs ?? [], path: path)
-            let waits = !questions.isEmpty || snapshot.approvalToolName != nil
-            let state = ending?.state == .idle ? .idle : waits ? .waitingApproval : ending?.state
-                ?? (snapshot.pendingQuestionIDs?.isEmpty == false ? .thinking : snapshot.state)
+            let questions = CodexActivityTranscript.unansweredQuestions(snapshot.pendingQuestionIDs ?? [], path: path).filter { id in
+                !returned.contains { !$0.name.hasSuffix("request_user_input_async") && id.hasPrefix($0.id + ":") }
+            }
+            let approvalReturned = returned.contains { $0.id == snapshot.approvalToolID }
+            let waits = !questions.isEmpty || (snapshot.approvalToolName != nil && !approvalReturned)
+            var state = ending?.state == .idle ? .idle : waits ? .waitingApproval : ending?.state
+                ?? (snapshot.pendingQuestionIDs?.isEmpty == false || snapshot.state == .waitingApproval ? .thinking : snapshot.state)
+            if state == .running, snapshot.office?.tools.contains(where: { $0.finishedAt == nil }) == true,
+               office?.tools.contains(where: { $0.finishedAt == nil }) == false { state = .thinking }
             return CodexHookActivitySnapshot(
                 state: state, sessionID: sessionID, turnID: snapshot.turnID,
                 eventName: state == .idle ? "Interrupt" : (state == .completed ? "Stop" : snapshot.eventName),
                 toolName: state == .completed || state == .idle ? nil : snapshot.toolName,
-                message: nil, updatedAt: waits ? snapshot.updatedAt : ending?.date ?? snapshot.updatedAt,
+                message: nil, updatedAt: waits ? snapshot.updatedAt : ending?.date ?? updatedAt,
                 transcriptPath: path, pendingQuestionIDs: questions.isEmpty ? nil : questions,
-                approvalToolID: snapshot.approvalToolID, approvalToolName: snapshot.approvalToolName
+                approvalToolID: approvalReturned ? nil : snapshot.approvalToolID,
+                approvalToolName: approvalReturned ? nil : snapshot.approvalToolName, office: office
             )
         }
         applySnapshots(visible.filter { $0.isFresh(now: now) && $0.state != .idle })
