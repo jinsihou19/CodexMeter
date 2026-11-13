@@ -788,6 +788,177 @@ final class CodexOfficeTests: XCTestCase {
         XCTAssertEqual(clicks.count, 1)
     }
 
+    /// 邮局满员时可定位名册中的会话，其他在场人员保留工位和各自的造型。
+    func testPixelPostOfficePrioritizesSelectedWithoutMovingOtherActors() throws {
+        var people = (0..<10).map { person("staff-\($0)", path: "/project") }
+        people[0].status = .waiting
+        people[9].isOnSite = false
+        let first = OfficeIllustratedLayout(employees: people, selected: nil)
+        XCTAssertEqual(first.actors.count, OfficeIllustratedLayout.capacity)
+        XCTAssertEqual(Set(first.postOfficeAppearances.values).count, first.actors.count)
+        XCTAssertNil(first.slots[people[8].id])
+        XCTAssertNil(first.slots[people[9].id])
+        let second = OfficeIllustratedLayout(employees: people, selected: people[8].id, previousSlots: first.slots,
+                                             previousPostOfficeAppearances: first.postOfficeAppearances)
+        XCTAssertNotNil(second.slots[people[8].id])
+        XCTAssertEqual(first.slots[people[0].id], second.slots[people[0].id])
+        XCTAssertEqual(Set(second.postOfficeAppearances.values).count, second.actors.count)
+        for (id, appearance) in first.postOfficeAppearances where second.slots[id] != nil {
+            XCTAssertEqual(second.postOfficeAppearances[id], appearance)
+        }
+
+        let before = try XCTUnwrap(second.actors.first { $0.employee.id == people[0].id })
+        people[0].status = .idle
+        let third = OfficeIllustratedLayout(employees: people, selected: people[0].id, previousSlots: second.slots,
+                                            previousPostOfficeAppearances: second.postOfficeAppearances)
+        let after = try XCTUnwrap(third.actors.first { $0.employee.id == people[0].id })
+        XCTAssertEqual(before.slot, after.slot)
+        XCTAssertEqual(third.postOfficeAppearances[people[0].id], second.postOfficeAppearances[people[0].id])
+        XCTAssertNotEqual(before.point, after.point)
+        let route = OfficeIllustratedLayout.walk(from: before.point, to: after.point)
+        XCTAssertEqual(route.sample(0).point, before.point)
+        XCTAssertEqual(route.sample(1).point.x, after.point.x, accuracy: 0.001)
+        XCTAssertEqual(route.sample(1).point.y, after.point.y, accuracy: 0.001)
+        let doorway = (0...200).map { route.sample(CGFloat($0) / 200).point }.filter { abs($0.x - 753) < 7 }
+        XCTAssertFalse(doorway.isEmpty)
+        XCTAssertTrue(doorway.allSatisfy { (332...360).contains($0.y) })
+    }
+
+    /// 满员时逐一往返茶水间，检查传送带、桌椅、正门台阶及停着的同事。
+    func testPixelPostOfficeWalksPastFurnitureAndStationaryActors() throws {
+        var people = (0..<8).map { person("staff-\($0)", path: "/post") }
+        let working = OfficeIllustratedLayout(employees: people, selected: nil)
+        for index in people.indices { people[index].status = .idle }
+        let resting = OfficeIllustratedLayout(employees: people, selected: nil, previousSlots: working.slots)
+        let work = working.actors.map(\.point)
+        let tea = resting.actors.map(\.point)
+        let furniture = [
+            CGRect(x: 291, y: 290, width: 170, height: 44),
+            CGRect(x: 425, y: 374, width: 140, height: 19),
+            CGRect(x: 813, y: 282, width: 53, height: 68),
+            CGRect(x: 894, y: 244, width: 59, height: 122)
+        ]
+        for pattern in [0, 0b01010101, 0b10101010, 0b11111111] {
+            for slot in work.indices {
+                let occupied = work.indices.filter { $0 != slot }.map { pattern & (1 << $0) == 0 ? work[$0] : tea[$0] }
+                for (from, to) in [(work[slot], tea[slot]), (tea[slot], work[slot])] {
+                    let route = OfficeIllustratedLayout.walk(from: from, to: to, avoiding: occupied)
+                    XCTAssertEqual(route.sample(1).point.x, to.x, accuracy: 0.01)
+                    XCTAssertEqual(route.sample(1).point.y, to.y, accuracy: 0.01)
+                    let samples = (0...180).map { route.sample(CGFloat($0) / 180).point }
+                    XCTAssertTrue(samples.contains { (742...761).contains($0.x) && (332...360).contains($0.y) })
+                    XCTAssertFalse(samples.contains { point in furniture.contains { $0.contains(point) } })
+                    XCTAssertFalse(samples.contains { point in
+                        occupied.contains { abs($0.x - point.x) < 33 && abs($0.y - point.y) < 25 }
+                    })
+                }
+            }
+        }
+    }
+
+    /// 八人同时在场时，两个相向的人都能穿过茶水间门洞并踩完四帧步态。
+    @MainActor
+    func testPixelPostOfficeOpposingWalksKeepBodyClearance() throws {
+        let people = (0..<8).map { person("clerk-\($0)", path: "/post") }
+        let original = OfficeIllustratedLayout(employees: people, selected: nil)
+        let canvas = OfficeIllustratedCanvas(frame: CGRect(origin: .zero, size: OfficeIllustratedLayout.size))
+        let clock = Date(timeIntervalSinceReferenceDate: 1000)
+
+        /// 复用画布的状态更新入口，以可控时钟推进换岗。
+        func scene(_ employees: [CodexOfficeEmployee]) -> CodexOfficeIllustratedScene {
+            CodexOfficeIllustratedScene(employees: employees, selected: nil,
+                                        night: false, animated: true, isDemo: true, action: nil, onSelect: { _ in })
+        }
+
+        canvas.apply(scene(people), now: clock)
+        var before = people
+        before[7].status = .idle
+        canvas.apply(scene(before), now: clock.addingTimeInterval(1))
+        canvas.apply(scene(before), now: clock.addingTimeInterval(8))
+        var after = people
+        after[3].status = .idle
+        let next = scene(after)
+        let layout = OfficeIllustratedLayout(employees: after, selected: nil, previousSlots: original.slots)
+        let travelers = try [3, 7].map { index in
+            try XCTUnwrap(layout.actors.first { $0.employee.id == people[index].id })
+        }
+        let departure = clock.addingTimeInterval(10)
+        var steps = [Set<Int>(), Set<Int>()]
+        var collisions = [Int]()
+        for tick in 0...600 {
+            let time = departure.addingTimeInterval(Double(tick) / 60)
+            if tick.isMultiple(of: 6) { canvas.apply(next, now: time) }
+            let poses = travelers.map { canvas.pose(for: $0, now: time) }
+            let dx = abs(poses[0].point.x - poses[1].point.x)
+            let dy = abs(poses[0].point.y - poses[1].point.y)
+            if dx < 31 && dy < 23 { collisions.append(tick) }
+            for (index, pose) in poses.enumerated() where pose.walking { steps[index].insert(pose.frame) }
+        }
+        XCTAssertTrue(collisions.isEmpty, "相向行走时人物在这些帧叠到一起：\(collisions)")
+        XCTAssertEqual(steps, [Set(2...5), Set(2...5)])
+        for actor in travelers {
+            let pose = canvas.pose(for: actor, now: departure.addingTimeInterval(10))
+            XCTAssertFalse(pose.walking)
+            XCTAssertEqual(pose.point.x, actor.point.x, accuracy: 0.01)
+            XCTAssertEqual(pose.point.y, actor.point.y, accuracy: 3.01)
+        }
+    }
+
+    /// 固定地图在窄窗和宽窗完整适配，使用同一坐标命中人物，拖动也不会误选。
+    @MainActor
+    func testPixelPostOfficeFitsViewportAndSelectsWithoutDragging() throws {
+        let employee = person("actor", path: "/work")
+        let map = OfficeIllustratedLayout(employees: [employee], selected: nil)
+        let actor = try XCTUnwrap(map.actors.first)
+        for viewport in [CGSize(width: 550, height: 310), CGSize(width: 1000, height: 350)] {
+            let bounds = CGRect(origin: .zero, size: viewport)
+            let canvas = OfficeIllustratedCanvas(frame: bounds)
+            var sessions: [String?] = []
+            canvas.apply(CodexOfficeIllustratedScene(employees: [employee], selected: nil,
+                                                     night: false, animated: false, isDemo: false, action: nil,
+                                                     onSelect: { sessions.append($0) }))
+            let frame = OfficeIllustratedLayout.mapFrame(in: bounds)
+            let scene = OfficeIllustratedLayout.size
+            XCTAssertEqual(frame.width / frame.height, scene.width / scene.height, accuracy: 0.001)
+            XCTAssertLessThanOrEqual(frame.width, bounds.width + 0.001)
+            XCTAssertLessThanOrEqual(frame.height, bounds.height + 0.001)
+
+            /// 发送视图局部事件，避免向系统窗口注入输入。
+            func mouse(_ kind: NSEvent.EventType, _ point: CGPoint) throws -> NSEvent {
+                try XCTUnwrap(NSEvent.mouseEvent(with: kind, location: canvas.convert(point, to: nil),
+                                                modifierFlags: [], timestamp: 0, windowNumber: 0, context: nil,
+                                                eventNumber: 0, clickCount: 1, pressure: 1))
+            }
+
+            let actorCenter = CGPoint(x: frame.minX + actor.point.x * frame.width / scene.width,
+                                      y: frame.minY + (actor.point.y - 30) * frame.height / scene.height)
+            canvas.mouseDown(with: try mouse(.leftMouseDown, actorCenter))
+            let dragEnd = CGPoint(x: actorCenter.x + 60, y: actorCenter.y + 20)
+            canvas.mouseUp(with: try mouse(.leftMouseUp, dragEnd))
+            XCTAssertTrue(sessions.isEmpty)
+            canvas.mouseDown(with: try mouse(.leftMouseDown, actorCenter))
+            canvas.mouseUp(with: try mouse(.leftMouseUp, actorCenter))
+            XCTAssertEqual(sessions, [employee.id])
+        }
+    }
+
+    /// 没有新事件时，理信和环顾仍随时间变化；暂停和减少动态效果时两者稳定。
+    func testPixelPostOfficeAnimatesUnchangedSessionsAndRespectsPause() throws {
+        let sorting = person("first", path: "/work")
+        var thinking = person("second", path: "/work")
+        thinking.status = .thinking
+        let layout = OfficeIllustratedLayout(employees: [sorting, thinking], selected: nil)
+        let clerk = try XCTUnwrap(layout.actors.first { $0.employee.id == sorting.id })
+        let thinker = try XCTUnwrap(layout.actors.first { $0.employee.id == thinking.id })
+        XCTAssertNotEqual(clerk.pose(at: 0.2, animated: true).frame, clerk.pose(at: 1.4, animated: true).frame)
+        XCTAssertFalse(thinker.pose(at: 0.2, animated: true).walking)
+        XCTAssertNotEqual(thinker.pose(at: 0.2, animated: true), thinker.pose(at: 1.4, animated: true))
+        for actor in layout.actors {
+            XCTAssertEqual(actor.pose(at: 0.2, animated: false), actor.pose(at: 1.4, animated: false))
+            XCTAssertEqual(actor.pose(at: 0.2, animated: false).point, actor.point)
+        }
+    }
+
     /// 使用 Hook 和日志校正产生真实事件结构，验证旧事件、暂停积压和重复更新都不会触发飞行。
     @MainActor
     func testToolTrafficUsesOnlyNewHookAndTranscriptEvents() throws {

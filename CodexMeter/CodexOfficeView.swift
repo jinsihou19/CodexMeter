@@ -59,15 +59,21 @@ private struct CodexOfficeView: View {
     @State private var showsEvents = false
     @State private var toast: String?
     @State private var toastTask: Task<Void, Never>?
+    @State private var illustrationAction: OfficeIllustratedAction?
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.colorScheme) private var colorScheme
     @AppStorage(SurfaceAppearancePreferenceKeys.appearanceMode, store: MenuBarDisplaySettings.sharedDefaults)
     private var appearanceMode = SurfaceAppearanceSettings.defaultAppearanceMode.rawValue
+    @AppStorage("office.sceneStyle", store: MenuBarDisplaySettings.sharedDefaults)
+    private var storedSceneStyle = CodexOfficeSceneStyle.company.rawValue
     @Binding var isExpanded: Bool
     @Binding var isEnabled: Bool
 
     /// 场景读取 App 的共享外观偏好，自动外观交给当前系统配色。
     private var preferredScheme: ColorScheme? { SurfaceAppearanceMode(rawValue: appearanceMode)?.colorScheme }
+
+    /// 已移除或无法识别的旧主题回退到像素邮局。
+    private var sceneStyle: CodexOfficeSceneStyle { CodexOfficeSceneStyle(rawValue: storedSceneStyle) ?? .pixelPostOffice }
 
     private var visibleEmployees: [CodexOfficeEmployee] {
         store.employees.filter { department.isEmpty || $0.projectPath == department }.sorted {
@@ -120,6 +126,14 @@ private struct CodexOfficeView: View {
         HStack(spacing: 8) {
             Text(AppLocalization.string("会话小镇")).font(.system(size: 23, weight: .semibold))
             Spacer(minLength: 8)
+            let overflow = store.employees.filter(\.isOnSite).count - OfficeIllustratedLayout.capacity
+            if sceneStyle == .pixelPostOffice && overflow > 0 {
+                Text(officeText("另有 \(overflow) 位在场", "\(overflow) more on site"))
+                    .help(officeText("在下方名册点击会话，可在画面中显示该人物。", "Select a session in the roster to show its character."))
+                    .font(.caption).foregroundStyle(.secondary)
+            } else if let toast, sceneStyle == .pixelPostOffice {
+                Text(toast).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+            }
             Text(officeText("名册 · \(store.employees.count) 位同事", "Roster · \(store.employees.count) people"))
                 .font(.caption).foregroundStyle(.secondary).fixedSize()
             OfficeEnableSwitch(isEnabled: $isEnabled)
@@ -140,6 +154,7 @@ private struct CodexOfficeView: View {
         HStack(spacing: compact ? 5 : 8) {
             metrics(compact: compact)
             Spacer(minLength: 4)
+            sceneStyleMenu
             Picker(officeText("数据来源", "Data source"), selection: Binding(get: { store.isDemo }, set: { store.setDemo($0) })) {
                 Text(officeText("实时", "Live")).tag(false)
                 Text(officeText("演示", "Demo")).tag(true)
@@ -147,9 +162,11 @@ private struct CodexOfficeView: View {
             .pickerStyle(.segmented).labelsHidden().frame(width: compact ? 108 : 122)
             HStack(spacing: 2) {
                 pauseButton
-                sceneButton("viewfinder", help: officeText("查看公司全景", "Frame the whole office")) {
-                    select(nil)
-                    cameraRequest += 1
+                if sceneStyle != .pixelPostOffice {
+                    sceneButton("viewfinder", help: officeText("查看公司全景", "Frame the whole office")) {
+                        select(nil)
+                        cameraRequest += 1
+                    }
                 }
                 stretchButton
                 eventButton(compact: compact)
@@ -210,13 +227,23 @@ private struct CodexOfficeView: View {
         .accessibilityLabel("\(count) \(title)")
     }
 
-    /// 原生画布呈现当前会话，空公司也可查看场景。
-    private var scene: some View {
+    /// 共用当前会话选择与数据来源，平面画布始终完整适配窗口。
+    @ViewBuilder private var scene: some View {
+        if sceneStyle == .pixelPostOffice {
+            illustratedScene
+        } else {
+            companyScene
+        }
+    }
+
+    /// 切换三维主题时重新绑定原生画布；没有在场会话时也直接展示场景。
+    private var companyScene: some View {
         ZStack(alignment: .bottomLeading) {
             CodexOfficeSceneView(director: director, employees: store.employees, selected: selectedID,
                                  night: (preferredScheme ?? colorScheme) == .dark, paused: paused,
                                  cameraRequest: cameraRequest, reduceMotion: reduceMotion, isDemo: store.isDemo, onSelect: select)
-                .accessibilityLabel(officeText("三维公司。使用下方同事列表查看状态。", "3D office. Use the people list below to check statuses."))
+                .id(sceneStyle.rawValue)
+                .accessibilityLabel(sceneStyle.title + officeText("。使用下方同事列表查看状态。", ". Use the people list below to check statuses."))
             Text(toast ?? officeText("左拖平移 · 右拖旋转 · 滚轮或捏合缩放 · 点击同事",
                                      "Left drag to pan · Right drag to orbit · Scroll or pinch to zoom · Click a colleague"))
                 .font(.system(size: 10)).foregroundStyle(.secondary)
@@ -231,6 +258,53 @@ private struct CodexOfficeView: View {
         .overlay(RoundedRectangle(cornerRadius: 16).strokeBorder(.primary.opacity(0.06)).allowsHitTesting(false))
     }
 
+    /// 让邮局原画与透明动画层共用同一个等比视口，确保人物站位与背景对齐。
+    private var illustratedScene: some View {
+        let night = (preferredScheme ?? colorScheme) == .dark
+        return GeometryReader { geometry in
+            let frame = OfficeIllustratedLayout.mapFrame(in: CGRect(origin: .zero, size: geometry.size))
+            ZStack {
+                Image(night ? "PixelPostOfficeNight" : "PixelPostOfficeDay")
+                    .resizable()
+                    .accessibilityHidden(true)
+                    .allowsHitTesting(false)
+                CodexOfficeIllustratedScene(employees: store.employees, selected: selectedID,
+                                            night: night, animated: !paused && !reduceMotion, isDemo: store.isDemo,
+                                            action: illustrationAction, onSelect: select)
+            }
+            .frame(width: frame.width, height: frame.height)
+            .clipShape(RoundedRectangle(cornerRadius: 14))
+            .position(x: frame.midX, y: frame.midY)
+        }
+        .frame(minHeight: 210, maxHeight: .infinity)
+    }
+
+    /// 只有点菜单项才改写偏好，打开详情或切换大屏时继续使用同一场景风格。
+    private var sceneStyleMenu: some View {
+        Menu {
+            ForEach(CodexOfficeSceneStyle.allCases, id: \.rawValue) { style in
+                Button {
+                    storedSceneStyle = style.rawValue
+                } label: {
+                    if style == sceneStyle {
+                        Label(style.title, systemImage: "checkmark")
+                    } else {
+                        Text(style.title)
+                    }
+                }
+            }
+        } label: {
+            Label(sceneStyle.title, systemImage: "square.on.square")
+                .font(.system(size: 11, weight: .semibold))
+                .padding(.horizontal, 9).padding(.vertical, 6)
+        }
+        .menuStyle(.borderlessButton)
+        .fixedSize()
+        .background(.regularMaterial, in: Capsule())
+        .help(officeText("切换场景风格", "Switch scene style"))
+        .accessibilityLabel(officeText("场景风格，", "Scene style, ") + sceneStyle.title)
+    }
+
     /// 动画开关作用于当前画布，数据轮询照常进行。
     private var pauseButton: some View {
         sceneButton(paused ? "play" : "pause",
@@ -240,10 +314,14 @@ private struct CodexOfficeView: View {
         }
     }
 
-    /// 伸展只改变场景动作，当前会话状态继续刷新。
+    /// 同一互动只发给当前场景，平面人物用短暂的跃起动作响应。
     private var stretchButton: some View {
         sceneButton("figure.flexibility", help: officeText("全员伸个懒腰", "Stretch break")) {
-            director.stretch()
+            if sceneStyle == .pixelPostOffice {
+                illustrationAction = OfficeIllustratedAction(.stretch)
+            } else {
+                director.stretch()
+            }
             announce(officeText("伸个懒腰，灵感马上就来。", "A little stretch, a fresh idea."))
         }
     }
@@ -390,7 +468,11 @@ private struct CodexOfficeView: View {
 
     /// 咖啡是明确的娱乐互动，不影响审批、任务、工具结果或真实状态。
     private func coffee(_ person: CodexOfficeEmployee) {
-        director.sendCoffee(to: person.id)
+        if sceneStyle == .pixelPostOffice {
+            illustrationAction = OfficeIllustratedAction(.coffee(person.id))
+        } else {
+            director.sendCoffee(to: person.id)
+        }
         announce(officeText("给 \(person.name) 送了一杯咖啡。", "Coffee delivered to \(person.name)."))
     }
 

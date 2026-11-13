@@ -18,6 +18,8 @@
         A6300000000000000000000D /* CodexOfficeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A6300000000000000000000E /* CodexOfficeTests.swift */; };
         A6300000000000000000000F /* CodexOfficeBuilding.swift in Sources */ = {isa = PBXBuildFile; fileRef = A63000000000000000000011 /* CodexOfficeBuilding.swift */; };
         A63000000000000000000010 /* CodexOfficeBuilding.swift in Sources */ = {isa = PBXBuildFile; fileRef = A63000000000000000000011 /* CodexOfficeBuilding.swift */; };
+        A63100000000000000000001 /* CodexOfficeIllustratedScene.swift in Sources */ = {isa = PBXBuildFile; fileRef = A63100000000000000000003 /* CodexOfficeIllustratedScene.swift */; };
+        A63100000000000000000002 /* CodexOfficeIllustratedScene.swift in Sources */ = {isa = PBXBuildFile; fileRef = A63100000000000000000003 /* CodexOfficeIllustratedScene.swift */; };
         A62000000000000000000006 /* MenuBarView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 10000000000000000000001C; };
         A62000000000000000000007 /* CodexRadarView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 100000000000000000001005; };
         A62000000000000000000002 /* CodexDashboardView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A62000000000000000000001; };
@@ -171,6 +173,7 @@
         A63000000000000000000006 /* CodexOfficeStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CodexOfficeStore.swift; sourceTree = "<group>"; };
         A63000000000000000000009 /* CodexOfficeScene.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CodexOfficeScene.swift; sourceTree = "<group>"; };
         A63000000000000000000011 /* CodexOfficeBuilding.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CodexOfficeBuilding.swift; sourceTree = "<group>"; };
+        A63100000000000000000003 /* CodexOfficeIllustratedScene.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CodexOfficeIllustratedScene.swift; sourceTree = "<group>"; };
         A6300000000000000000000C /* CodexOfficeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CodexOfficeView.swift; sourceTree = "<group>"; };
         A6300000000000000000000E /* CodexOfficeTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CodexOfficeTests.swift; sourceTree = "<group>"; };
         A62000000000000000000001 /* CodexDashboardView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CodexDashboardView.swift; sourceTree = "<group>"; };
@@ -332,6 +335,7 @@
                 A63000000000000000000006 /* CodexOfficeStore.swift */,
                 A63000000000000000000009 /* CodexOfficeScene.swift */,
                 A63000000000000000000011 /* CodexOfficeBuilding.swift */,
+                A63100000000000000000003 /* CodexOfficeIllustratedScene.swift */,
                 A6300000000000000000000C /* CodexOfficeView.swift */,
 				10000000000000000000001A /* CodexMeterApp.swift */,
 				100000000000000000000C03 /* SettingsWindowOpener.swift */,
@@ -594,6 +598,7 @@
                 A63000000000000000000005 /* CodexOfficeStore.swift in Sources */,
                 A63000000000000000000008 /* CodexOfficeScene.swift in Sources */,
                 A63000000000000000000010 /* CodexOfficeBuilding.swift in Sources */,
+                A63100000000000000000002 /* CodexOfficeIllustratedScene.swift in Sources */,
                 A6300000000000000000000B /* CodexOfficeView.swift in Sources */,
                 A6300000000000000000000D /* CodexOfficeTests.swift in Sources */,
 				100000000000000000000002 /* UsageModelsTests.swift in Sources */,
@@ -640,6 +645,7 @@
                 A63000000000000000000004 /* CodexOfficeStore.swift in Sources */,
                 A63000000000000000000007 /* CodexOfficeScene.swift in Sources */,
                 A6300000000000000000000F /* CodexOfficeBuilding.swift in Sources */,
+                A63100000000000000000001 /* CodexOfficeIllustratedScene.swift in Sources */,
                 A6300000000000000000000A /* CodexOfficeView.swift in Sources */,
 				10000000000000000000000B /* CodexMeterApp.swift in Sources */,
 				10000000000000000000000C /* UsageViewModel.swift in Sources */,
