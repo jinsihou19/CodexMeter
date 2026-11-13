@@ -107,6 +107,7 @@ fi
 rm -rf "$BUILD_DIR"
 mkdir -p "$DIST_DIR"
 
+# 只在打包时剥离符号并关闭覆盖率插桩，调试符号由 Xcode 保存在独立的 dSYM 中。
 xcodebuild \
   -project "$PROJECT_PATH" \
   -scheme "$SCHEME_NAME" \
@@ -115,6 +116,9 @@ xcodebuild \
   SYMROOT="$BUILD_DIR" \
   ARCHS="arm64 x86_64" \
   ONLY_ACTIVE_ARCH=NO \
+  DEPLOYMENT_POSTPROCESSING=YES \
+  ENABLE_CODE_COVERAGE=NO \
+  CLANG_COVERAGE_MAPPING=NO \
   CODE_SIGN_STYLE=Manual \
   CODE_SIGN_IDENTITY="$SIGN_IDENTITY" \
   DEVELOPMENT_TEAM="" \
