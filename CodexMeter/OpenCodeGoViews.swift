@@ -13,7 +13,12 @@ struct OpenCodeGoSettingsView: View {
     var body: some View {
         Form {
             Section {
-                Toggle("启用 OpenCode Go", isOn: $store.isEnabled)
+                SettingsToggleRow(
+                    title: "启用 OpenCode Go",
+                    subtitle: "",
+                    isOn: $store.isEnabled
+                )
+                .accessibilityLabel("启用 OpenCode Go")
                 SettingsToggleRow(
                     title: "显示在下拉面板",
                     subtitle: "在下拉面板中展示 OpenCode Go 额度卡片。",
