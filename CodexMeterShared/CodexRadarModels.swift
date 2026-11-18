@@ -34,12 +34,12 @@ public enum CodexRadarSource: String, Codable, CaseIterable, Identifiable, Senda
         }
     }
 
-    /// 当前三题和其他来源均只提供当前快照，不将跨基准缓存拼成历史曲线。
+    /// 当前雷达来源仅同步单批快照，不将跨基准缓存拼成历史曲线。
     public var supportsScoreHistory: Bool {
         false
     }
 
-    /// 当前三题与 Radar Insights 只提供 GPT 系列，其他厂商从 AI IQ 展示。
+    /// Codex Radar 与 Radar Insights 展示 GPT 系列，其他厂商从 AI IQ 展示。
     public var supportsOtherModels: Bool {
         self == .aiIQ
     }

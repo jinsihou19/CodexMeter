@@ -934,7 +934,7 @@ struct SettingsView: View {
                 SettingsToggleRow(
                     title: "开启降智雷达",
                     subtitle: AppLocalization.usesEnglish()
-                        ? "Show three-task radar scores or model IQ from the selected source."
+                        ? "Show radar scores or model IQ from the selected source."
                         : "读取所选公开数据源，展示雷达分或模型 IQ。",
                     isOn: codexRadarBinding($codexRadarEnabled, key: CodexRadarPreferenceKeys.isEnabled)
                 )

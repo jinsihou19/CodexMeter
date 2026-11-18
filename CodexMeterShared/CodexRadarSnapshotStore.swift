@@ -9,11 +9,11 @@ public struct CodexRadarSnapshotStore: Sendable {
     private let fileName: String
     private let usesDefaultFallbackDirectory: Bool
 
+    /// 配置共享与回退位置；默认文件使用四题基准版本，测试可指定独立文件。
     public init(
         appGroupIdentifier: String = UsageSnapshotStore.defaultAppGroupIdentifier,
         fallbackDirectory: URL? = nil,
-        // 三题与旧 RadarBench 基准独立，升级后不加载旧分值和历史；旧文件保留。
-        fileName: String = "latest-codex-radar-v3.json"
+        fileName: String = "latest-codex-radar-v4.json"
     ) {
         self.appGroupIdentifier = appGroupIdentifier
         self.usesDefaultFallbackDirectory = fallbackDirectory == nil
